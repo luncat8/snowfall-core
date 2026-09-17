@@ -61,6 +61,13 @@ matrix.
 - No `IntersectionObserver` for scroll state: batched, irreversible, blind
   to transform-only states like `parked`.
 
+## sticks
+
+- Bottom sticks in unscoped (flat/loose) content pile up: every not-yet-reached
+  `bottom:0` stick is engaged at once and later DOM paints above. Scope stick
+  chapters in `<section>` for clean replace behaviour; QA asserts *a* stick is
+  on top (above wagons), not *which* one.
+
 ## harness & QA
 
 - GUI buttons run QA (no npm, no console); node `test/math.js` is the
