@@ -38,23 +38,36 @@ button{cursor:pointer}
 #estate{display:none;margin-top:8px;max-height:220px;overflow:auto}
 
 /* ---------- story ---------- */
-#app{max-width:760px;margin:0 auto;padding:32px 24px 0;font-size:18px;line-height:1.65}
-#app section{margin:0 0 64px;padding:28px 28px 36px;border:1px solid #d5dbe5;border-radius:14px;background:rgba(255,255,255,.72)}
+#app{max-width:760px;margin:0 auto;padding:32px 24px 0;font-size:18px;line-height:1.65;
+	text-shadow:0 0 7px rgba(255,255,255,.95),0 1px 3px rgba(255,255,255,.9)}
+#app section{margin:0 0 64px;padding:28px 28px 36px}
 #app h4.n{margin:0 0 12px;font-size:44px;line-height:1}
 #app .tail{height:100vh}
 script[type=txt]{display:none}
 
-/* no-engine fallback: readable prose with in-flow background blocks */
-.snow-bg{position:relative;display:block;width:100%;margin:24px 0;overflow:hidden;
+/* no-engine fallback: the picture paints BEHIND the following text (overlay),
+   so the first scene after a background reads like the parked engine scene.
+   Nonzero data-gap keeps flow (a pure image beat). */
+.snow-bg{position:relative;display:block;width:100%;margin:0 0 24px;overflow:hidden;z-index:-1;
 	background-position:center;background-repeat:no-repeat;border-radius:10px}
-.snow-bg[data-mode=cover],.snow-bg[data-mode=tiled],.snow-bg[data-mode=contain]{height:100vh;min-height:420px}
+.snow-bg[data-mode=cover],.snow-bg[data-mode=tiled],.snow-bg[data-mode=contain]{height:var(--snow-vh,100vh);min-height:420px;margin-bottom:calc(-1 * var(--snow-vh,100vh))}
 .snow-bg[data-mode=tiled]{background-repeat:repeat}
 .snow-bg[data-mode=contain]{background-size:contain;background-color:#0c0f16}
 .snow-bg[data-mode=cover]{background-size:cover}
 .snow-bg[data-mode=fixed],.snow-bg[data-mode=auto]{background-position:top left}
-.snow-bg[data-size="256"]{height:256px}
-.snow-bg[data-size="512"]{height:512px}
-.snow-bg[data-size="1024"]{height:1024px}
+.snow-bg[data-size="256"]{height:256px;margin-bottom:-256px}
+.snow-bg[data-size="512"]{height:512px;margin-bottom:-512px}
+.snow-bg[data-size="1024"]{height:1024px;margin-bottom:-1024px}
+.snow-bg[data-gap]:not([data-gap="0"]){margin-bottom:0}
+/* exact partial-gap footprints (engine sets marginBottom = gap - height) */
+.snow-bg[data-mode=cover][data-gap="50vh"],.snow-bg[data-mode=tiled][data-gap="50vh"],.snow-bg[data-mode=contain][data-gap="50vh"]{margin-bottom:calc(50vh - var(--snow-vh,100vh))}
+.snow-bg[data-mode=cover][data-gap="120px"],.snow-bg[data-mode=tiled][data-gap="120px"],.snow-bg[data-mode=contain][data-gap="120px"]{margin-bottom:calc(120px - var(--snow-vh,100vh))}
+.snow-bg[data-size="256"][data-gap="50vh"]{margin-bottom:calc(50vh - 256px)}
+.snow-bg[data-size="512"][data-gap="50vh"]{margin-bottom:calc(50vh - 512px)}
+.snow-bg[data-size="1024"][data-gap="50vh"]{margin-bottom:calc(50vh - 1024px)}
+.snow-bg[data-size="256"][data-gap="120px"]{margin-bottom:-136px}
+.snow-bg[data-size="512"][data-gap="120px"]{margin-bottom:-392px}
+.snow-bg[data-size="1024"][data-gap="120px"]{margin-bottom:-904px}
 .wtag{position:absolute;right:10px;bottom:8px;pointer-events:none;
 	font:11px/1.5 ui-monospace,Menlo,monospace;color:#fff;
 	background:rgba(0,0,0,.5);padding:2px 8px;border-radius:4px}

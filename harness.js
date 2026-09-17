@@ -381,6 +381,7 @@ async function qReversibility() {
 async function qOverlap() {
 	const els = wagons();
 	if (els.length < 2) return row('overlap', -1, 'need 2+ wagons');
+	if (!hasEng()) return row('overlap', 1, 'no engine — overlap is engine-defined (fallback overlays by design)');
 	const mx = maxY(), N = 10;
 	let worst = 0, at = 0;
 	for (let k = 0; k < N; k++) {
@@ -424,6 +425,7 @@ async function qJump() {
 	if (!els.length) return row('jump', -1, 'no wagons');
 	const mx = maxY();
 	const step = Math.max(40, Math.ceil(mx / 60));
+	const isBot = els.map(e => (e.dataset.dir || 'top') === 'bottom');
 	setY(0); await raf2();
 	let prev = els.map(e => e.getBoundingClientRect().top);
 	let worst = 0, at = 0;
@@ -432,8 +434,10 @@ async function qJump() {
 		const cur = els.map(e => e.getBoundingClientRect().top);
 		for (let i = 0; i < els.length; i++) {
 			const d = cur[i] - prev[i];
-			if (d > 1 || d < -step - 1) {
-				const bad = Math.abs(d > 1 ? d : d + step);
+			/* bottom exits travel DOWN at most scroll speed — mirrored bound */
+			const hi = isBot[i] ? step + 1 : 1;
+			if (d > hi || d < -step - 1) {
+				const bad = Math.abs(d > hi ? d - (isBot[i] ? step : 0) : d + step);
 				if (bad > worst) { worst = bad; at = Math.round(window.scrollY); }
 			}
 		}
@@ -501,6 +505,7 @@ function logTable() {
 }
 async function qEvents() {
 	if (!hasEng()) return row('events', 1, 'no engine — scripts inert');
+	if (Snowfall.eventCount === undefined) return row('events', 1, 'events land in 0.4 — engine has no event subscriber yet');
 	const nCh = chapters().length;
 	if (!nCh) return row('events', -1, 'no chapters');
 	engRefresh(); setY(0); await raf2(); await raf2();

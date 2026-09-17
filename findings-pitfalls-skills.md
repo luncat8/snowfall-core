@@ -19,6 +19,19 @@ matrix.
 - Chain is 1D (`pos[i]=min(park[i],pos[i+1]−ext[i])`), exits projected after.
   Never feed a 2D exit (bottom/left/right) back into the chain — a bottom
   exit un-pushes the wagon above it (observed bug).
+- CSS sticky constrains the MARGIN box within the parent CONTENT box:
+  mirror is `min(max(free,0), pBotContent − ext − marginBottom)`, verified
+  to the pixel. Border-box bottom is off by padding+border; ignoring the
+  (negative ok) marginBottom is off by exactly its value. Engine zeroes
+  wagon marginTop/Left/Right so marker Y == border-top.
+- Positioned wagons paint ABOVE loose text regardless of DOM order —
+  `z-index:-1` on the wagon is what puts the picture behind the prose
+  (and below any text-container background, so chapter boxes must be
+  transparent; readability via text-shadow).
+- Strict measure phases: box writes → ext reads → margin writes → anchor
+  reads. marginBottom shifts shared parents, so interleaved per-wagon
+  write+read measures stale parent rects (observed: same section measured
+  136px apart for two wagons).
 - `data-dir` is the wagon's own exit, never the pusher's action.
   Pusher-dictates reads as "this picture leaves differently depending on who
   pushes it".
