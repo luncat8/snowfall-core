@@ -1,0 +1,230 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+	<meta charset="UTF-8">
+	<meta name="viewport" content="width=device-width, initial-scale=1.0">
+	<title>Scrolling Parallax Sections</title>
+	<style>
+		* {
+			margin: 0;
+			padding: 0;
+			box-sizing: border-box;
+		}
+
+		body {
+			font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+			overflow-x: hidden;
+		}
+
+		.container {
+			position: relative;
+		}
+
+		.section {
+			position: relative;
+		}
+
+		.bg {
+			position: sticky;
+			top: 0;
+			left: 0;
+			will-change: transform;
+		}
+
+		.content {
+			position: relative;
+			z-index: 10;
+			padding: 2rem;
+			text-shadow: 0 2px 8px rgba(0, 0, 0, 0.6);
+		}
+
+		.content h2 {
+			font-weight: bold;
+			margin-bottom: 1.5rem;
+		}
+
+		.content p {
+			margin-bottom: 0.75rem;
+			opacity: 0.95;
+			line-height: 1.625;
+		}
+
+		/* Text sizes */
+		.text-2xl { font-size: 1.5rem; }
+		.text-3xl { font-size: 1.875rem; }
+		.text-4xl { font-size: 2.25rem; }
+		.text-5xl { font-size: 3rem; }
+		.text-6xl { font-size: 3.75rem; }
+		.text-7xl { font-size: 4.5rem; }
+
+		/* Text colors */
+		.text-white { color: white; }
+		.text-gray-900 { color: #111827; }
+	</style>
+</head>
+<body>
+	<div class="container" id="container"></div>
+
+	<script>
+		const sections = [
+			{
+				width: '100vw',
+				height: '100vh',
+				bgSize: 'cover',
+				bgRepeat: 'no-repeat',
+				gradient: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)',
+				text: 'Chapter I',
+				lines: 4,
+				textSize: 'text-6xl',
+				textColor: 'text-white',
+			},
+			{
+				width: '300px',
+				height: '200px',
+				bgSize: '200px 150px',
+				bgRepeat: 'repeat',
+				gradient: 'linear-gradient(45deg, #ff6b6b, #feca57)',
+				text: 'Chapter II',
+				lines: 10,
+				textSize: 'text-4xl',
+				textColor: 'text-white',
+			},
+			{
+				width: '100%',
+				height: '50vh',
+				bgSize: 'contain',
+				bgRepeat: 'no-repeat',
+				gradient: 'linear-gradient(135deg, #4facfe 0%, #00f2fe 100%)',
+				dir: 'left',
+				text: 'Chapter III',
+				lines: 6,
+				textSize: 'text-5xl',
+				textColor: 'text-white',
+			},
+			{
+				width: '400px',
+				height: '400px',
+				bgSize: 'auto',
+				bgRepeat: 'no-repeat',
+				gradient: 'linear-gradient(135deg, #43e97b 0%, #38f9d7 100%)',
+				text: 'Chapter IV',
+				lines: 8,
+				textSize: 'text-3xl',
+				textColor: 'text-gray-900',
+			},
+			{
+				width: '100vw',
+				height: '100vh',
+				bgSize: 'cover',
+				bgRepeat: 'no-repeat',
+				gradient: 'linear-gradient(135deg, #fa709a 0%, #fee140 100%)',
+				text: 'Chapter V',
+				lines: 3,
+				textSize: 'text-7xl',
+				textColor: 'text-white',
+			},
+			{
+				width: '250px',
+				height: '250px',
+				bgSize: '100px 100px',
+				bgRepeat: 'repeat',
+				gradient: 'linear-gradient(135deg, #30cfd0 0%, #330867 100%)',
+				dir: 'right',
+				text: 'Chapter VI',
+				lines: 12,
+				textSize: 'text-2xl',
+				textColor: 'text-white',
+			},
+		];
+
+		// Render sections
+		const container = document.getElementById('container');
+		sections.forEach((s, i) => {
+			const section = document.createElement('div');
+			section.className = 'section';
+
+			const bg = document.createElement('div');
+			bg.className = 'bg';
+			bg.style.width = s.width;
+			bg.style.height = s.height;
+			bg.style.backgroundImage = s.gradient;
+			bg.style.backgroundSize = s.bgSize;
+			bg.style.backgroundRepeat = s.bgRepeat;
+			bg.style.backgroundPosition = 'center';
+			bg.setAttribute('data-dir', s.dir || 'up');
+
+			const content = document.createElement('div');
+			content.className = `content ${s.textSize} ${s.textColor}`;
+
+			const heading = document.createElement('h2');
+			heading.textContent = s.text;
+			content.appendChild(heading);
+
+			for (let j = 0; j < s.lines; j++) {
+				const p = document.createElement('p');
+				p.textContent = `${s.text} — line ${j + 1} of ${s.lines}`;
+				content.appendChild(p);
+			}
+
+			section.appendChild(bg);
+			section.appendChild(content);
+			container.appendChild(section);
+		});
+
+		// Parallax logic
+		const bgs = Array.from(document.querySelectorAll('.bg'));
+		const heights = [];
+		const offsets = [];
+		const actualTops = [];
+
+		const measure = () => {
+			bgs.forEach((bg, i) => {
+				const parent = bg.parentElement;
+				if (parent) {
+					offsets[i] = parent.offsetTop;
+				}
+				heights[i] = bg.offsetHeight;
+			});
+		};
+
+		const update = () => {
+			const scrollY = window.scrollY;
+
+			for (let i = bgs.length - 1; i >= 0; i--) {
+				const naturalTop = offsets[i] - scrollY;
+
+				if (i === bgs.length - 1) {
+					actualTops[i] = naturalTop;
+				} else {
+					actualTops[i] = Math.min(naturalTop, actualTops[i + 1] - heights[i]);
+				}
+
+				const push = naturalTop - actualTops[i];
+				const dir = bgs[i].dataset.dir || 'up';
+
+				let tx = 0;
+				let ty = -push;
+
+				if (push > 0) {
+					if (dir === 'left') { tx = -push; ty = 0; }
+					else if (dir === 'right') { tx = push; ty = 0; }
+					else if (dir === 'down') { ty = push; }
+				}
+
+				bgs[i].style.transform = `translate3d(${tx}px, ${ty}px, 0)`;
+			}
+		};
+
+		measure();
+		update();
+
+		const onResize = () => {
+			measure();
+			update();
+		};
+
+		window.addEventListener('scroll', update, { passive: true });
+		window.addEventListener('resize', onResize);
+	</script>
+</body>
+</html>

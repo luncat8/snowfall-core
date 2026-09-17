@@ -1,0 +1,965 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Visual Novella Engine — VN v2 (parallel theme + car systems)</title>
+<style>
+	* { box-sizing: border-box; margin: 0; padding: 0; }
+	html, body { background: #0a0a0a; }
+	body {
+		font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Georgia, Arial, sans-serif;
+		color: var(--text-color, #fff);
+		overflow-x: hidden;
+		-webkit-font-smoothing: antialiased;
+		transition: background-color 80ms linear, color 80ms linear;
+	}
+
+	/* ============================================================
+	   THEME CLASSES — CSS variables, auto-discovered by JS
+	   ============================================================ */
+	.theme-dawn    { --bg-color:#ffd9d9; --text-color:#2a1810; --accent-color:#ff8c69; --bg-brightness:1.1;  --bg-saturate:1.0;  --bg-blur:0px;   --vignette:0;    --overlay-color:rgba(255,200,200,0); }
+	.theme-morning { --bg-color:#cceeff; --text-color:#001133; --accent-color:#4facfe; --bg-brightness:1.15; --bg-saturate:1.1;  --bg-blur:0px;   --vignette:0;    --overlay-color:rgba(200,230,255,0); }
+	.theme-noon    { --bg-color:#b8d8ff; --text-color:#0a1f3d; --accent-color:#2c7be5; --bg-brightness:1.2;  --bg-saturate:1.15; --bg-blur:0px;   --vignette:0;    --overlay-color:rgba(255,255,255,0); }
+	.theme-golden  { --bg-color:#ff9a3d; --text-color:#2a1000; --accent-color:#ffd700; --bg-brightness:0.95; --bg-saturate:1.2;  --bg-blur:0px;   --vignette:0.15; --overlay-color:rgba(255,120,30,0.1); }
+	.theme-sunset  { --bg-color:#c0392b; --text-color:#fff5e0; --accent-color:#fbbf24; --bg-brightness:0.75; --bg-saturate:1.1;  --bg-blur:0px;   --vignette:0.3;  --overlay-color:rgba(180,50,30,0.2); }
+	.theme-dusk    { --bg-color:#4a2c5a; --text-color:#f0e0ff; --accent-color:#b388eb; --bg-brightness:0.55; --bg-saturate:0.95; --bg-blur:0.5px; --vignette:0.45; --overlay-color:rgba(60,30,80,0.25); }
+	.theme-night   { --bg-color:#0a0a1a; --text-color:#d0d0e0; --accent-color:#67e8f9; --bg-brightness:0.35; --bg-saturate:0.8;  --bg-blur:1px;   --vignette:0.65; --overlay-color:rgba(0,0,20,0.4); }
+	.theme-indoor  { --bg-color:#3d2817; --text-color:#ffd9a0; --accent-color:#fbbf24; --bg-brightness:0.95; --bg-saturate:1.0;  --bg-blur:0px;   --vignette:0.15; --overlay-color:rgba(120,70,30,0.15); }
+	.theme-midnight{ --bg-color:#050510; --text-color:#b8c0d8; --accent-color:#8b9dc3; --bg-brightness:0.25; --bg-saturate:0.7;  --bg-blur:1.5px; --vignette:0.75; --overlay-color:rgba(0,0,10,0.5); }
+
+	/* ============================================================
+	   BG CAR STACK — V6 mechanics
+	   Each .bg is a "railroad car":
+	     - position: fixed, top:0
+	     - opacity 1 when parked, 0 when off-screen
+	     - transform drives push direction (up/left/right/down/iris)
+	   Visibility culling when fully off-screen.
+	   ============================================================ */
+	.bg-stack {
+		position: fixed;
+		top: 0; left: 0;
+		width: 100vw; height: 100vh;
+		z-index: 1;
+		pointer-events: none;
+	}
+	.bg {
+		position: absolute;
+		top: 0; left: 0;
+		width: 100vw; height: 100vh;
+		background-size: cover;
+		background-position: center;
+		background-repeat: no-repeat;
+		opacity: 0;
+		will-change: opacity, transform, visibility;
+		visibility: hidden;
+		backface-visibility: hidden;
+		filter: brightness(var(--bg-brightness, 1)) saturate(var(--bg-saturate, 1)) blur(var(--bg-blur, 0));
+		transition: filter 80ms linear;
+	}
+
+	/* Theme overlay tint (independent of car layer) */
+	.bg-overlay {
+		position: fixed;
+		top: 0; left: 0;
+		width: 100vw; height: 100vh;
+		background: var(--overlay-color, transparent);
+		z-index: 2;
+		pointer-events: none;
+		transition: background-color 80ms linear;
+	}
+	/* Vignette (independent of car layer) */
+	.vignette {
+		position: fixed;
+		top: 0; left: 0;
+		width: 100vw; height: 100vh;
+		z-index: 3;
+		pointer-events: none;
+		background: radial-gradient(ellipse at center, transparent 30%, rgba(0,0,0, calc(var(--vignette, 0) * 0.85)) 100%);
+		transition: background 80ms linear;
+	}
+
+	/* ============================================================
+	   Content
+	   ============================================================ */
+	.container { position: relative; z-index: 10; }
+	.section { position: relative; }
+
+	.content {
+		max-width: 760px;
+		margin: 0 auto;
+		padding: 5rem 2rem 7rem;
+		text-shadow: 0 2px 14px rgba(0,0,0,.65);
+	}
+	.content h2 {
+		font-weight: 800;
+		line-height: 1.05;
+		margin-bottom: 1.75rem;
+		letter-spacing: -.02em;
+		color: var(--accent-color, currentColor);
+		transition: color 80ms linear;
+	}
+	.content h3 {
+		font-weight: 600;
+		margin: 2.5rem 0 1rem;
+		opacity: .9;
+	}
+	.content p {
+		line-height: 1.75;
+		margin-bottom: 1rem;
+		opacity: .96;
+	}
+	.content code {
+		background: rgba(0,0,0,.4);
+		padding: 2px 7px;
+		border-radius: 4px;
+		font: 13px ui-monospace, "SF Mono", Menlo, monospace;
+		color: var(--accent-color, #fbbf24);
+		transition: color 80ms linear;
+	}
+	.content b { font-weight: 700; }
+	.content em { color: var(--accent-color, inherit); font-style: normal; font-weight: 600; }
+
+	/* Text sizes */
+	.size-base  h2 { font-size: 2.25rem; }
+	.size-base  p  { font-size: 1.0625rem; }
+	.size-lg    h2 { font-size: 3rem;    }
+	.size-lg    p  { font-size: 1.25rem; }
+	.size-xl    h2 { font-size: 3.75rem; }
+	.size-xl    p  { font-size: 1.375rem; }
+
+	/* ============================================================
+	   HUD — shows BOTH systems in parallel
+	   ============================================================ */
+	.hud {
+		position: fixed;
+		top: 18px; left: 18px;
+		z-index: 100;
+		font: 11px/1.65 ui-monospace, "SF Mono", Menlo, monospace;
+		color: #fff;
+		background: rgba(0,0,0,.7);
+		padding: 11px 14px;
+		border-radius: 9px;
+		pointer-events: none;
+		white-space: pre;
+		backdrop-filter: blur(14px);
+		-webkit-backdrop-filter: blur(14px);
+		border: 1px solid rgba(255,255,255,.12);
+	}
+	.hud .sys-label {
+		color: #67e8f9;
+		font-weight: 700;
+	}
+	.hud .sys-theme { color: #fbbf24; }
+	.hud .sys-car   { color: #fda4af; }
+	.hud .divider {
+		color: rgba(255,255,255,.2);
+		letter-spacing: -.5em;
+	}
+
+	.progress {
+		position: fixed;
+		top: 0; left: 0;
+		height: 3px;
+		background: linear-gradient(90deg, #ff8c69, #4facfe, #fbbf24, #b388eb, #67e8f9);
+		z-index: 101;
+		width: 0%;
+		transition: width 60ms linear;
+		box-shadow: 0 0 12px rgba(255,140,105,.6);
+	}
+
+	.dots {
+		position: fixed;
+		right: 18px; top: 50%;
+		transform: translateY(-50%);
+		z-index: 100;
+		display: flex;
+		flex-direction: column;
+		gap: 12px;
+	}
+	.dot-wrap {
+		position: relative;
+		width: 14px; height: 14px;
+		cursor: pointer;
+		display: flex;
+		align-items: center;
+		justify-content: center;
+	}
+	.dot-theme {
+		position: absolute;
+		inset: 0;
+		border-radius: 50%;
+		border: 2px solid;
+		transition: all 250ms cubic-bezier(.4,0,.2,1);
+	}
+	.dot-car {
+		width: 6px; height: 6px;
+		border-radius: 50%;
+		background: rgba(255,255,255,.4);
+		transition: all 250ms cubic-bezier(.4,0,.2,1);
+	}
+	.dot-wrap:hover .dot-theme { transform: scale(1.2); }
+	.dot-wrap.active .dot-car {
+		background: #fff;
+		box-shadow: 0 0 8px rgba(255,255,255,.9);
+	}
+	.dot-wrap.parked .dot-car {
+		background: #67e8f9;
+		box-shadow: 0 0 10px rgba(103,232,249,.9);
+		animation: pulse 1.8s ease-in-out infinite;
+	}
+	.dot-wrap.transitioning .dot-theme {
+		animation: ring-pulse 1.2s ease-in-out infinite;
+	}
+	@keyframes pulse {
+		0%, 100% { transform: scale(1); }
+		50%      { transform: scale(1.4); }
+	}
+	@keyframes ring-pulse {
+		0%, 100% { transform: scale(1); opacity: 1; }
+		50%      { transform: scale(1.15); opacity: 0.6; }
+	}
+	.dot-wrap::after {
+		content: attr(data-label);
+		position: absolute;
+		right: 22px;
+		top: 50%;
+		transform: translateY(-50%);
+		font: 10px ui-monospace, "SF Mono", Menlo, monospace;
+		color: rgba(255,255,255,.9);
+		background: rgba(0,0,0,.75);
+		padding: 3px 6px;
+		border-radius: 4px;
+		white-space: nowrap;
+		opacity: 0;
+		pointer-events: none;
+		transition: opacity 200ms;
+	}
+	.dot-wrap:hover::after { opacity: 1; }
+
+	.scroll-hint {
+		position: fixed;
+		bottom: 28px;
+		left: 50%;
+		transform: translateX(-50%);
+		color: rgba(255,255,255,.75);
+		font: 12px/1 ui-monospace, "SF Mono", Menlo, monospace;
+		letter-spacing: .2em;
+		text-transform: uppercase;
+		animation: bob 2.2s ease-in-out infinite;
+		z-index: 11;
+		pointer-events: none;
+		transition: opacity 400ms;
+	}
+	.scroll-hint::after {
+		content: '';
+		display: block;
+		width: 1px;
+		height: 24px;
+		margin: 8px auto 0;
+		background: linear-gradient(to bottom, rgba(255,255,255,.7), transparent);
+	}
+	@keyframes bob {
+		0%, 100% { transform: translate(-50%, 0);   opacity: .7; }
+		50%      { transform: translate(-50%, 6px); opacity: 1;  }
+	}
+	.scroll-hint.hidden { opacity: 0; }
+
+	/* Theme chip (top-right) — shows current theme + transition */
+	.theme-chip {
+		position: fixed;
+		top: 18px; right: 18px;
+		z-index: 100;
+		font: 11px/1.5 ui-monospace, "SF Mono", Menlo, monospace;
+		color: #fff;
+		background: rgba(0,0,0,.7);
+		padding: 8px 12px;
+		border-radius: 8px;
+		pointer-events: none;
+		backdrop-filter: blur(14px);
+		-webkit-backdrop-filter: blur(14px);
+		border: 1px solid rgba(255,255,255,.12);
+		white-space: pre;
+		text-align: right;
+	}
+	.theme-chip .swatch {
+		display: inline-block;
+		width: 10px; height: 10px;
+		border-radius: 50%;
+		margin-left: 6px;
+		vertical-align: middle;
+		border: 1px solid rgba(255,255,255,.4);
+	}
+
+	/* Parked badge (bottom-right) — V6 car-parking badge */
+	.parked {
+		position: fixed;
+		bottom: 18px; right: 18px;
+		z-index: 100;
+		font: 11px/1.5 ui-monospace, "SF Mono", Menlo, monospace;
+		color: #67e8f9;
+		background: rgba(0,0,0,.7);
+		padding: 8px 12px;
+		border-radius: 8px;
+		pointer-events: none;
+		backdrop-filter: blur(14px);
+		-webkit-backdrop-filter: blur(14px);
+		border: 1px solid rgba(103,232,249,.4);
+		opacity: 0;
+		transition: opacity 300ms;
+	}
+	.parked.visible { opacity: 1; }
+
+	@media (max-width: 640px) {
+		.content { padding: 3rem 1.25rem 5rem; }
+		.size-xl h2 { font-size: 2.25rem; }
+		.size-lg h2 { font-size: 2rem; }
+		.hud, .theme-chip, .parked { font-size: 10px; padding: 7px 9px; }
+		.dots { right: 10px; gap: 10px; }
+		.dot-wrap { width: 12px; height: 12px; }
+		.dot-wrap::after { display: none; }
+	}
+</style>
+</head>
+<body>
+
+<div class="progress" id="progress"></div>
+<div class="hud" id="hud">scroll: 0</div>
+<div class="theme-chip" id="themeChip"></div>
+<div class="parked" id="parked"></div>
+<div class="dots" id="dots"></div>
+<div class="scroll-hint" id="scrollHint">scroll</div>
+
+<div class="bg-stack" id="bgStack"></div>
+<div class="bg-overlay" id="bgOverlay"></div>
+<div class="vignette" id="vignette"></div>
+
+<div class="container" id="container"></div>
+
+<script>
+	// ============================================================
+	//  VISUAL NOVELLA ENGINE — VN v2
+	//  TWO PARALLEL SYSTEMS:
+	//
+	//  1. THEME SYSTEM (V8)
+	//     - CSS classes with --* variables
+	//     - Auto-discovered, interpolated between adjacent sections
+	//     - Trigger: next section's header enters viewport bottom → reaches center
+	//     - Applies to :root → cascades to body, content, accent, overlay, vignette
+	//
+	//  2. CAR SYSTEM (V6)
+	//     - Each section's bg is a "railroad car"
+	//     - position: fixed, parked at top:0
+	//     - When next section's bg enters viewport bottom, current car exits
+	//       via its `dir` (↑ ↓ ← →)
+	//     - Parking duration tracked separately from theme transition
+	//
+	//  Both systems run independently and update simultaneously.
+	// ============================================================
+
+	const sections = [
+		{
+			theme: 'theme-dawn',
+			bg: 'linear-gradient(180deg, #ffd9d9 0%, #ffe8d6 100%)',
+			carDir: 'up',
+			title: 'Глава I — Рассвет',
+			body: [
+				'<em>VN v2.</em> Две системы работают параллельно: <b>theme</b> (интерполяция цветов) и <b>car</b> (фоны-вагоны с парковкой и push-направлениями).',
+				'HUD слева сверху показывает обе системы: желтая секция <code>theme</code> (доля перехода в %), розовая секция <code>car</code> (активный вагон + направление + PARKED-длительность).',
+				'Скролльте вниз — фоновый вагон I выедет <b>вверх</b> (carDir=up), а тема одновременно интерполируется из рассвета в утро.'
+			],
+			textSize: 'size-xl',
+			dotLabel: 'I dawn'
+		},
+		{
+			theme: 'theme-morning',
+			bg: 'linear-gradient(180deg, #cceeff 0%, #e0f0ff 100%)',
+			carDir: 'left',
+			title: 'Глава II — Утро',
+			body: [
+				'<em>Утро.</em> Тема плавно сменилась с рассвета. А фоновый вагон I уехал влево (carDir=left для вагона II) — теперь вы видите голубой фон главы II.',
+				'Сейчас вагон II припаркован. Тема стабильна на 100%.',
+				'Дальше — длинная глава полдня, стресс-тест парковки.'
+			],
+			textSize: 'size-lg',
+			dotLabel: 'II morning'
+		},
+		{
+			theme: 'theme-noon',
+			bg: 'url("https://picsum.photos/seed/vn2-noon/1920/1080")',
+			carDir: 'up',
+			title: 'Глава III — Полдень (LONG parking test)',
+			body: [
+				'<em>Полдень.</em> Длинная глава (~300vh). Во время парковки:',
+				'• <b>theme noon · 100%</b> — цвета стабильны',
+				'• <b>car 3/9 · ↑ · PARKED 0.0s → 15+s</b> — вагон припаркован, длительность растёт',
+				'• Боковая точка III пульсирует (синий круг = припаркован)',
+				'Скролльте до конца — обе системы одновременно активируются для перехода в золотой час.'
+			].concat(filler(15, 'noon')),
+			textSize: 'size-base',
+			dotLabel: 'III noon LONG'
+		},
+		{
+			theme: 'theme-golden',
+			bg: 'url("https://picsum.photos/seed/vn2-golden/1920/1080")',
+			carDir: 'right',
+			title: 'Глава IV — Золотой час',
+			body: [
+				'<em>Золотой час.</em> Тема интерполировалась из полдня: цвет фона потеплел, brightness снизился с 1.2 до 0.95, появилась лёгкая виньетка.',
+				'Параллельно вагон III уехал <b>вправо</b> (carDir=right для IV), вагон IV занял его место.',
+				'Дальше — закат, самая драматичная сцена.'
+			],
+			textSize: 'size-lg',
+			dotLabel: 'IV golden'
+		},
+		{
+			theme: 'theme-sunset',
+			bg: 'url("https://picsum.photos/seed/vn2-sunset/1920/1080")',
+			carDir: 'down',
+			title: 'Глава V — Закат (carDir=down)',
+			body: [
+				'<em>Закат.</em> carDir=down для этой главы — вагон IV уезжает <b>вниз</b>, вагон V занимает его место. z-index boost во время push-фазы делает уходящий вагон видимым поверх входящего.',
+				'Тема: bg-brightness 0.95 → 0.75, vignette 0.15 → 0.3, overlay-color получает красноватый тинт. Всё одновременно.'
+			],
+			textSize: 'size-xl',
+			dotLabel: 'V sunset'
+		},
+		{
+			theme: 'theme-dusk',
+			bg: 'url("https://picsum.photos/seed/vn2-dusk/1920/1080")',
+			carDir: 'up',
+			title: 'Глава VI — Сумерки',
+			body: [
+				'<em>Сумерки.</em> carDir=up снова — классический выезд вверх.',
+				'Тема: фиолетовые тона, brightness 0.55, лёгкий blur на фоне (0.5px).',
+				'Дальше — длинная ночь.'
+			],
+			textSize: 'size-lg',
+			dotLabel: 'VI dusk'
+		},
+		{
+			theme: 'theme-night',
+			bg: 'url("https://picsum.photos/seed/vn2-night/1920/1080")',
+			carDir: 'left',
+			title: 'Глава VII — Ночь (LONG parking test)',
+			body: [
+				'<em>Ночь.</em> Самая тёмная глава, снова длинная (~250vh). brightness 0.35, vignette 0.65, blur 1px.',
+				'Парковка должна быть стабильной: тема не дрейфит, вагон не моргает. Боковая точка VII пульсирует (parked).',
+				'Дальше — iris-переход в светлую комнату.'
+			].concat(filler(12, 'night')),
+			textSize: 'size-base',
+			dotLabel: 'VII night LONG'
+		},
+		{
+			theme: 'theme-indoor',
+			bg: 'url("https://picsum.photos/seed/vn2-indoor/1920/1080")',
+			carDir: 'up',
+			carTransition: 'iris',
+			title: 'Глава VIII — В комнате (iris + theme)',
+			body: [
+				'<em>Тёплый свет.</em> Тема мгновенно стала тёплой: оранжево-коричневый фон, кремовый текст, янтарный акцент.',
+				'Параллельно — iris-переход вагона: новый фон «вырастает» из центра экрана. Это эффект «<b>открытия двери в светлую комнату</b>».',
+				'Обе системы работают одновременно, но независимо: тема меняет цвета, iris-анимация масштабирует фоновый слой.'
+			],
+			textSize: 'size-lg',
+			dotLabel: 'VIII indoor'
+		},
+		{
+			theme: 'theme-midnight',
+			bg: 'linear-gradient(180deg, #050510 0%, #0a0a1a 100%)',
+			carDir: 'up',
+			title: 'Глава IX — Полночь (финал)',
+			body: [
+				'<em>Финал.</em> Тема плавно перетекла в самую тёмную — полуночь. Вагон VIII уехал вверх, занял место финальный градиент.',
+				'<b>VN v2 — обе системы параллельны:</b>',
+				'• HUD показывает тему (жёлтая секция) И вагон (розовая секция) независимо',
+				'• Боковые точки показывают и активную тему (цветной контур), и состояние вагона (пульсация = припаркован)',
+				'• Theme chip справа сверху, PARKED-бейдж справа снизу',
+				'• Длинные главы работают: парковка стабильна, тема не дрейфит',
+				'Скролльте обратно вверх — обе системы полностью обратимы.'
+			],
+			textSize: 'size-xl',
+			dotLabel: 'IX fin'
+		},
+	];
+
+	function filler(paragraphs, seed = 'lorem') {
+		const samples = [
+			'Lorem ipsum dolor sit amet, consectetur adipiscing elit. Sed do eiusmod tempor incididunt ut labore et dolore magna aliqua. Ut enim ad minim veniam, quis nostrud exercitation ullamco laboris nisi ut aliquip ex ea commodo consequat.',
+			'Duis aute irure dolor in reprehenderit in voluptate velit esse cillum dolore eu fugiat nulla pariatur. Excepteur sint occaecat cupidatat non proident, sunt in culpa qui officia deserunt mollit anim id est laborum.',
+			'Sed ut perspiciatis unde omnis iste natus error sit voluptatem accusantium doloremque laudantium, totam rem aperiam, eaque ipsa quae ab illo inventore veritatis et quasi architecto beatae vitae dicta sunt explicabo.',
+			'Nemo enim ipsam voluptatem quia voluptas sit aspernatur aut odit aut fugit, sed quia consequuntur magni dolores eos qui ratione voluptatem sequi nesciunt. Neque porro quisquam est, qui dolorem ipsum quia dolor sit amet.',
+			'At vero eos et accusamus et iusto odio dignissimos ducimus qui blanditiis praesentium voluptatum deleniti atque corrupti quos dolores et quas molestias excepturi sint occaecati cupiditate non provident.'
+		];
+		const out = [];
+		for (let i = 0; i < paragraphs; i++) out.push(samples[(i + seed.length) % samples.length]);
+		return out;
+	}
+
+	// ============================================================
+	//  RENDER
+	// ============================================================
+	const container = document.getElementById('container');
+	const bgStack = document.getElementById('bgStack');
+
+	const bgEls = [];
+	const sectionEls = [];
+
+	sections.forEach((s, i) => {
+		// BG car layer
+		const bg = document.createElement('div');
+		bg.className = 'bg';
+		if (s.bg) {
+			if (s.bg.startsWith('url(') || s.bg.startsWith('linear-gradient') || s.bg.startsWith('radial-gradient')) {
+				bg.style.backgroundImage = s.bg;
+			} else {
+				bg.style.backgroundImage = `url('${s.bg}')`;
+			}
+		}
+		bg.dataset.sectionIdx = i;
+		bg.dataset.carDir = s.carDir || 'up';
+		bg.dataset.carTransition = s.carTransition || 'push';
+		bgStack.appendChild(bg);
+		bgEls.push(bg);
+
+		// Section
+		const section = document.createElement('section');
+		section.className = `section ${s.theme}`;
+		section.dataset.theme = s.theme;
+		section.dataset.sectionIdx = i;
+
+		const content = document.createElement('div');
+		content.className = `content ${s.textSize || 'size-base'}`;
+
+		const h2 = document.createElement('h2');
+		h2.textContent = s.title;
+		content.appendChild(h2);
+
+		s.body.forEach(text => {
+			const p = document.createElement('p');
+			p.innerHTML = text;
+			content.appendChild(p);
+		});
+
+		section.appendChild(content);
+		container.appendChild(section);
+		sectionEls.push(section);
+	});
+
+	// Side dots (dual-state: theme ring + car center)
+	const dotsEl = document.getElementById('dots');
+	sections.forEach((s, i) => {
+		const wrap = document.createElement('div');
+		wrap.className = 'dot-wrap';
+		wrap.dataset.label = s.dotLabel || `Ch ${i + 1}`;
+
+		const ring = document.createElement('div');
+		ring.className = 'dot-theme';
+		wrap.appendChild(ring);
+
+		const center = document.createElement('div');
+		center.className = 'dot-car';
+		wrap.appendChild(center);
+
+		wrap.addEventListener('click', () => {
+			const sec = sectionEls[i];
+			if (sec) {
+				const top = sec.getBoundingClientRect().top + window.scrollY;
+				window.scrollTo({ top, behavior: 'smooth' });
+			}
+		});
+		dotsEl.appendChild(wrap);
+	});
+	const dotWraps = Array.from(dotsEl.children);
+
+	// ============================================================
+	//  THEME VARIABLE AUTO-DISCOVERY + PARSERS
+	//  (unchanged from VN v1)
+	// ============================================================
+	const themeVarNames = (() => {
+		const cs = getComputedStyle(sectionEls[0]);
+		const names = [];
+		for (let i = 0; i < cs.length; i++) {
+			const name = cs[i];
+			if (name && name.startsWith('--')) names.push(name);
+		}
+		return names;
+	})();
+
+	const sectionThemes = sectionEls.map(sec => {
+		const cs = getComputedStyle(sec);
+		const theme = {};
+		themeVarNames.forEach(name => { theme[name] = cs.getPropertyValue(name).trim(); });
+		return theme;
+	});
+
+	function parseValue(raw) {
+		if (raw == null || raw === '') return null;
+		const v = raw.trim();
+		let m = v.match(/^rgba?\(([^)]+)\)$/i);
+		if (m) {
+			const parts = m[1].split(',').map(s => parseFloat(s));
+			return { type: 'color', a: parts[0], b: parts[1], c: parts[2], alpha: parts[3] != null ? parts[3] : 1 };
+		}
+		m = v.match(/^#([0-9a-f]{3,8})$/i);
+		if (m) {
+			let hex = m[1];
+			let alpha = 1;
+			if (hex.length === 3) hex = hex.split('').map(c => c + c).join('');
+			else if (hex.length === 4) { const a = hex[3] + hex[3]; hex = hex.slice(0, 3); alpha = parseInt(a, 16) / 255; hex = hex.split('').map(c => c + c).join(''); }
+			else if (hex.length === 8) { alpha = parseInt(hex.slice(6, 8), 16) / 255; hex = hex.slice(0, 6); }
+			else if (hex.length === 6) { /* ok */ }
+			else return null;
+			const r = parseInt(hex.slice(0, 2), 16);
+			const g = parseInt(hex.slice(2, 4), 16);
+			const b = parseInt(hex.slice(4, 6), 16);
+			return { type: 'color', a: r, b: g, c: b, alpha };
+		}
+		m = v.match(/^(-?\d+(?:\.\d+)?)px$/);
+		if (m) return { type: 'length', value: parseFloat(m[1]), unit: 'px' };
+		m = v.match(/^(-?\d+(?:\.\d+)?)$/);
+		if (m) return { type: 'number', value: parseFloat(m[1]) };
+		return { type: 'keyword', value: v };
+	}
+
+	function interpolateValue(from, to, t) {
+		if (!from || !to) return null;
+		if (from.type !== to.type) return t >= 0.5 ? to : from;
+		if (from.type === 'color') {
+			const r = from.a + (to.a - from.a) * t;
+			const g = from.b + (to.b - from.b) * t;
+			const b = from.c + (to.c - from.c) * t;
+			const a = from.alpha + (to.alpha - from.alpha) * t;
+			return `rgba(${Math.round(r)}, ${Math.round(g)}, ${Math.round(b)}, ${a.toFixed(3)})`;
+		}
+		if (from.type === 'length') return `${(from.value + (to.value - from.value) * t).toFixed(2)}${from.unit}`;
+		if (from.type === 'number') return `${(from.value + (to.value - from.value) * t).toFixed(4)}`;
+		return t >= 0.5 ? to.value : from.value;
+	}
+
+	const parsedThemes = sectionThemes.map(theme => {
+		const parsed = {};
+		for (const name in theme) parsed[name] = parseValue(theme[name]);
+		return parsed;
+	});
+
+	function applyThemeInterp(fromIdx, toIdx, t) {
+		const from = parsedThemes[fromIdx];
+		const to = parsedThemes[toIdx] || from;
+		themeVarNames.forEach(name => {
+			const fv = from[name];
+			const tv = to[name];
+			if (fv && tv) {
+				const val = interpolateValue(fv, tv, t);
+				if (val != null) root.style.setProperty(name, val);
+			}
+		});
+	}
+
+	// ============================================================
+	//  SECTION OFFSETS — marker divs (V3 technique)
+	// ============================================================
+	const markers = sectionEls.map(sec => {
+		const marker = document.createElement('div');
+		marker.style.position = 'absolute';
+		marker.style.height = '0';
+		marker.style.width = '100%';
+		marker.style.pointerEvents = 'none';
+		sec.parentNode.insertBefore(marker, sec);
+		return marker;
+	});
+
+	let sectionOffsets = [];
+	function measure() {
+		sectionOffsets = markers.map(m => {
+			const r = m.getBoundingClientRect();
+			return r.top + window.scrollY;
+		});
+	}
+
+	// ============================================================
+	//  HUD + chip + parked + dots
+	// ============================================================
+	const hud = document.getElementById('hud');
+	const progress = document.getElementById('progress');
+	const scrollHint = document.getElementById('scrollHint');
+	const themeChip = document.getElementById('themeChip');
+	const parkedEl = document.getElementById('parked');
+	const root = document.documentElement;
+
+	let parkStart = null;
+	let parkedCarIdx = -1;
+
+	function update() {
+		const scrollY = window.scrollY;
+		const vh = window.innerHeight;
+		const vw = window.innerWidth;
+
+		// ============================================================
+		//  SYSTEM 1: THEME INTERPOLATION (V8)
+		//  Trigger: next section's header moves from viewport bottom (vh) to center (vh/2)
+		// ============================================================
+		let themeCurrentIdx = 0;
+		for (let i = 0; i < sectionOffsets.length; i++) {
+			if (sectionOffsets[i] - scrollY <= vh * 0.5) themeCurrentIdx = i;
+			else break;
+		}
+		const themeNextIdx = themeCurrentIdx + 1;
+
+		let themeT = 0;
+		let themeInTransition = false;
+		if (themeNextIdx < sectionOffsets.length) {
+			const nextTop = sectionOffsets[themeNextIdx] - scrollY;
+			if (nextTop < vh && nextTop > vh * 0.5) {
+				themeT = (vh - nextTop) / (vh * 0.5);
+				themeInTransition = true;
+			} else if (nextTop <= vh * 0.5) {
+				themeT = 1;
+				themeInTransition = true;
+			}
+		}
+		applyThemeInterp(themeCurrentIdx, themeNextIdx < sectionOffsets.length ? themeNextIdx : themeCurrentIdx, themeT);
+
+		// ============================================================
+		//  SYSTEM 2: CAR / BG LAYER (V6)
+		//  Independent of theme.
+		//  Each car: parked → pushed out by next car (dir-based).
+		//  Push trigger: next section's bg enters viewport bottom
+		//  (this is when sectionOffsets[i+1] - scrollY <= vh)
+		// ============================================================
+
+		// Find current car: last section whose top is at/past viewport top
+		let carCurrentIdx = 0;
+		for (let i = 0; i < sectionOffsets.length; i++) {
+			if (sectionOffsets[i] - scrollY <= 0) carCurrentIdx = i;
+			else break;
+		}
+
+		// Car push progress: how much has next car's top moved from vh to 0
+		// (we use same trigger range as theme, but logic is independent)
+		const carNextIdx = carCurrentIdx + 1;
+		let carPushT = 0;
+		let carInPush = false;
+		if (carNextIdx < sectionOffsets.length) {
+			const nextTop = sectionOffsets[carNextIdx] - scrollY;
+			if (nextTop <= vh && nextTop > 0) {
+				carPushT = 1 - (nextTop / vh);
+				carInPush = true;
+			} else if (nextTop <= 0) {
+				carPushT = 1;
+				// carCurrentIdx should now actually be carNextIdx — recompute
+				carCurrentIdx = carNextIdx;
+			}
+		}
+
+		// Apply car transforms
+		bgs_loop: for (let i = 0; i < bgEls.length; i++) {
+			const bg = bgEls[i];
+			const dir = bg.dataset.carDir || 'up';
+			const trans = bg.dataset.carTransition || 'push';
+
+			// Cull cars far from active range
+			const myTop = sectionOffsets[i] - scrollY;
+			const isPast = (i < carCurrentIdx);
+			const isCurrent = (i === carCurrentIdx);
+			const isNext = (i === carCurrentIdx + 1);
+			const isFar = (i > carCurrentIdx + 1);
+
+			let opacity = 0;
+			let visible = false;
+			let tx = 0, ty = 0;
+			let scale = 1;
+			let z = '';
+
+			if (isPast) {
+				opacity = 0; visible = false;
+			} else if (isFar) {
+				opacity = 0; visible = false;
+			} else if (isCurrent && !carInPush) {
+				// Parked
+				opacity = 1; visible = true;
+			} else if (isCurrent && carInPush) {
+				// Being pushed out by next car
+				opacity = 1; visible = true;
+				if (trans === 'iris') {
+					scale = 1 - carPushT;
+				} else if (dir === 'up') {
+					ty = -carPushT * vh;
+				} else if (dir === 'left') {
+					tx = -carPushT * vw;
+				} else if (dir === 'right') {
+					tx = carPushT * vw;
+				} else if (dir === 'down') {
+					ty = carPushT * vh;
+					if (carPushT > 0 && carPushT < 1) z = '5';
+				}
+			} else if (isNext && carInPush) {
+				// Entering from below
+				opacity = 1; visible = true;
+				if (trans === 'iris') {
+					scale = carPushT;
+				} else {
+					// enters from bottom: starts at translate3d(0, vh, 0) → translate3d(0, 0, 0)
+					ty = (1 - carPushT) * vh;
+				}
+			}
+
+			bg.style.visibility = visible ? 'visible' : 'hidden';
+			bg.style.opacity = opacity.toFixed(3);
+			bg.style.transform = `translate3d(${tx.toFixed(1)}px, ${ty.toFixed(1)}px, 0) scale(${scale.toFixed(3)})`;
+			bg.style.zIndex = z;
+		}
+
+		// ============================================================
+		//  HUD — both systems shown in parallel
+		// ============================================================
+		const docHeight = document.documentElement.scrollHeight - vh;
+		const pct = docHeight > 0 ? Math.min(100, Math.max(0, (scrollY / docHeight) * 100)) : 0;
+		progress.style.width = pct + '%';
+
+		// Parked state (car system)
+		let isParked = false;
+		if (!carInPush && carCurrentIdx >= 0) {
+			isParked = true;
+		}
+		if (isParked) {
+			if (parkedCarIdx !== carCurrentIdx) {
+				parkedCarIdx = carCurrentIdx;
+				parkStart = performance.now();
+			}
+		} else {
+			parkedCarIdx = -1;
+			parkStart = null;
+		}
+
+		// Theme line
+		const themeName = sections[themeCurrentIdx].theme.replace('theme-', '');
+		const themeNextName = themeNextIdx < sections.length ? sections[themeNextIdx].theme.replace('theme-', '') : '';
+		const themePct = (themeT * 100).toFixed(0);
+
+		// Car line
+		const carName = `car ${carCurrentIdx + 1}/${sections.length}`;
+		const carDir = (sections[carCurrentIdx].carDir || 'up');
+		const arrow = { up: '↑', down: '↓', left: '←', right: '→' }[carDir] || '·';
+		const carPct = carInPush ? (carPushT * 100).toFixed(0) + '%' : (isParked ? 'PARKED' : 'idle');
+
+		// Parked duration
+		let parkDur = '';
+		if (isParked && parkStart) {
+			parkDur = ((performance.now() - parkStart) / 1000).toFixed(1) + 's';
+		}
+
+		// Chapter height
+		const chHeight = (carCurrentIdx + 1 < sectionOffsets.length)
+			? sectionOffsets[carCurrentIdx + 1] - sectionOffsets[carCurrentIdx]
+			: vh;
+		const chVh = (chHeight / vh).toFixed(1);
+
+		hud.innerHTML =
+			`<span class="sys-label">scroll</span>   ${scrollY}px\n` +
+			`<span class="sys-label">ch vh</span>    ${chVh}×\n` +
+			`<span class="sys-label">prog</span>     ${pct.toFixed(0)}%\n` +
+			`<span class="divider">───────</span>\n` +
+			`<span class="sys-theme">theme</span>  ${themeName}${themeInTransition ? ` → ${themeNextName} ${themePct}%` : ' · 100%'}\n` +
+			`<span class="divider">───────</span>\n` +
+			`<span class="sys-car">car</span>    ${carName} ${arrow} ${carDir}\n` +
+			`<span class="sys-car">state</span>  ${carPct}${parkDur ? ' · ' + parkDur : ''}`;
+
+		// Theme chip (top-right)
+		const bgColor = getComputedStyle(root).getPropertyValue('--bg-color').trim();
+		if (themeChip) {
+			if (themeInTransition) {
+				themeChip.innerHTML = `${themeName} → ${themeNextName}\n${themePct}%<span class="swatch" style="background:${bgColor}"></span>`;
+			} else {
+				themeChip.innerHTML = `${themeName} · 100%<span class="swatch" style="background:${bgColor}"></span>`;
+			}
+		}
+
+		// Parked badge (bottom-right)
+		if (parkedEl) {
+			if (isParked && parkDur) {
+				parkedEl.textContent = `◼ PARKED · car ${carCurrentIdx + 1} · ${parkDur}`;
+				parkedEl.classList.add('visible');
+			} else {
+				parkedEl.classList.remove('visible');
+			}
+		}
+
+		// Side dots — dual state
+		dotWraps.forEach((w, i) => {
+			const isActiveTheme = (i === themeCurrentIdx);
+			const isActiveCar = (i === carCurrentIdx);
+			const isParkedCar = (i === carCurrentIdx && isParked);
+			const isInTransition = (i === themeCurrentIdx && themeInTransition) || (i === carCurrentIdx && carInPush);
+
+			w.classList.toggle('active', isActiveCar);
+			w.classList.toggle('parked', !!isParkedCar);
+			w.classList.toggle('transitioning', !!isInTransition);
+
+			const ring = w.querySelector('.dot-theme');
+			if (ring) {
+				const accent = sectionThemes[i]['--accent-color'] || '#67e8f9';
+				ring.style.borderColor = accent;
+				if (isActiveTheme) {
+					ring.style.background = `transparent`;
+					ring.style.boxShadow = `0 0 8px ${accent}`;
+				} else {
+					ring.style.background = 'transparent';
+					ring.style.boxShadow = 'none';
+				}
+			}
+		});
+
+		// Scroll hint
+		if (scrollY > 80) scrollHint.classList.add('hidden');
+		else scrollHint.classList.remove('hidden');
+	}
+
+	// ============================================================
+	//  INIT + LISTENERS
+	// ============================================================
+	measure();
+	update();
+
+	// Parked badge needs to tick even without scroll events (duration updates)
+	let parkedTicker = setInterval(() => {
+		if (parkedCarIdx >= 0) {
+			// re-render HUD + parked badge
+			const dur = ((performance.now() - parkStart) / 1000).toFixed(1) + 's';
+			parkedEl.textContent = `◼ PARKED · car ${parkedCarIdx + 1} · ${dur}`;
+		}
+	}, 100);
+
+	let ticking = false;
+	window.addEventListener('scroll', () => {
+		if (!ticking) {
+			requestAnimationFrame(() => {
+				update();
+				ticking = false;
+			});
+			ticking = true;
+		}
+	}, { passive: true });
+
+	let lastWidth = window.innerWidth;
+	const ro = new ResizeObserver(() => {
+		if (window.innerWidth !== lastWidth) {
+			lastWidth = window.innerWidth;
+			requestAnimationFrame(() => {
+				measure();
+				update();
+			});
+		}
+	});
+	ro.observe(document.body);
+
+	window.addEventListener('load', () => { measure(); update(); });
+	let recheckCount = 0;
+	const recheckInterval = setInterval(() => {
+		measure(); update();
+		if (++recheckCount > 12) clearInterval(recheckInterval);
+	}, 250);
+</script>
+
+</body>
+</html>

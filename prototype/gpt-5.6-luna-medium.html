@@ -1,0 +1,652 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Visual Novella Engine Test</title>
+
+<style>
+:root {
+	--ui-bg: #11151d;
+	--ui-fg: #e8edf5;
+	--text: #202633;
+	--muted: #657080;
+	--page: #f4f6f9;
+}
+
+* {
+	box-sizing: border-box;
+}
+
+html,
+body {
+	margin: 0;
+	background: var(--page);
+	color: var(--text);
+	font-family: system-ui, sans-serif;
+}
+
+body.dark {
+	--page: #11151d;
+	--text: #e8edf5;
+	--muted: #9ba8ba;
+}
+
+.toolbar {
+	position: fixed;
+	z-index: 1000;
+	inset: 0 0 auto;
+	display: flex;
+	gap: 8px;
+	align-items: center;
+	padding: 10px 14px;
+	background: color-mix(in srgb, var(--ui-bg) 92%, transparent);
+	color: var(--ui-fg);
+	backdrop-filter: blur(10px);
+}
+
+.toolbar button,
+.toolbar select {
+	border: 1px solid #526075;
+	border-radius: 6px;
+	padding: 6px 10px;
+	background: #202938;
+	color: white;
+	cursor: pointer;
+}
+
+.toolbar span {
+	margin-left: auto;
+	font-size: 12px;
+	opacity: .75;
+}
+
+.story {
+	width: min(780px, calc(100% - 32px));
+	margin: 0 auto;
+	padding: 90px 0 60vh;
+}
+
+.chapter {
+	position: relative;
+	margin: 0 0 160px;
+	padding: 40px 32px;
+	min-height: 900px;
+	border-radius: 18px;
+	background: color-mix(in srgb, var(--page) 88%, white);
+	box-shadow: 0 15px 60px rgb(0 0 0 / .08);
+}
+
+.chapter h1,
+.chapter h2 {
+	margin-top: 0;
+}
+
+.chapter p {
+	font-size: 18px;
+	line-height: 1.8;
+}
+
+.chapter.small {
+	min-height: 500px;
+}
+
+.chapter.large {
+	min-height: 1500px;
+}
+
+.chapter.dark {
+	background: #151b27;
+	color: #e9eef7;
+}
+
+.bg {
+	position: relative;
+	z-index: 1;
+	display: block;
+	width: 100%;
+	height: 100vh;
+	min-height: 420px;
+	margin: 70px 0;
+	background-position: center;
+	background-repeat: no-repeat;
+	background-color: transparent;
+	pointer-events: none;
+}
+
+.bg[data-height="small"] {
+	height: 360px;
+	min-height: 360px;
+}
+
+.bg[data-height="large"] {
+	height: 130vh;
+	min-height: 700px;
+}
+
+.bg[data-height="short"] {
+	height: 220px;
+	min-height: 220px;
+}
+
+.bg-visual {
+	position: fixed;
+	z-index: 0;
+	left: 0;
+	top: 0;
+	display: block;
+	pointer-events: none;
+	background-position: center;
+	background-repeat: no-repeat;
+	will-change: transform;
+}
+
+.bg-visual[data-bg-size="cover"] {
+	background-size: cover;
+}
+
+.bg-visual[data-bg-size="contain"] {
+	background-size: contain;
+}
+
+.bg-visual[data-bg-size="original"] {
+	background-size: auto;
+}
+
+.bg-visual[data-bg-size="fixed"] {
+	background-size: var(--fixed-size, 512px 512px);
+}
+
+.marker-text {
+	position: relative;
+	z-index: 2;
+}
+
+.hint {
+	padding: 12px 16px;
+	border-left: 4px solid #687dff;
+	background: color-mix(in srgb, #687dff 12%, transparent);
+	color: var(--muted);
+}
+</style>
+</head>
+
+<body>
+
+<div class="toolbar">
+	<button id="themeButton">Theme</button>
+	<button id="topButton">Top</button>
+	<select id="speedSelect">
+		<option value="1">Normal</option>
+		<option value="0.5">Slow scroll</option>
+		<option value="2">Fast scroll</option>
+	</select>
+	<span id="status">Visual novella test</span>
+</div>
+
+<main class="story">
+
+	<section class="chapter small" data-style="chapter-one">
+		<h1>Chapter 1 — Red room</h1>
+
+		<p class="hint">
+			Короткая глава. Следующая глава намеренно намного длиннее.
+		</p>
+
+		<p>
+			R<br>R<br>R<br>R<br>R<br>R<br>R<br>R<br>
+		</p>
+
+		<div
+			class="bg"
+			data-bg-size="cover"
+			style="background-image: linear-gradient(135deg, #7e1018, #f44b45 45%, #ffcf70);">
+		</div>
+
+		<p>
+			Текст после красного фона.<br>
+			Текст после красного фона.<br>
+			Текст после красного фона.<br>
+			Текст после красного фона.
+		</p>
+
+		<script type="txt" event="view">
+			console.log("Chapter 1 entered view");
+		</script>
+
+		<script type="txt" event="center">
+			console.log("Chapter 1 reached center");
+		</script>
+
+		<script type="txt" event="end">
+			console.log("Chapter 1 ended");
+		</script>
+
+		<script type="txt" event="skip">
+			console.log("Chapter 1 skipped");
+		</script>
+	</section>
+
+
+	<section class="chapter large dark">
+		<h2>Chapter 2 — Long corridor</h2>
+
+		<p>
+			Размер этой главы отличается от первой.
+			Фоны не должны зависеть от одинакового размера section.
+		</p>
+
+		<div
+			class="bg"
+			data-bg-size="contain"
+			style="background-image:
+				radial-gradient(circle at center, #d9f3ff 0 8%, transparent 9%),
+				linear-gradient(90deg, #14213d, #29548a, #14213d);">
+		</div>
+
+		<p>
+			2<br>2<br>2<br>2<br>2<br>2<br>2<br>2<br>
+			2<br>2<br>2<br>2<br>2<br>2<br>2<br>2<br>
+			2<br>2<br>2<br>2<br>2<br>2<br>2<br>2<br>
+		</p>
+
+		<div
+			class="bg"
+			data-bg-size="fixed"
+			data-fixed-size="420px 420px"
+			data-height="short"
+			style="background-image:
+				repeating-conic-gradient(#e9c46a 0 25%, #264653 0 50%);
+				background-size: 420px 420px;">
+		</div>
+
+		<p>
+			Ещё один фон находится внутри той же главы.
+			Он должен иметь собственную точку привязки.
+		</p>
+
+		<script type="txt" event="view">
+			console.log("Chapter 2 viewed");
+		</script>
+
+		<script type="txt" event="center">
+			console.log("Chapter 2 center");
+		</script>
+
+		<script type="txt" event="end">
+			console.log("Chapter 2 end");
+		</script>
+
+		<script type="txt" event="skip">
+			console.log("Chapter 2 skipped");
+		</script>
+	</section>
+
+
+	<section class="chapter">
+		<h2>Chapter 3 — SVG window</h2>
+
+		<p>
+			Фоновый элемент можно поставить в любом месте DOM.
+			Он не обязан быть первым или последним элементом section.
+		</p>
+
+		<p>
+			3<br>3<br>3<br>
+		</p>
+
+		<div
+			class="bg"
+			data-bg-size="original"
+			data-height="large"
+			style="
+				background-color: #090b12;
+				background-image: url('data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 width=%22600%22 height=%22400%22 viewBox=%220 0 600 400%22%3E%3Crect width=%22600%22 height=%22400%22 fill=%22%23090b12%22/%3E%3Ccircle cx=%22300%22 cy=%22200%22 r=%22135%22 fill=%22none%22 stroke=%22%238b9cff%22 stroke-width=%223%22/%3E%3Ccircle cx=%22300%22 cy=%22200%22 r=%2280%22 fill=%22none%22 stroke=%22%23ff718d%22 stroke-width=%223%22/%3E%3C/svg%3E');
+				background-size: auto;">
+		</div>
+
+		<p>
+			3<br>3<br>3<br>3<br>3<br>3<br>3<br>3<br>
+			3<br>3<br>3<br>3<br>3<br>3<br>3<br>3<br>
+		</p>
+
+		<script type="txt" event="view">
+			document.body.dataset.lastEvent = "chapter-3-view";
+			console.log("Chapter 3 view");
+		</script>
+
+		<script type="txt" event="center">
+			console.log("Chapter 3 center");
+		</script>
+
+		<script type="txt" event="end">
+			console.log("Chapter 3 end");
+		</script>
+
+		<script type="txt" event="skip">
+			console.log("Chapter 3 skip");
+		</script>
+	</section>
+
+
+	<section class="chapter small">
+		<h2>Chapter 4 — End</h2>
+
+		<p>
+			Фон последней главы останется припаркованным сверху,
+			поскольку следующего вагона после него нет.
+		</p>
+
+		<div
+			class="bg"
+			data-bg-size="cover"
+			data-height="small"
+			style="background-image:
+				linear-gradient(180deg, #f9c74f, #f9844a 45%, #577590);">
+		</div>
+
+		<p>
+			4<br>4<br>4<br>4<br>4<br>4<br>
+		</p>
+	</section>
+
+</main>
+
+<script>
+const $ = id => document.getElementById(id);
+
+const engine = {
+	markers: [],
+	targets: [],
+	viewportHeight: 0,
+	scrollY: 0,
+	direction: 1,
+	raf: 0,
+	ready: false
+};
+
+const EVENT_BITS = {
+	view: 1,
+	center: 2,
+	end: 4,
+	skip: 8
+};
+
+function createBackgroundMarkers() {
+	const nodes = document.querySelectorAll(".bg");
+
+	for (let i = 0; i < nodes.length; i++) {
+		const marker = nodes[i];
+		const visual = document.createElement("div");
+		const computed = getComputedStyle(marker);
+
+		visual.className = "bg-visual";
+		visual.dataset.bgSize = marker.dataset.bgSize || "cover";
+		visual.style.backgroundImage = computed.backgroundImage;
+		visual.style.backgroundColor = computed.backgroundColor;
+		visual.style.backgroundPosition = computed.backgroundPosition;
+		visual.style.backgroundRepeat = computed.backgroundRepeat;
+
+		if (marker.dataset.fixedSize) {
+			visual.style.setProperty("--fixed-size", marker.dataset.fixedSize);
+		}
+
+		marker.style.backgroundImage = "none";
+		marker.style.backgroundColor = "transparent";
+		marker.appendChild(visual);
+
+		engine.markers.push({
+			marker,
+			visual,
+			top: 0,
+			height: 0,
+			width: 0,
+			left: 0,
+			documentTop: 0
+		});
+	}
+}
+
+function createEventTargets() {
+	const nodes = document.querySelectorAll("section, .bg");
+
+	for (let i = 0; i < nodes.length; i++) {
+		const target = nodes[i];
+		const scripts = target.querySelectorAll(":scope > script[type='txt'], :scope > script[type='text']");
+
+		if (!scripts.length) {
+			continue;
+		}
+
+		const events = [];
+		let bits = 0;
+
+		for (let j = 0; j < scripts.length; j++) {
+			const script = scripts[j];
+			const name = (script.getAttribute("event") || "").trim();
+			const bit = EVENT_BITS[name];
+
+			if (!bit) {
+				continue;
+			}
+
+			events.push({
+				name,
+				code: script.textContent,
+				bit
+			});
+
+			bits |= bit;
+		}
+
+		engine.targets.push({
+			node: target,
+			events,
+			fired: 0,
+			wasViewed: false,
+			previousTop: 0,
+			previousBottom: 0,
+			bits
+		});
+	}
+}
+
+function runEvent(target, item) {
+	if (target.fired & item.bit) {
+		return;
+	}
+
+	target.fired |= item.bit;
+
+	const event = {
+		type: item.name,
+		target: target.node,
+		scrollY: engine.scrollY
+	};
+
+	try {
+		const handler = new Function("event", "engine", item.code);
+		handler(event, engine);
+	} catch (error) {
+		console.error("Visual novella event error:", error);
+	}
+}
+
+function updateTargetEvents() {
+	const viewport = engine.viewportHeight;
+	const scrollY = engine.scrollY;
+	const direction = engine.direction;
+
+	for (let i = 0; i < engine.targets.length; i++) {
+		const target = engine.targets[i];
+		const rect = target.node.getBoundingClientRect();
+		const top = rect.top;
+		const bottom = rect.bottom;
+		const center = top <= viewport * .5 && bottom >= viewport * .5;
+		const visible = bottom > 0 && top < viewport;
+
+		if (visible) {
+			target.wasViewed = true;
+		}
+
+		for (let j = 0; j < target.events.length; j++) {
+			const item = target.events[j];
+
+			if (item.name === "view" && visible) {
+				runEvent(target, item);
+				continue;
+			}
+
+			if (item.name === "center" && center) {
+				runEvent(target, item);
+				continue;
+			}
+
+			if (item.name === "end" && target.wasViewed) {
+				const leftScreen = direction > 0
+					? bottom <= 0
+					: top >= viewport;
+
+				if (leftScreen) {
+					runEvent(target, item);
+				}
+
+				continue;
+			}
+
+			if (item.name === "skip" && !target.wasViewed) {
+				const skipped = direction > 0
+					? bottom <= 0
+					: top >= viewport;
+
+				if (skipped) {
+					runEvent(target, item);
+				}
+			}
+		}
+
+		target.previousTop = top;
+		target.previousBottom = bottom;
+	}
+}
+
+function measureMarkers() {
+	for (let i = 0; i < engine.markers.length; i++) {
+		const item = engine.markers[i];
+		const rect = item.marker.getBoundingClientRect();
+
+		item.top = rect.top;
+		item.height = rect.height;
+		item.width = rect.width;
+		item.left = rect.left;
+		item.documentTop = rect.top + engine.scrollY;
+	}
+}
+
+function renderMarkers() {
+	const viewport = engine.viewportHeight;
+
+	for (let i = 0; i < engine.markers.length; i++) {
+		const item = engine.markers[i];
+		const next = engine.markers[i + 1];
+
+		let top = item.top;
+		let width = item.width;
+		let height = item.height;
+		let left = item.left;
+
+		if (top < 0) {
+			top = 0;
+		}
+
+		if (next) {
+			const nextTop = next.documentTop - engine.scrollY;
+			const pushedTop = nextTop - height;
+
+			if (pushedTop < top) {
+				top = pushedTop;
+			}
+		}
+
+		const bottom = top + height;
+		const visible = bottom > 0 && top < viewport;
+
+		if (!visible) {
+			item.visual.style.display = "none";
+			continue;
+		}
+
+		item.visual.style.display = "block";
+		item.visual.style.width = width + "px";
+		item.visual.style.height = height + "px";
+		item.visual.style.transform =
+			"translate3d(" + left + "px," + top + "px,0)";
+	}
+}
+
+function render() {
+	engine.raf = 0;
+	engine.viewportHeight = window.innerHeight;
+	engine.scrollY = window.scrollY;
+
+	measureMarkers();
+	renderMarkers();
+	updateTargetEvents();
+
+	$("status").textContent =
+		"scroll: " + Math.round(engine.scrollY) +
+		" / backgrounds: " + engine.markers.length;
+}
+
+function requestRender() {
+	if (engine.raf) {
+		return;
+	}
+
+	engine.raf = requestAnimationFrame(render);
+}
+
+function onScroll() {
+	const nextScrollY = window.scrollY;
+
+	engine.direction = nextScrollY >= engine.scrollY ? 1 : -1;
+	engine.scrollY = nextScrollY;
+
+	requestRender();
+}
+
+function setTheme() {
+	document.body.classList.toggle("dark");
+}
+
+function scrollToTop() {
+	window.scrollTo({
+		top: 0,
+		behavior: "smooth"
+	});
+}
+
+function init() {
+	createBackgroundMarkers();
+	createEventTargets();
+
+	window.addEventListener("scroll", onScroll, { passive: true });
+	window.addEventListener("resize", requestRender);
+
+	$("themeButton").addEventListener("click", setTheme);
+	$("topButton").addEventListener("click", scrollToTop);
+
+	$("speedSelect").addEventListener("change", event => {
+		document.documentElement.style.scrollBehavior =
+			event.target.value === "0.5" ? "smooth" : "auto";
+	});
+
+	engine.ready = true;
+	requestRender();
+}
+
+init();
+</script>
+
+</body>
+</html>

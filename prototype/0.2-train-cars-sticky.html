@@ -1,0 +1,249 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Train Cars — Sticky (compositor-side, no glitch)</title>
+<style>
+	* { box-sizing: border-box; margin: 0; padding: 0; }
+	html, body { background: #0a0a0a; color: #fff; }
+	body {
+		font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+		overflow-x: hidden;
+	}
+
+	.content {
+		position: relative;
+		z-index: 2;
+		max-width: 720px;
+		margin: 0 auto;
+		padding: 0 28px;
+	}
+
+	.chapter { position: relative; z-index: 2; padding: 32px 0 56px; }
+	.chapter h2 {
+		font-size: 42px;
+		font-weight: 800;
+		line-height: 1.1;
+		margin-bottom: 20px;
+		text-shadow: 0 2px 16px rgba(0,0,0,.75);
+	}
+	.chapter p {
+		font-size: 18px;
+		line-height: 1.8;
+		margin-bottom: 14px;
+		text-shadow: 0 1px 8px rgba(0,0,0,.75);
+	}
+	.chapter.giant h2 { font-size: 96px; }
+	.chapter.giant p  { font-size: 28px; }
+	.chapter.huge  h2 { font-size: 72px; }
+	.chapter.huge  p  { font-size: 24px; line-height: 1.7; }
+	.chapter.small h2 { font-size: 22px; }
+	.chapter.small p  { font-size: 14px; line-height: 1.55; }
+	.chapter.tiny  h2 { font-size: 18px; }
+	.chapter.tiny  p  { font-size: 12px; line-height: 1.4; }
+
+	/* KEY CHANGE: position: sticky + top: 0
+	   "Прилипание к верху" — на compositor thread, БЕЗ JS, БЕЗ глича.
+	   JS применяет transform только для push-фазы (когда следующий вагон наступает). */
+	.bg {
+		position: sticky;
+		top: 0;
+		width: 100vw;
+		left: 50%;
+		margin-left: -50vw;
+		z-index: 1;
+		will-change: transform;
+		background-repeat: no-repeat;
+		background-position: center;
+		backface-visibility: hidden;
+	}
+
+	.bg-cover    { background-size: cover;                  height: 100vh; }
+	.bg-contain  { background-size: contain;                height: 100vh; background-color: #000; }
+	.bg-original { background-size: auto;                    height: 600px; background-position: top center; background-color: #1a1a1a; }
+	.bg-fixed    { background-size: 400px 300px;            height: 400px; background-position: top center; background-color: #1a1a1a; }
+
+	.g1 { background-image: linear-gradient(135deg, #667eea 0%, #764ba2 100%); }
+	.g2 { background-image: linear-gradient(135deg, #f093fb 0%, #f5576c 100%); }
+	.g3 { background-image: linear-gradient(135deg, #4facfe 0%, #00f2fe 100%); }
+	.g4 { background-image: linear-gradient(135deg, #43e97b 0%, #38f9d7 100%); }
+	.g5 { background-image: linear-gradient(135deg, #fa709a 0%, #fee140 100%); }
+	.g6 { background-image: linear-gradient(135deg, #30cfd0 0%, #330867 100%); }
+	.g7 { background-image: linear-gradient(135deg, #232526 0%, #414345 100%); }
+
+	.bg::after {
+		content: attr(data-label);
+		position: absolute;
+		bottom: 12px;
+		right: 16px;
+		font: 11px/1.5 ui-monospace, "SF Mono", Menlo, monospace;
+		color: rgba(255,255,255,.75);
+		background: rgba(0,0,0,.45);
+		padding: 4px 8px;
+		border-radius: 4px;
+		pointer-events: none;
+	}
+
+	.hud {
+		position: fixed;
+		top: 12px;
+		left: 12px;
+		z-index: 100;
+		font: 11px/1.5 ui-monospace, "SF Mono", Menlo, monospace;
+		color: #fff;
+		background: rgba(0,0,0,.6);
+		padding: 8px 12px;
+		border-radius: 6px;
+		pointer-events: none;
+		white-space: pre;
+	}
+</style>
+</head>
+<body>
+
+<div class="hud" id="hud">scroll: 0</div>
+
+<div class="content">
+	<div class="bg bg-cover g1" data-label="cover · 100vh"></div>
+	<section class="chapter">
+		<h2>Глава 1</h2>
+		<p>Sticky-версия: «прилипание к верху» — на CSS <code>position: sticky</code>, на compositor thread. JS применяет transform только когда следующий вагон начинает наступать. Когда вагон просто стоит — никаких rAF/c scroll-обработчиков не нужно, CSS делает всё сам.</p>
+		<p>Поэтому нет глича на быстром скролле: compositor обновляет sticky позицию синхронно с scroll.</p>
+	</section>
+
+	<div class="bg bg-cover g2" data-label="cover · 100vh"></div>
+	<section class="chapter huge">
+		<h2>Огромная Глава 2</h2>
+		<p>Эта глава с очень крупным шрифтом — чтобы показать, что «вагоны» могут нести текст разного размера.</p>
+		<p>Скролльте вниз — следующий вагон приедет снизу и начнёт выталкивать этот вверх.</p>
+		<p>Текст, текст, текст, текст, текст, текст, текст.</p>
+	</section>
+
+	<div class="bg bg-cover g3" data-dir="left" data-label="cover · dir=left"></div>
+	<section class="chapter">
+		<h2>Глава 3</h2>
+		<p>У этого вагона <code>data-dir="left"</code> — он выталкивает предыдущий вагон не вверх, а влево.</p>
+		<p>Текст третьей главы.</p>
+	</section>
+
+	<div class="bg bg-cover g4" data-label="cover · 100vh"></div>
+	<section class="chapter tiny">
+		<h2>Глава 4 — длинная</h2>
+		<p>4<br>4<br>4<br>4<br>4<br>4<br>4<br>4<br>4<br>4<br>4<br>4<br>4<br>4<br>4<br>4<br>4<br>4<br>4<br>4<br>4<br>4<br>4<br>4<br>4<br>4<br>4<br>4<br>4<br>4<br>4<br>4<br>4<br>4<br>4<br>4<br>4<br>4<br>4<br>4<br>4<br>4<br>4<br>4<br>4<br>4<br>4<br>4<br>4<br>4<br>4<br>4<br>4<br>4<br>4<br>4<br>4<br>4<br>4<br></p>
+	</section>
+
+	<div class="bg bg-contain g5" data-label="contain · 100vh"></div>
+	<section class="chapter small">
+		<h2>Глава 5 — contain</h2>
+		<p>Этот вагон использует <code>background-size: contain</code>.</p>
+	</section>
+
+	<div class="bg bg-original g6" data-label="original · 600px"></div>
+	<section class="chapter small">
+		<h2>Глава 6 — original size</h2>
+		<p>Этот вагон имеет оригинальный размер, высота 600px.</p>
+	</section>
+
+	<div class="bg bg-fixed g7" data-dir="right" data-label="fixed · 400×300 · dir=right"></div>
+	<section class="chapter">
+		<h2>Глава 7 — fixed size</h2>
+		<p>Этот вагон имеет фиксированный размер 400×300px и <code>data-dir="right"</code>.</p>
+	</section>
+
+	<div class="bg bg-cover g1" data-label="cover · 100vh"></div>
+	<section class="chapter">
+		<h2>Глава 8 — финал</h2>
+		<p>Последний вагон. Если дальше ничего нет, он останется стоять у верха экрана.</p>
+		<p>Скролльте обратно вверх — математика полностью обратима.</p>
+	</section>
+</div>
+
+<script>
+	const $ = id => document.getElementById(id);
+	const bgs = Array.from(document.querySelectorAll('.bg'));
+	const hud = $('hud');
+
+	/* Предвычисляем абсолютные позиции вагонов. */
+	function computePositions() {
+		bgs.forEach(bg => {
+			let top = 0;
+			let el = bg;
+			while (el) {
+				top += el.offsetTop;
+				el = el.offsetParent;
+			}
+			bg._naturalTop = top;
+			bg._height = bg.offsetHeight;
+		});
+	}
+
+	/* Sticky-версия: CSS уже держит вагон прилипшим к top:0 (compositor-side).
+	   JS применяет transform ТОЛЬКО для push-фазы (когда следующий вагон наступает). */
+	function update() {
+		const scrollY = window.scrollY;
+		const vw = window.innerWidth;
+
+		/* visualTops[i] — визуальная позиция верха вагона i (в координатах viewport),
+		   с учётом sticky и transform. Идём сзаду вперёд. */
+		const visualTops = new Array(bgs.length);
+
+		for (let i = bgs.length - 1; i >= 0; i--) {
+			const bg = bgs[i];
+			const naturalTop = bg._naturalTop - scrollY;
+			/* Sticky-clamped: вагон остаётся на naturalTop, пока naturalTop > 0,
+			   иначе прилипает к 0. CSS делает это сам; это значение —
+			   что мы видим БЕЗ transform. */
+			const stickyTop = Math.max(0, naturalTop);
+
+			let tx = 0, ty = 0;
+
+			if (i < bgs.length - 1) {
+				const nextVisualTop = visualTops[i + 1];
+				const stickyBottom = stickyTop + bg._height;
+				const overlap = Math.max(0, stickyBottom - nextVisualTop);
+				const pushFraction = Math.min(1, overlap / bg._height);
+
+				/* Direction хранится на СЛЕДУЮЩЕМ вагоне (это он диктует,
+				   куда толкать текущий). */
+				const dir = bgs[i + 1].dataset.dir || 'up';
+				if (dir === 'up') {
+					/* Толкаем текущий вверх на overlap пикселей. */
+					ty = -overlap;
+				} else if (dir === 'left') {
+					/* Текущий остаётся прилипшим, уезжает влево. */
+					tx = -pushFraction * vw;
+				} else if (dir === 'right') {
+					tx = pushFraction * vw;
+				}
+			}
+
+			visualTops[i] = stickyTop + ty;
+			bg.style.transform = `translate3d(${tx}px, ${ty}px, 0)`;
+		}
+
+		if (hud) {
+			const activeIdx = visualTops.findIndex(t => t <= 0);
+			hud.textContent = `scroll: ${scrollY}\nactive car: ${activeIdx >= 0 ? activeIdx + 1 : '-'}`;
+		}
+	}
+
+	computePositions();
+	update();
+
+	/* Синхронный обработчик (passive: true, не блокирует compositor).
+	   Sticky уже сделал основную работу на compositor — JS только догоняет push. */
+	window.addEventListener('scroll', update, { passive: true });
+
+	let resizeRaf = 0;
+	window.addEventListener('resize', () => {
+		if (resizeRaf) cancelAnimationFrame(resizeRaf);
+		resizeRaf = requestAnimationFrame(() => {
+			computePositions();
+			update();
+		});
+	});
+</script>
+
+</body>
+</html>

@@ -1,0 +1,20 @@
+read 0.0.0-draft.txt, compare implementation 
+
+prototype/
+	GLM5.2-vn-engine.html
+	gpt-5.6-luna-medium.html
+
+
+
+https://github.com/luncat8/VNS_e4ar.git
+main and branch '1'
+
+
+prototype/kimi-K26-A.html
+	proven as example of acceptable smooth scrolling without significant lags
+
+	0.2-train-cars-sticky.html
+	i like sticky elements of text be possible to set where them stick (parked): for example caption text stick at top, some location info stick and bottom, etc
+
+
+make plans to develop best of

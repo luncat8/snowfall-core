@@ -1,0 +1,1107 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Visual Novella Engine — VN v3 (events + bg-size + free placement)</title>
+<style>
+	* { box-sizing: border-box; margin: 0; padding: 0; }
+	html, body { background: #0a0a0a; }
+	body {
+		font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Georgia, Arial, sans-serif;
+		color: var(--text-color, #fff);
+		overflow-x: hidden;
+		-webkit-font-smoothing: antialiased;
+		transition: background-color 80ms linear, color 80ms linear;
+	}
+
+	/* ============================================================
+	   THEME CLASSES — CSS variables, auto-discovered by JS
+	   ============================================================ */
+	.theme-dawn    { --bg-color:#ffd9d9; --text-color:#2a1810; --accent-color:#ff8c69; --bg-brightness:1.1;  --bg-saturate:1.0;  --bg-blur:0px;   --vignette:0;    --overlay-color:rgba(255,200,200,0); }
+	.theme-morning { --bg-color:#cceeff; --text-color:#001133; --accent-color:#4facfe; --bg-brightness:1.15; --bg-saturate:1.1;  --bg-blur:0px;   --vignette:0;    --overlay-color:rgba(200,230,255,0); }
+	.theme-noon    { --bg-color:#b8d8ff; --text-color:#0a1f3d; --accent-color:#2c7be5; --bg-brightness:1.2;  --bg-saturate:1.15; --bg-blur:0px;   --vignette:0;    --overlay-color:rgba(255,255,255,0); }
+	.theme-golden  { --bg-color:#ff9a3d; --text-color:#2a1000; --accent-color:#ffd700; --bg-brightness:0.95; --bg-saturate:1.2;  --bg-blur:0px;   --vignette:0.15; --overlay-color:rgba(255,120,30,0.1); }
+	.theme-sunset  { --bg-color:#c0392b; --text-color:#fff5e0; --accent-color:#fbbf24; --bg-brightness:0.75; --bg-saturate:1.1;  --bg-blur:0px;   --vignette:0.3;  --overlay-color:rgba(180,50,30,0.2); }
+	.theme-dusk    { --bg-color:#4a2c5a; --text-color:#f0e0ff; --accent-color:#b388eb; --bg-brightness:0.55; --bg-saturate:0.95; --bg-blur:0.5px; --vignette:0.45; --overlay-color:rgba(60,30,80,0.25); }
+	.theme-night   { --bg-color:#0a0a1a; --text-color:#d0d0e0; --accent-color:#67e8f9; --bg-brightness:0.35; --bg-saturate:0.8;  --bg-blur:1px;   --vignette:0.65; --overlay-color:rgba(0,0,20,0.4); }
+	.theme-indoor  { --bg-color:#3d2817; --text-color:#ffd9a0; --accent-color:#fbbf24; --bg-brightness:0.95; --bg-saturate:1.0;  --bg-blur:0px;   --vignette:0.15; --overlay-color:rgba(120,70,30,0.15); }
+	.theme-midnight{ --bg-color:#050510; --text-color:#b8c0d8; --accent-color:#8b9dc3; --bg-brightness:0.25; --bg-saturate:0.7;  --bg-blur:1.5px; --vignette:0.75; --overlay-color:rgba(0,0,10,0.5); }
+
+	/* ============================================================
+	   BG CAR LAYERS — V6 mechanics + new bg-size modes
+	   Each .bg is a "railroad car" that parks at top:0
+	   and gets pushed out by the next bg (data-dir).
+	   Authors place .bg divs freely in the document —
+	   engine auto-discovers them in document order.
+	   ============================================================ */
+	.bg, .bgwindow {
+		position: fixed;
+		top: 0;
+		left: 0;
+		width: 100vw;
+		height: 100vh;
+		background-position: center;
+		background-repeat: no-repeat;
+		opacity: 0;
+		z-index: 1;
+		will-change: opacity, transform, visibility;
+		visibility: hidden;
+		backface-visibility: hidden;
+		filter: brightness(var(--bg-brightness, 1)) saturate(var(--bg-saturate, 1)) blur(var(--bg-blur, 0));
+		transition: filter 80ms linear;
+	}
+
+	/* Overlay tint (driven by --overlay-color theme var) */
+	.bg-overlay {
+		position: fixed;
+		top: 0; left: 0;
+		width: 100vw; height: 100vh;
+		background: var(--overlay-color, transparent);
+		z-index: 2;
+		pointer-events: none;
+		transition: background-color 80ms linear;
+	}
+	.vignette {
+		position: fixed;
+		top: 0; left: 0;
+		width: 100vw; height: 100vh;
+		z-index: 3;
+		pointer-events: none;
+		background: radial-gradient(ellipse at center, transparent 30%, rgba(0,0,0, calc(var(--vignette, 0) * 0.85)) 100%);
+		transition: background 80ms linear;
+	}
+
+	/* ============================================================
+	   Content
+	   ============================================================ */
+	.container { position: relative; z-index: 10; }
+	section { position: relative; }
+	section > h2 {
+		font-weight: 800;
+		line-height: 1.05;
+		margin: 0 auto 1.75rem;
+		max-width: 760px;
+		padding: 5rem 2rem 0;
+		letter-spacing: -.02em;
+		color: var(--accent-color, currentColor);
+		transition: color 80ms linear;
+		font-size: 2.5rem;
+	}
+	section > h3 {
+		font-weight: 600;
+		max-width: 760px;
+		margin: 0 auto 1rem;
+		padding: 0 2rem;
+		opacity: .9;
+	}
+	p {
+		max-width: 760px;
+		margin: 0 auto 1rem;
+		padding: 0 2rem;
+		line-height: 1.75;
+		opacity: .96;
+		text-shadow: 0 2px 14px rgba(0,0,0,.65);
+	}
+	code {
+		background: rgba(0,0,0,.4);
+		padding: 2px 7px;
+		border-radius: 4px;
+		font: 13px ui-monospace, "SF Mono", Menlo, monospace;
+		color: var(--accent-color, #fbbf24);
+		transition: color 80ms linear;
+	}
+	b { font-weight: 700; }
+	em { color: var(--accent-color, inherit); font-style: normal; font-weight: 600; }
+
+	/* Inline images */
+	.inline-img {
+		display: block;
+		max-width: 760px;
+		margin: 1.5rem auto;
+		padding: 0 2rem;
+	}
+	.inline-img img {
+		max-width: 100%;
+		border-radius: 6px;
+		box-shadow: 0 8px 24px rgba(0,0,0,.4);
+	}
+
+	/* ============================================================
+	   HUD — dual system display (V2)
+	   ============================================================ */
+	.hud {
+		position: fixed;
+		top: 18px; left: 18px;
+		z-index: 100;
+		font: 11px/1.65 ui-monospace, "SF Mono", Menlo, monospace;
+		color: #fff;
+		background: rgba(0,0,0,.7);
+		padding: 11px 14px;
+		border-radius: 9px;
+		pointer-events: none;
+		white-space: pre;
+		backdrop-filter: blur(14px);
+		-webkit-backdrop-filter: blur(14px);
+		border: 1px solid rgba(255,255,255,.12);
+	}
+	.hud .sys-label { color: #67e8f9; font-weight: 700; }
+	.hud .sys-theme { color: #fbbf24; }
+	.hud .sys-car   { color: #fda4af; }
+	.hud .sys-event { color: #a78bfa; }
+	.hud .divider { color: rgba(255,255,255,.2); }
+
+	.progress {
+		position: fixed;
+		top: 0; left: 0;
+		height: 3px;
+		background: linear-gradient(90deg, #ff8c69, #4facfe, #fbbf24, #b388eb, #67e8f9);
+		z-index: 101;
+		width: 0%;
+		transition: width 60ms linear;
+		box-shadow: 0 0 12px rgba(255,140,105,.6);
+	}
+
+	.dots {
+		position: fixed;
+		right: 18px; top: 50%;
+		transform: translateY(-50%);
+		z-index: 100;
+		display: flex;
+		flex-direction: column;
+		gap: 12px;
+	}
+	.dot-wrap {
+		position: relative;
+		width: 14px; height: 14px;
+		cursor: pointer;
+		display: flex;
+		align-items: center;
+		justify-content: center;
+	}
+	.dot-theme {
+		position: absolute;
+		inset: 0;
+		border-radius: 50%;
+		border: 2px solid;
+		transition: all 250ms cubic-bezier(.4,0,.2,1);
+	}
+	.dot-car {
+		width: 6px; height: 6px;
+		border-radius: 50%;
+		background: rgba(255,255,255,.4);
+		transition: all 250ms cubic-bezier(.4,0,.2,1);
+	}
+	.dot-wrap:hover .dot-theme { transform: scale(1.2); }
+	.dot-wrap.active .dot-car {
+		background: #fff;
+		box-shadow: 0 0 8px rgba(255,255,255,.9);
+	}
+	.dot-wrap.parked .dot-car {
+		background: #67e8f9;
+		box-shadow: 0 0 10px rgba(103,232,249,.9);
+		animation: pulse 1.8s ease-in-out infinite;
+	}
+	.dot-wrap.transitioning .dot-theme {
+		animation: ring-pulse 1.2s ease-in-out infinite;
+	}
+	@keyframes pulse {
+		0%, 100% { transform: scale(1); }
+		50%      { transform: scale(1.4); }
+	}
+	@keyframes ring-pulse {
+		0%, 100% { transform: scale(1); opacity: 1; }
+		50%      { transform: scale(1.15); opacity: 0.6; }
+	}
+	.dot-wrap::after {
+		content: attr(data-label);
+		position: absolute;
+		right: 22px;
+		top: 50%;
+		transform: translateY(-50%);
+		font: 10px ui-monospace, "SF Mono", Menlo, monospace;
+		color: rgba(255,255,255,.9);
+		background: rgba(0,0,0,.75);
+		padding: 3px 6px;
+		border-radius: 4px;
+		white-space: nowrap;
+		opacity: 0;
+		pointer-events: none;
+		transition: opacity 200ms;
+	}
+	.dot-wrap:hover::after { opacity: 1; }
+
+	.scroll-hint {
+		position: fixed;
+		bottom: 28px;
+		left: 50%;
+		transform: translateX(-50%);
+		color: rgba(255,255,255,.75);
+		font: 12px/1 ui-monospace, "SF Mono", Menlo, monospace;
+		letter-spacing: .2em;
+		text-transform: uppercase;
+		animation: bob 2.2s ease-in-out infinite;
+		z-index: 11;
+		pointer-events: none;
+		transition: opacity 400ms;
+	}
+	.scroll-hint::after {
+		content: '';
+		display: block;
+		width: 1px;
+		height: 24px;
+		margin: 8px auto 0;
+		background: linear-gradient(to bottom, rgba(255,255,255,.7), transparent);
+	}
+	@keyframes bob {
+		0%, 100% { transform: translate(-50%, 0);   opacity: .7; }
+		50%      { transform: translate(-50%, 6px); opacity: 1;  }
+	}
+	.scroll-hint.hidden { opacity: 0; }
+
+	.theme-chip {
+		position: fixed;
+		top: 18px; right: 18px;
+		z-index: 100;
+		font: 11px/1.5 ui-monospace, "SF Mono", Menlo, monospace;
+		color: #fff;
+		background: rgba(0,0,0,.7);
+		padding: 8px 12px;
+		border-radius: 8px;
+		pointer-events: none;
+		backdrop-filter: blur(14px);
+		-webkit-backdrop-filter: blur(14px);
+		border: 1px solid rgba(255,255,255,.12);
+		white-space: pre;
+		text-align: right;
+	}
+	.theme-chip .swatch {
+		display: inline-block;
+		width: 10px; height: 10px;
+		border-radius: 50%;
+		margin-left: 6px;
+		vertical-align: middle;
+		border: 1px solid rgba(255,255,255,.4);
+	}
+
+	.parked {
+		position: fixed;
+		bottom: 18px; right: 18px;
+		z-index: 100;
+		font: 11px/1.5 ui-monospace, "SF Mono", Menlo, monospace;
+		color: #67e8f9;
+		background: rgba(0,0,0,.7);
+		padding: 8px 12px;
+		border-radius: 8px;
+		pointer-events: none;
+		backdrop-filter: blur(14px);
+		-webkit-backdrop-filter: blur(14px);
+		border: 1px solid rgba(103,232,249,.4);
+		opacity: 0;
+		transition: opacity 300ms;
+	}
+	.parked.visible { opacity: 1; }
+
+	/* ============================================================
+	   EVENT LOG (new in v3) — bottom-left panel
+	   Shows recently fired script events
+	   ============================================================ */
+	.event-log {
+		position: fixed;
+		bottom: 18px; left: 18px;
+		z-index: 100;
+		width: 280px;
+		max-height: 200px;
+		overflow: hidden;
+		font: 11px/1.5 ui-monospace, "SF Mono", Menlo, monospace;
+		color: #fff;
+		background: rgba(0,0,0,.7);
+		padding: 10px 12px;
+		border-radius: 9px;
+		pointer-events: auto;
+		backdrop-filter: blur(14px);
+		-webkit-backdrop-filter: blur(14px);
+		border: 1px solid rgba(167,139,250,.4);
+	}
+	.event-log .header {
+		color: #a78bfa;
+		font-weight: 700;
+		margin-bottom: 6px;
+		display: flex;
+		justify-content: space-between;
+		align-items: center;
+	}
+	.event-log .clear-btn {
+		color: rgba(255,255,255,.5);
+		cursor: pointer;
+		font-size: 10px;
+		padding: 2px 6px;
+		border-radius: 3px;
+		border: 1px solid rgba(255,255,255,.2);
+	}
+	.event-log .clear-btn:hover {
+		color: #fff;
+		border-color: rgba(255,255,255,.4);
+	}
+	.event-log .entries {
+		max-height: 150px;
+		overflow-y: auto;
+		scrollbar-width: thin;
+	}
+	.event-log .entry {
+		padding: 2px 0;
+		color: rgba(255,255,255,.7);
+		opacity: 0;
+		animation: slideIn 200ms forwards;
+	}
+	.event-log .entry .ts {
+		color: rgba(167,139,250,.7);
+		margin-right: 6px;
+	}
+	.event-log .entry .ev-view   { color: #67e8f9; font-weight: 700; }
+	.event-log .entry .ev-center { color: #fbbf24; font-weight: 700; }
+	.event-log .entry .ev-end    { color: #fda4af; font-weight: 700; }
+	.event-log .entry .ev-skip   { color: #ef4444; font-weight: 700; }
+	@keyframes slideIn {
+		from { opacity: 0; transform: translateX(-8px); }
+		to   { opacity: 1; transform: translateX(0); }
+	}
+
+	@media (max-width: 640px) {
+		.hud, .theme-chip, .parked, .event-log { font-size: 10px; padding: 7px 9px; }
+		.event-log { width: 200px; max-height: 140px; }
+		.dots { right: 10px; gap: 10px; }
+		.dot-wrap { width: 12px; height: 12px; }
+		.dot-wrap::after { display: none; }
+		section > h2 { font-size: 1.75rem; padding: 3rem 1.25rem 0; }
+		p { padding: 0 1.25rem; }
+	}
+</style>
+</head>
+<body>
+
+<div class="progress" id="progress"></div>
+<div class="hud" id="hud">scroll: 0</div>
+<div class="theme-chip" id="themeChip"></div>
+<div class="parked" id="parked"></div>
+<div class="event-log" id="eventLog">
+	<div class="header">
+		<span>script events</span>
+		<span class="clear-btn" id="clearLog">clear</span>
+	</div>
+	<div class="entries" id="eventEntries"></div>
+</div>
+<div class="dots" id="dots"></div>
+<div class="scroll-hint" id="scrollHint">scroll</div>
+
+<div class="bg-overlay" id="bgOverlay"></div>
+<div class="vignette" id="vignette"></div>
+
+<!-- ============================================================
+     DEMO CONTENT — freely placed .bg divs in document flow
+     ============================================================ -->
+
+<section class="theme-dawn">
+	<h2>I. Свободное размещение</h2>
+	<p><em>VN v3.</em> Движок теперь <b>автоматически находит</b> все <code>&lt;div class="bg"&gt;</code> в HTML — где бы автор их ни поставил: внутри секции, между абзацами, перед заголовком.</p>
+	<p>Каждый <code>.bg</code> — отдельный «вагон» в общей последовательности. Ниже — первый вагон. У него все 4 события: <code>view / center / end / skip</code>. Смотрите в Event Log слева снизу — там появятся сообщения.</p>
+
+	<div class="bg"
+	     data-bg-size="cover"
+	     data-dir="up"
+	     data-theme="dawn"
+	     style="background-image: url('https://picsum.photos/seed/v3bg1/1920/1080')">
+		<script type="txt" event="view">logEvent(1, 'view', 'bg1 entered viewport from bottom');</script>
+		<script type="txt" event="center">logEvent(1, 'center', 'bg1 top reached viewport center');</script>
+		<script type="txt" event="end">logEvent(1, 'end', 'bg1 fully exited top');</script>
+		<script type="txt" event="skip">logEvent(1, 'skip', 'bg1 was SKIPPED (jumped past)');</script>
+	</div>
+
+	<p>Текст поверх первого фона (<code>bg-size: cover</code>, dir=up). Фоновое изображение заполняет весь экран.</p>
+	<p>Дальше будет второй вагон с <code>bg-size: contain</code> и направлением <code>left</code>.</p>
+</section>
+
+<section class="theme-dawn">
+	<h3>1.1 — contain + left</h3>
+
+	<div class="bg"
+	     data-bg-size="contain"
+	     data-dir="left"
+	     style="background-image: url('https://picsum.photos/seed/v3bg2/1920/1080')">
+		<script type="txt" event="view">logEvent(2, 'view', 'bg2 (contain) entered');</script>
+		<script type="txt" event="end">logEvent(2, 'end', 'bg2 (contain) exited');</script>
+	</div>
+
+	<p>Этот вагон использует <code>data-bg-size="contain"</code> — изображение вписывается в экран, оставляя чёрные полосы по бокам. Направление выезда — <b>влево</b>.</p>
+	<p>У этого вагона только события <code>view</code> и <code>end</code> — без <code>center</code> и <code>skip</code>. Это нормально — автор решает, какие события нужны.</p>
+	<p>Скролльте дальше — третья секция с длинной главой (parking test).</p>
+</section>
+
+<section class="theme-noon">
+	<h2>II. Полдень — original size (LONG parking)</h2>
+	<p>Эта секция использует <code>theme-noon</code>. Тема интерполируется из рассвета — цвета меняются плавно. А фон использует <code>data-bg-size="original"</code> — изображение показывается в натуральном размере (1920×1080), центрируется, может не заполнять весь экран если viewport меньше.</p>
+
+	<div class="bg"
+	     data-bg-size="original"
+	     data-dir="up"
+	     style="background-image: url('https://picsum.photos/seed/v3bg3/1920/1080')">
+		<script type="txt" event="view">logEvent(3, 'view', 'bg3 (original size) entered');</script>
+		<script type="txt" event="center">logEvent(3, 'center', 'bg3 reached center');</script>
+		<script type="txt" event="end">logEvent(3, 'end', 'bg3 exited');</script>
+		<script type="txt" event="skip">logEvent(3, 'skip', 'bg3 SKIPPED');</script>
+	</div>
+
+	<p>Длинная глава (~300vh) — стресс-тест парковки. HUD показывает <code>car 3 · PARKED</code> с нарастающей длительностью. Тема остаётся стабильной <code>noon · 100%</code>.</p>
+	<p>Скролльте медленно — события view и center сработают по очереди. Скролльте быстро — возможно сработает skip.</p>
+	<p>Или кликните на боковую точку IV, чтобы перепрыгнуть через эту секцию — тогда для bg3 сработает событие <code>skip</code> (потому что вы прошли мимо, не просмотрев).</p>
+
+	<div class="inline-img">
+		<img src="https://picsum.photos/seed/v3inline1/800/450" alt="inline image" loading="lazy">
+	</div>
+
+	<p>Inline-изображение внутри секции. Движок его не трогает — это обычный <code>&lt;img&gt;</code> в потоке.</p>
+	<p>Ещё немного текста для длины...</p>
+	<p>Скролльте дальше — будет секция с фиксированным размером фона 400×300.</p>
+</section>
+
+<section class="theme-golden">
+	<h2>III. Золотой час — fixed size 400×300</h2>
+	<p>Эта секция с темой <code>theme-golden</code>. Фон — <code>data-bg-size="400px 300px"</code> (любое CSS-значение принимается). Изображение рендерится ровно 400×300px, центрируется на экране.</p>
+
+	<div class="bg"
+	     data-bg-size="400px 300px"
+	     data-dir="right"
+	     style="background-image: url('https://picsum.photos/seed/v3bg4/800/600')">
+		<script type="txt" event="view">logEvent(4, 'view', 'bg4 (400x300 fixed) entered');</script>
+		<script type="txt" event="end">logEvent(4, 'end', 'bg4 exited');</script>
+	</div>
+
+	<p>Вагон поедет <b>вправо</b> (dir=right). Маленькая картинка 400×300 — отличный способ показать «сфотографированный момент».</p>
+	<p>Дальше — закат с направлением <b>вниз</b>.</p>
+</section>
+
+<section class="theme-sunset">
+	<h2>IV. Закат — dir=down</h2>
+	<p>Тема интерполируется в закат (теплее, темнее, виньетка). Фон <code>cover</code>, направление <b>вниз</b> — вагон уезжает вниз с z-index boost, чтобы быть видимым поверх следующего.</p>
+
+	<div class="bg"
+	     data-bg-size="cover"
+	     data-dir="down"
+	     style="background-image: url('https://picsum.photos/seed/v3bg5/1920/1080')">
+		<script type="txt" event="view">logEvent(5, 'view', 'bg5 (dir=down) entered');</script>
+		<script type="txt" event="center">logEvent(5, 'center', 'bg5 reached center');</script>
+		<script type="txt" event="skip">logEvent(5, 'skip', 'bg5 SKIPPED');</script>
+	</div>
+
+	<p>Этот вагон без события <code>end</code> — автор может не подписываться на все события. HUD всё равно покажет, когда вагон уедет.</p>
+</section>
+
+<section class="theme-night">
+	<h2>V. Ночь — LONG parking test (skip via dot)</h2>
+	<p>Тема плавно перешла в ночь. Это снова длинная глава (~250vh) — парковка.</p>
+
+	<div class="bg"
+	     data-bg-size="cover"
+	     data-dir="up"
+	     style="background-image: url('https://picsum.photos/seed/v3bg6/1920/1080')">
+		<script type="txt" event="view">logEvent(6, 'view', 'bg6 (night, long) entered');</script>
+		<script type="txt" event="center">logEvent(6, 'center', 'bg6 reached center');</script>
+		<script type="txt" event="end">logEvent(6, 'end', 'bg6 exited');</script>
+		<script type="txt" event="skip">logEvent(6, 'skip', 'bg6 was SKIPPED');</script>
+	</div>
+
+	<p><b>Тест skip:</b> кликните на боковую точку VII (indoor), чтобы перепрыгнуть через эту секцию. Когда вы приземлитесь на VII, движок обнаружит, что bg6 был пропущен (его низ выше viewport top, но view никогда не сработал) — и запустит событие <code>skip</code>.</p>
+	<p>Scroll slowly through this section normally — events view → center → end will fire in sequence.</p>
+	<p>Или прокрутите обратно вверх — состояние каждого bg сбросится, и события снова сработают при следующем проходе.</p>
+</section>
+
+<section class="theme-indoor">
+	<h2>VI. В комнате — iris transition</h2>
+	<p>Тема мгновенно стала тёплой (indoor). Этот вагон использует <code>data-car-transition="iris"</code> — новый фон «вырастает» из центра экрана.</p>
+
+	<div class="bg"
+	     data-bg-size="cover"
+	     data-dir="up"
+	     data-car-transition="iris"
+	     style="background-image: url('https://picsum.photos/seed/v3bg7/1920/1080')">
+		<script type="txt" event="view">logEvent(7, 'view', 'bg7 (iris) entered');</script>
+		<script type="txt" event="center">logEvent(7, 'center', 'bg7 reached center');</script>
+	</div>
+
+	<p>Iris-переход = эффект «<b>открытия двери в светлую комнату</b>». Тема меняет цвета, фон растёт из центра — две системы работают параллельно.</p>
+</section>
+
+<section class="theme-midnight">
+	<h2>VII. Финал</h2>
+	<p>Тема перетекла в полночь. Вагон VI уехал вверх (iris exit — схлопывается обратно в центр).</p>
+
+	<div class="bg"
+	     data-bg-size="cover"
+	     data-dir="up"
+	     style="background-image: linear-gradient(180deg, #050510 0%, #0a0a1a 100%)">
+		<script type="txt" event="view">logEvent(8, 'view', 'bg8 (finale) entered');</script>
+		<script type="txt" event="end">logEvent(8, 'end', 'bg8 exited — end of story');</script>
+	</div>
+
+	<p><b>VN v3 — сводка:</b></p>
+	<p>• <b>Свободное размещение</b>: <code>&lt;div class="bg"&gt;</code> где угодно в HTML<br>
+	   • <b>4 режима размера</b>: cover / contain / original / любой CSS-размер<br>
+	   • <b>Скрипт-события</b>: view / center / end / skip — пишите JS прямо в HTML<br>
+	   • <b>Параллельные системы</b>: theme (V8) + car (V6) работают независимо<br>
+	   • <b>Skip-детект</b>: быстрый скролл или клик по точке запускает skip-event<br>
+	   • <b>Event log</b> слева снизу показывает все события</p>
+	<p>Скролльте обратно вверх — все события сработают заново.</p>
+</section>
+
+<script>
+	// ============================================================
+	//  VISUAL NOVELLA ENGINE — VN v3
+	//
+	//  THREE NEW FEATURES:
+	//  1. Script events: <script type="txt" event='view|center|end|skip'>
+	//     Browsers ignore non-standard script types — engine reads
+	//     textContent and evaluates via new Function() on event.
+	//  2. Background-size modes: data-bg-size='cover|contain|original|<css>'
+	//  3. Free DOM placement: .bg divs anywhere, auto-discovered in order
+	//
+	//  PRESERVED FROM v2: parallel theme + car systems, HUD, dots,
+	//  parked badge, theme chip, marker-div measurement, rAF coalescing.
+	// ============================================================
+
+	const root = document.documentElement;
+	const pageStart = performance.now();
+
+	// ============================================================
+	//  EVENT LOG — visible panel showing fired events
+	// ============================================================
+	const eventEntries = document.getElementById('eventEntries');
+	const eventLog = [];
+	const MAX_LOG = 12;
+
+	function logEvent(bgIdx, eventType, msg) {
+		const ts = ((performance.now() - pageStart) / 1000).toFixed(1);
+		const entry = { ts, bgIdx, eventType, msg };
+		eventLog.unshift(entry);
+		if (eventLog.length > MAX_LOG) eventLog.pop();
+		renderEventLog();
+		console.log(`[bg${bgIdx} ${eventType}] ${msg}`);
+	}
+
+	function renderEventLog() {
+		eventEntries.innerHTML = eventLog.map(e => {
+			const cls = `ev-${e.eventType}`;
+			return `<div class="entry"><span class="ts">[${e.ts}s]</span> bg#${e.bgIdx} <span class="${cls}">${e.eventType}</span> — ${e.msg}</div>`;
+		}).join('');
+	}
+
+	document.getElementById('clearLog').addEventListener('click', () => {
+		eventLog.length = 0;
+		renderEventLog();
+	});
+
+	// Expose logEvent globally so inline scripts can call it
+	window.logEvent = logEvent;
+
+	// ============================================================
+	//  AUTO-DISCOVER BG ELEMENTS (free DOM placement)
+	// ============================================================
+	const bgEls = Array.from(document.querySelectorAll('.bg, .bgwindow'));
+
+	// ============================================================
+	//  PER-BG SETUP: marker div, scripts, size mode, theme
+	// ============================================================
+	bgEls.forEach((bg, i) => {
+		bg._idx = i;
+
+		// Marker div (V3 technique) — measures natural document position
+		const marker = document.createElement('div');
+		marker.style.position = 'absolute';
+		marker.style.height = '0';
+		marker.style.width = '100%';
+		marker.style.pointerEvents = 'none';
+		bg.parentNode.insertBefore(marker, bg);
+		bg._marker = marker;
+
+		// Apply background-size mode
+		const sizeMode = bg.dataset.bgSize || 'cover';
+		if (sizeMode === 'cover') bg.style.backgroundSize = 'cover';
+		else if (sizeMode === 'contain') bg.style.backgroundSize = 'contain';
+		else if (sizeMode === 'original') bg.style.backgroundSize = 'auto';
+		else bg.style.backgroundSize = sizeMode; // pass-through any CSS value
+
+		// Collect inline event scripts (type="txt" + event attr)
+		bg._eventScripts = { view: [], center: [], end: [], skip: [] };
+		const scripts = bg.querySelectorAll('script[type="txt"][event]');
+		scripts.forEach(s => {
+			const ev = s.getAttribute('event');
+			if (bg._eventScripts[ev]) {
+				bg._eventScripts[ev].push(s.textContent);
+			}
+		});
+		// Remove script elements from DOM (they're parsed, no need to render)
+		scripts.forEach(s => s.remove());
+
+		// Event state machine per bg
+		bg._state = { seen: false, centered: false, ended: false, skipped: false, aboveReset: true };
+
+		// Determine effective theme
+		let themeName = bg.dataset.theme;
+		if (!themeName) {
+			const parentSection = bg.closest('section[class*="theme-"]');
+			if (parentSection) {
+				const m = parentSection.className.match(/theme-([\w-]+)/);
+				if (m) themeName = m[1];
+			}
+		}
+		bg._themeName = themeName; // may be null — inherits previous
+	});
+
+	// ============================================================
+	//  THEME VARIABLE AUTO-DISCOVERY (V8)
+	// ============================================================
+	// Build a synthetic "theme definitions" object by reading computed styles
+	// of each section's class. For simplicity, we read from any element that
+	// has a theme-* class.
+
+	const themeClasses = ['theme-dawn','theme-morning','theme-noon','theme-golden','theme-sunset','theme-dusk','theme-night','theme-indoor','theme-midnight'];
+
+	// Create a hidden div per theme class to read computed --* vars
+	const themeProbe = {};
+	themeClasses.forEach(cls => {
+		const probe = document.createElement('div');
+		probe.className = cls;
+		probe.style.position = 'absolute';
+		probe.style.visibility = 'hidden';
+		probe.style.pointerEvents = 'none';
+		document.body.appendChild(probe);
+		const cs = getComputedStyle(probe);
+		const vars = {};
+		for (let i = 0; i < cs.length; i++) {
+			const name = cs[i];
+			if (name && name.startsWith('--')) {
+				vars[name] = cs.getPropertyValue(name).trim();
+			}
+		}
+		themeProbe[cls.replace('theme-', '')] = vars;
+		probe.remove();
+	});
+
+	const themeVarNames = Object.keys(themeProbe[Object.keys(themeProbe)[0]] || { '--bg-color': '' });
+
+	function parseValue(raw) {
+		if (raw == null || raw === '') return null;
+		const v = raw.trim();
+		let m = v.match(/^rgba?\(([^)]+)\)$/i);
+		if (m) {
+			const parts = m[1].split(',').map(s => parseFloat(s));
+			return { type: 'color', a: parts[0], b: parts[1], c: parts[2], alpha: parts[3] != null ? parts[3] : 1 };
+		}
+		m = v.match(/^#([0-9a-f]{3,8})$/i);
+		if (m) {
+			let hex = m[1];
+			let alpha = 1;
+			if (hex.length === 3) hex = hex.split('').map(c => c + c).join('');
+			else if (hex.length === 4) { const a = hex[3] + hex[3]; hex = hex.slice(0, 3); alpha = parseInt(a, 16) / 255; hex = hex.split('').map(c => c + c).join(''); }
+			else if (hex.length === 8) { alpha = parseInt(hex.slice(6, 8), 16) / 255; hex = hex.slice(0, 6); }
+			else if (hex.length === 6) { /* ok */ }
+			else return null;
+			const r = parseInt(hex.slice(0, 2), 16);
+			const g = parseInt(hex.slice(2, 4), 16);
+			const b = parseInt(hex.slice(4, 6), 16);
+			return { type: 'color', a: r, b: g, c: b, alpha };
+		}
+		m = v.match(/^(-?\d+(?:\.\d+)?)px$/);
+		if (m) return { type: 'length', value: parseFloat(m[1]), unit: 'px' };
+		m = v.match(/^(-?\d+(?:\.\d+)?)$/);
+		if (m) return { type: 'number', value: parseFloat(m[1]) };
+		return { type: 'keyword', value: v };
+	}
+
+	function interpolateValue(from, to, t) {
+		if (!from || !to) return null;
+		if (from.type !== to.type) return t >= 0.5 ? to : from;
+		if (from.type === 'color') {
+			const r = from.a + (to.a - from.a) * t;
+			const g = from.b + (to.b - from.b) * t;
+			const b = from.c + (to.c - from.c) * t;
+			const a = from.alpha + (to.alpha - from.alpha) * t;
+			return `rgba(${Math.round(r)}, ${Math.round(g)}, ${Math.round(b)}, ${a.toFixed(3)})`;
+		}
+		if (from.type === 'length') return `${(from.value + (to.value - from.value) * t).toFixed(2)}${from.unit}`;
+		if (from.type === 'number') return `${(from.value + (to.value - from.value) * t).toFixed(4)}`;
+		return t >= 0.5 ? to.value : from.value;
+	}
+
+	// Pre-parse each theme's vars
+	const parsedThemes = {};
+	for (const name in themeProbe) {
+		parsedThemes[name] = {};
+		for (const v of themeVarNames) {
+			parsedThemes[name][v] = parseValue(themeProbe[name][v]);
+		}
+	}
+
+	function applyThemeInterp(fromName, toName, t) {
+		const from = parsedThemes[fromName];
+		const to = parsedThemes[toName] || from;
+		if (!from) return;
+		themeVarNames.forEach(name => {
+			const fv = from[name];
+			const tv = to[name];
+			if (fv && tv) {
+				const val = interpolateValue(fv, tv, t);
+				if (val != null) root.style.setProperty(name, val);
+			}
+		});
+	}
+
+	// ============================================================
+	//  MEASUREMENT — marker positions
+	// ============================================================
+	let bgOffsets = [];
+	function measure() {
+		bgOffsets = bgEls.map(bg => {
+			const r = bg._marker.getBoundingClientRect();
+			return r.top + window.scrollY;
+		});
+	}
+
+	// ============================================================
+	//  SCRIPT EVENT EXECUTION
+	// ============================================================
+	function fireEvent(bg, eventName) {
+		const scripts = bg._eventScripts[eventName];
+		if (!scripts || !scripts.length) return;
+		scripts.forEach(src => {
+			try {
+				const fn = new Function('event', src);
+				fn.call(bg, { type: eventName, bg, idx: bg._idx + 1 });
+			} catch (e) {
+				console.error(`[bg${bg._idx + 1} ${eventName}] script error:`, e);
+			}
+		});
+	}
+
+	// ============================================================
+	//  SIDE DOTS
+	// ============================================================
+	const dotsEl = document.getElementById('dots');
+	bgEls.forEach((bg, i) => {
+		const wrap = document.createElement('div');
+		wrap.className = 'dot-wrap';
+		wrap.dataset.label = `bg ${i + 1}`;
+		wrap.addEventListener('click', () => {
+			const top = bgOffsets[i];
+			if (top != null) {
+				window.scrollTo({ top, behavior: 'smooth' });
+			}
+		});
+		const ring = document.createElement('div');
+		ring.className = 'dot-theme';
+		wrap.appendChild(ring);
+		const center = document.createElement('div');
+		center.className = 'dot-car';
+		wrap.appendChild(center);
+		dotsEl.appendChild(wrap);
+	});
+	const dotWraps = Array.from(dotsEl.children);
+
+	// ============================================================
+	//  SCROLL UPDATE — both systems in parallel + event detection
+	// ============================================================
+	const hud = document.getElementById('hud');
+	const progress = document.getElementById('progress');
+	const scrollHint = document.getElementById('scrollHint');
+	const themeChip = document.getElementById('themeChip');
+	const parkedEl = document.getElementById('parked');
+
+	let parkStart = null;
+	let parkedCarIdx = -1;
+
+	function update() {
+		const scrollY = window.scrollY;
+		const vh = window.innerHeight;
+		const vw = window.innerWidth;
+
+		// ============================================================
+		//  SYSTEM 1: THEME INTERPOLATION (V8)
+		//  Find adjacent themed bgs (skip unthemed), interpolate
+		// ============================================================
+		// Current theme index = last themed bg whose top is at/past viewport center
+		let themeCurrentIdx = -1;
+		for (let i = 0; i < bgEls.length; i++) {
+			if (bgEls[i]._themeName && (bgOffsets[i] - scrollY <= vh * 0.5)) themeCurrentIdx = i;
+			else if (bgOffsets[i] - scrollY > vh * 0.5) break;
+		}
+		if (themeCurrentIdx < 0) themeCurrentIdx = 0;
+
+		// Find next themed bg
+		let themeNextIdx = -1;
+		for (let i = themeCurrentIdx + 1; i < bgEls.length; i++) {
+			if (bgEls[i]._themeName) { themeNextIdx = i; break; }
+		}
+
+		let themeT = 0;
+		let themeInTransition = false;
+		if (themeNextIdx >= 0) {
+			const nextTop = bgOffsets[themeNextIdx] - scrollY;
+			if (nextTop < vh && nextTop > vh * 0.5) {
+				themeT = (vh - nextTop) / (vh * 0.5);
+				themeInTransition = true;
+			} else if (nextTop <= vh * 0.5) {
+				themeT = 1;
+				themeInTransition = true;
+			}
+		}
+
+		const currentThemeName = bgEls[themeCurrentIdx]._themeName || 'dawn';
+		const nextThemeName = themeNextIdx >= 0 ? bgEls[themeNextIdx]._themeName : currentThemeName;
+		applyThemeInterp(currentThemeName, nextThemeName, themeT);
+
+		// ============================================================
+		//  SYSTEM 2: CAR / BG LAYER (V6)
+		// ============================================================
+		let carCurrentIdx = 0;
+		for (let i = 0; i < bgEls.length; i++) {
+			if (bgOffsets[i] - scrollY <= 0) carCurrentIdx = i;
+			else break;
+		}
+		const carNextIdx = carCurrentIdx + 1;
+		let carPushT = 0;
+		let carInPush = false;
+		if (carNextIdx < bgEls.length) {
+			const nextTop = bgOffsets[carNextIdx] - scrollY;
+			if (nextTop <= vh && nextTop > 0) {
+				carPushT = 1 - (nextTop / vh);
+				carInPush = true;
+			} else if (nextTop <= 0) {
+				carPushT = 1;
+				carCurrentIdx = carNextIdx;
+			}
+		}
+
+		// Apply car transforms
+		for (let i = 0; i < bgEls.length; i++) {
+			const bg = bgEls[i];
+			const dir = bg.dataset.dir || 'up';
+			const trans = bg.dataset.carTransition || 'push';
+
+			const isPast = (i < carCurrentIdx);
+			const isCurrent = (i === carCurrentIdx);
+			const isNext = (i === carCurrentIdx + 1);
+			const isFar = (i > carCurrentIdx + 1);
+
+			let opacity = 0, visible = false;
+			let tx = 0, ty = 0, scale = 1, z = '';
+
+			if (isPast || isFar) {
+				opacity = 0; visible = false;
+			} else if (isCurrent && !carInPush) {
+				opacity = 1; visible = true;
+			} else if (isCurrent && carInPush) {
+				opacity = 1; visible = true;
+				if (trans === 'iris') scale = 1 - carPushT;
+				else if (dir === 'up') ty = -carPushT * vh;
+				else if (dir === 'left') tx = -carPushT * vw;
+				else if (dir === 'right') tx = carPushT * vw;
+				else if (dir === 'down') { ty = carPushT * vh; if (carPushT > 0 && carPushT < 1) z = '5'; }
+			} else if (isNext && carInPush) {
+				opacity = 1; visible = true;
+				if (trans === 'iris') scale = carPushT;
+				else ty = (1 - carPushT) * vh;
+			}
+
+			bg.style.visibility = visible ? 'visible' : 'hidden';
+			bg.style.opacity = opacity.toFixed(3);
+			bg.style.transform = `translate3d(${tx.toFixed(1)}px, ${ty.toFixed(1)}px, 0) scale(${scale.toFixed(3)})`;
+			bg.style.zIndex = z;
+		}
+
+		// ============================================================
+		//  SYSTEM 3: SCRIPT EVENTS — state machine per bg
+		// ============================================================
+		for (let i = 0; i < bgEls.length; i++) {
+			const bg = bgEls[i];
+			const bgTop = bgOffsets[i] - scrollY;
+			const bgBottom = bgTop + vh; // bg div is 100vh tall
+			const st = bg._state;
+
+			// Reset state when user scrolls back above the bg
+			if (bgTop > vh + 100) {
+				// bg is fully below viewport — reset all flags
+				st.seen = false; st.centered = false; st.ended = false; st.skipped = false;
+				st.aboveReset = true;
+				continue;
+			}
+
+			// SKIP: bg fully above viewport (bgBottom < 0) but view never fired
+			if (!st.skipped && !st.seen && bgBottom < 0) {
+				st.skipped = true;
+				st.aboveReset = false;
+				fireEvent(bg, 'skip');
+				continue;
+			}
+
+			// VIEW: bg top enters viewport from bottom
+			if (!st.seen && !st.skipped && bgTop < vh && bgBottom > 0) {
+				st.seen = true;
+				st.aboveReset = false;
+				fireEvent(bg, 'view');
+			}
+
+			// CENTER: bg top reaches viewport center
+			if (st.seen && !st.centered && bgTop <= vh * 0.5) {
+				st.centered = true;
+				fireEvent(bg, 'center');
+			}
+
+			// END: bg fully exits top
+			if (st.seen && !st.ended && bgBottom < 0) {
+				st.ended = true;
+				fireEvent(bg, 'end');
+			}
+		}
+
+		// ============================================================
+		//  HUD + chips + dots
+		// ============================================================
+		const docHeight = document.documentElement.scrollHeight - vh;
+		const pct = docHeight > 0 ? Math.min(100, Math.max(0, (scrollY / docHeight) * 100)) : 0;
+		progress.style.width = pct + '%';
+
+		// Parked state
+		const isParked = !carInPush;
+		if (isParked) {
+			if (parkedCarIdx !== carCurrentIdx) {
+				parkedCarIdx = carCurrentIdx;
+				parkStart = performance.now();
+			}
+		} else {
+			parkedCarIdx = -1;
+			parkStart = null;
+		}
+
+		// HUD lines
+		const themePct = (themeT * 100).toFixed(0);
+		const carDir = (bgEls[carCurrentIdx].dataset.dir || 'up');
+		const arrow = { up: '↑', down: '↓', left: '←', right: '→' }[carDir] || '·';
+		const carPct = carInPush ? (carPushT * 100).toFixed(0) + '%' : (isParked ? 'PARKED' : 'idle');
+		let parkDur = '';
+		if (isParked && parkStart) parkDur = ((performance.now() - parkStart) / 1000).toFixed(1) + 's';
+
+		// Chapter height
+		const chHeight = (carCurrentIdx + 1 < bgEls.length)
+			? bgOffsets[carCurrentIdx + 1] - bgOffsets[carCurrentIdx]
+			: vh;
+		const chVh = (chHeight / vh).toFixed(1);
+
+		// Count active event scripts on current bg
+		const curBg = bgEls[carCurrentIdx];
+		const eventCount = ['view','center','end','skip'].filter(ev => curBg._eventScripts[ev].length > 0).length;
+
+		hud.innerHTML =
+			`<span class="sys-label">scroll</span>   ${scrollY}px\n` +
+			`<span class="sys-label">ch vh</span>    ${chVh}×\n` +
+			`<span class="sys-label">prog</span>     ${pct.toFixed(0)}%\n` +
+			`<span class="divider">───────</span>\n` +
+			`<span class="sys-theme">theme</span>  ${currentThemeName}${themeInTransition ? ` → ${nextThemeName} ${themePct}%` : ' · 100%'}\n` +
+			`<span class="divider">───────</span>\n` +
+			`<span class="sys-car">car</span>    ${carCurrentIdx + 1}/${bgEls.length} ${arrow} ${carDir}\n` +
+			`<span class="sys-car">state</span>  ${carPct}${parkDur ? ' · ' + parkDur : ''}\n` +
+			`<span class="divider">───────</span>\n` +
+			`<span class="sys-event">events</span> ${eventCount}/4 on current bg`;
+
+		// Theme chip
+		const bgColor = getComputedStyle(root).getPropertyValue('--bg-color').trim();
+		if (themeChip) {
+			if (themeInTransition) {
+				themeChip.innerHTML = `${currentThemeName} → ${nextThemeName}\n${themePct}%<span class="swatch" style="background:${bgColor}"></span>`;
+			} else {
+				themeChip.innerHTML = `${currentThemeName} · 100%<span class="swatch" style="background:${bgColor}"></span>`;
+			}
+		}
+
+		// Parked badge
+		if (parkedEl) {
+			if (isParked && parkDur) {
+				parkedEl.textContent = `◼ PARKED · car ${carCurrentIdx + 1} · ${parkDur}`;
+				parkedEl.classList.add('visible');
+			} else {
+				parkedEl.classList.remove('visible');
+			}
+		}
+
+		// Side dots
+		dotWraps.forEach((w, i) => {
+			const isActiveTheme = (i === themeCurrentIdx);
+			const isActiveCar = (i === carCurrentIdx);
+			const isParkedCar = (i === carCurrentIdx && isParked);
+			const isInTransition = (i === themeCurrentIdx && themeInTransition) || (i === carCurrentIdx && carInPush);
+
+			w.classList.toggle('active', isActiveCar);
+			w.classList.toggle('parked', !!isParkedCar);
+			w.classList.toggle('transitioning', !!isInTransition);
+
+			const ring = w.querySelector('.dot-theme');
+			if (ring) {
+				const themeName = bgEls[i]._themeName || (bgEls[i].closest('section[class*="theme-"]')?.className.match(/theme-([\w-]+)/)?.[1]) || 'dawn';
+				const accent = themeProbe[themeName]?.['--accent-color'] || '#67e8f9';
+				// Parse to hex/rgba for borderColor
+				ring.style.borderColor = accent;
+				if (isActiveTheme) ring.style.boxShadow = `0 0 8px ${accent}`;
+				else ring.style.boxShadow = 'none';
+			}
+		});
+
+		// Scroll hint
+		if (scrollY > 80) scrollHint.classList.add('hidden');
+		else scrollHint.classList.remove('hidden');
+	}
+
+	// ============================================================
+	//  INIT + LISTENERS
+	// ============================================================
+	measure();
+	update();
+
+	// Parked badge ticker
+	setInterval(() => {
+		if (parkedCarIdx >= 0 && parkStart) {
+			const dur = ((performance.now() - parkStart) / 1000).toFixed(1) + 's';
+			parkedEl.textContent = `◼ PARKED · car ${parkedCarIdx + 1} · ${dur}`;
+		}
+	}, 100);
+
+	let ticking = false;
+	window.addEventListener('scroll', () => {
+		if (!ticking) {
+			requestAnimationFrame(() => {
+				update();
+				ticking = false;
+			});
+			ticking = true;
+		}
+	}, { passive: true });
+
+	let lastWidth = window.innerWidth;
+	const ro = new ResizeObserver(() => {
+		if (window.innerWidth !== lastWidth) {
+			lastWidth = window.innerWidth;
+			requestAnimationFrame(() => { measure(); update(); });
+		}
+	});
+	ro.observe(document.body);
+
+	window.addEventListener('load', () => { measure(); update(); });
+	let recheckCount = 0;
+	const recheckInterval = setInterval(() => {
+		measure(); update();
+		if (++recheckCount > 12) clearInterval(recheckInterval);
+	}, 250);
+
+	// Initial log entry
+	logEvent(0, 'view', 'engine initialized — scroll to begin');
+</script>
+
+</body>
+</html>
