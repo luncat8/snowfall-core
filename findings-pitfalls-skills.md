@@ -123,3 +123,20 @@ matrix.
   viewport slot, and parent content-box constraint *including the stick's
   own margins* — because short pages legitimately clamp the probe scroll at
   `maxY` and short sections legitimately constrain the park.
+
+## events (0.4)
+
+- Pre-fill belongs in the first `frame()` after `measure`, not in `measure`:
+  wagon `pos/free` are only fresh after wagonsFrame runs in the same
+  coreFrame. Pass `replay` through `refresh()` so QA can skip pre-fill.
+- `parked` must be gated on the anchor being in the viewport, not just the
+  wagon state — otherwise huge chapters fire it while far below, `view`
+  stops firing first, and re-arm + a still-pinned wagon fires it on the
+  reverse leg.
+- Scripts sharing an anchor Y (<1px apart) share flags; OR all five `decl`
+  bits into the anchor so a sibling `view` suppresses the anchor's `skip`.
+- Reuse `<i>` markers across refreshes (check `parentNode`, update stamp):
+  stamping a new marker per refresh leaks one orphan node per anchor.
+- Threshold QA reads `events.flags` (the latch itself), not LOG counts —
+  1px steps around each threshold prove ±2px without fighting integer
+  `scrollY` vs fractional anchor Y.

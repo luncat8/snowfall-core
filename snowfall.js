@@ -1,4 +1,4 @@
-/* snowfall.js — visual novella scroll engine: core + wagons (0.2) + style/theme morph (0.3).
+/* snowfall.js — visual novella scroll engine: core + wagons (0.2) + style/theme morph (0.3) + script events (0.4).
 	Sticky park (compositor) + JS push chain (sync scroll handler).
 	Classic script, no modules; require()-able under node with zero DOM at load. */
 (function(global) {
@@ -34,6 +34,15 @@ function dirCode(s) {
 	if (s === 'bottom') return 3;
 	return 0;
 }
+function eventCode(s) {
+	if (s === 'view') return 0;
+	if (s === 'center') return 1;
+	if (s === 'parked') return 2;
+	if (s === 'end') return 3;
+	if (s === 'skip') return 4;
+	return -1;
+}
+var EV_NAMES = ['view', 'center', 'parked', 'end', 'skip'];
 function parseGap(s, vh, rem) {
 	if (s === undefined || s === null) return 0;
 	const t = String(s).trim();
@@ -151,6 +160,7 @@ var CSS = '.snow-bg{position:sticky;top:0;z-index:-1;pointer-events:none;backgro
 	+ '.snow-bg[data-mode=auto]{background-size:auto}'
 	+ '.snow-stick{position:sticky;z-index:5}'
 	+ '.snow-a{position:absolute;width:0;height:0;margin:0;padding:0;border:0;overflow:hidden;visibility:hidden;pointer-events:none}'
+	+ 'script[type=txt]{display:none}'
 	+ 'html.snow-off .snow-bg{position:relative;transform:none !important}';
 function injectCSS(doc) {
 	if (doc.getElementById('snowfall-core-css')) return;
@@ -174,8 +184,10 @@ function createCore(opts) {
 		stamp: 0,
 		wagons: { n: 0, els: [], y: [], free: [], pos: [], ext: [], dir: [] },
 		morph: { n: 0, els: [], ay: [], range: [], bgKind: [], fgKind: [], cls: [] },
+		events: { n: 0, els: [], y: [], wagon: [], flags: [], decl: [] },
+		eventCount: 0,
 		debug: { n: 0, active: -1, parked: 0, pushed: 0, writes: 0,
-			styleN: 0, styleBg: -1, styleFg: -1, styleT: -1, styleCls: '' }
+			styleN: 0, styleBg: -1, styleFg: -1, styleT: -1, styleCls: '', eventN: 0 }
 	};
 	if (opts.options) for (const k in opts.options) inst.options[k] = +opts.options[k] || 0;
 
@@ -205,10 +217,23 @@ function createCore(opts) {
 	let lastTq = -1, lastClsKey = null, lastClsArr = [];
 	const chBg = { v: -1, u: -1 }, chFg = { v: -1, u: -1 };
 
+	/* events subscriber state: anchors share flags across scripts at the same Y,
+	   so a skip script sees the view its sibling fired (slow pass must not skip).
+	   Scripts keep their own fn + counts for data-snow. All preallocated. */
+	const E = {
+		els: [], n: 0, y: new Float64Array(0), flags: new Uint8Array(0),
+		wagon: new Int32Array(0), decl: new Uint8Array(0), needPrefill: false
+	};
+	const S = {
+		els: [], n: 0, decl: new Uint8Array(0), anchor: new Int32Array(0),
+		fn: [], cnt: new Uint16Array(0)
+	};
+	const detail = { el: null, event: '', y: 0, scrollY: 0, wagon: -1, morph: 0 };
+
 	function ensureMarker(el) {
 		if (!hasDOM) return null;
 		const m = el.__snowA;
-		if (m && m.parentNode && el.__snowStamp === inst.stamp) return m;
+		if (m && m.parentNode) { el.__snowStamp = inst.stamp; return m; }
 		const i = document.createElement('i');
 		i.className = 'snow-a';
 		i.setAttribute('aria-hidden', 'true');
@@ -522,6 +547,161 @@ function createCore(opts) {
 			inst.debug.styleCls = key;
 		}
 	}
+	function eventsMeasure(replay) {
+		E.n = 0; E.els = [];
+		S.n = 0; S.els = []; S.fn = [];
+		inst.events = { n: 0, els: [], y: [], wagon: [], flags: [], decl: [] };
+		inst.eventCount = 0;
+		inst.debug.eventN = 0;
+		E.needPrefill = false;
+		if (!hasDOM || !scope || !scope.querySelectorAll) return;
+		const found = scope.querySelectorAll('script[type="txt"][event]');
+		const tmpEls = [], tmpDecl = [], tmpCode = [];
+		for (let k = 0; k < found.length; k++) {
+			const el = found[k];
+			const attr = el.getAttribute('event');
+			if (!attr) continue;
+			const parts = attr.split(',');
+			let mask = 0;
+			for (let p = 0; p < parts.length; p++) {
+				const c = eventCode(parts[p].trim().toLowerCase());
+				if (c >= 0) mask |= (1 << c);
+			}
+			if (!mask) continue;
+			const code = el.textContent.trim();
+			if (!code) continue;
+			ensureMarker(el);
+			tmpEls.push(el); tmpDecl.push(mask); tmpCode.push(code);
+		}
+		const m = tmpEls.length;
+		if (!m) return;
+		if (E.y.length < m) {
+			E.y = new Float64Array(m); E.flags = new Uint8Array(m);
+			E.wagon = new Int32Array(m); E.decl = new Uint8Array(m);
+		}
+		if (S.decl.length < m) { S.decl = new Uint8Array(m); S.anchor = new Int32Array(m); }
+		S.fn = new Array(m); S.cnt = new Uint16Array(m * 5);
+		const sY0 = window.scrollY || 0;
+		for (let i = 0; i < m; i++) E.y[i] = tmpEls[i].__snowA.getBoundingClientRect().top + sY0;
+		for (let i = 0; i < m; i++) {
+			let w = -1;
+			for (let k = W.n - 1; k >= 0; k--) if (W.y[k] <= E.y[i]) { w = k; break; }
+			E.wagon[i] = w; E.decl[i] = tmpDecl[i];
+		}
+		let j = 0, pairs = 0;
+		for (let i = 0; i < m; i++) {
+			let fn = null;
+			try { fn = new Function('Snowfall', 'detail', tmpCode[i]); }
+			catch (e) { console.error('Snowfall event script at y=' + Math.round(E.y[i]), e); continue; }
+			if (j !== i) { E.y[j] = E.y[i]; E.wagon[j] = E.wagon[i]; E.decl[j] = E.decl[i]; tmpEls[j] = tmpEls[i]; }
+			S.fn[j] = fn; S.decl[j] = E.decl[j];
+			const mk = E.decl[j];
+			for (let e = 0; e < 5; e++) if (mk & (1 << e)) pairs++;
+			try { tmpEls[j].removeAttribute('data-snow'); } catch (_ignored) {}
+			j++;
+		}
+		const nS = j;
+		if (!nS) return;
+		tmpEls.length = nS;
+		S.els = tmpEls; S.n = nS;
+		const anchorEls = new Array(nS);
+		let a = 0;
+		S.anchor[0] = 0; anchorEls[0] = S.els[0];
+		for (let i = 1; i < nS; i++) {
+			if (Math.abs(E.y[i] - E.y[a]) < 1) {
+				S.anchor[i] = a;
+				E.decl[a] |= S.decl[i];
+			} else {
+				a++;
+				E.y[a] = E.y[i]; E.wagon[a] = E.wagon[i]; E.decl[a] = S.decl[i];
+				S.anchor[i] = a; anchorEls[a] = S.els[i];
+			}
+		}
+		const nA = a + 1;
+		anchorEls.length = nA;
+		E.els = anchorEls; E.n = nA;
+		E.flags.fill(0, 0, nA);
+		inst.events = { n: nA, els: E.els, y: E.y, wagon: E.wagon, flags: E.flags, decl: E.decl };
+		inst.eventCount = pairs;
+		inst.debug.eventN = nA;
+		E.needPrefill = !replay;
+	}
+	function fireAnchor(a, e, sY) {
+		for (let s = 0; s < S.n; s++) {
+			if (S.anchor[s] !== a) continue;
+			if (!(S.decl[s] & (1 << e))) continue;
+			const el = S.els[s];
+			detail.el = el; detail.event = EV_NAMES[e];
+			detail.y = E.y[a]; detail.scrollY = sY;
+			detail.wagon = E.wagon[a]; detail.morph = inst.debug.styleT;
+			S.cnt[s * 5 + e]++;
+			let ds = '';
+			const mk = S.decl[s];
+			for (let k = 0; k < 5; k++) if (mk & (1 << k)) {
+				if (ds !== '') ds += ' ';
+				ds += EV_NAMES[k] + ':' + S.cnt[s * 5 + k];
+			}
+			try { el.setAttribute('data-snow', ds); } catch (_ignored) {}
+			try { S.fn[s](Snowfall, detail); }
+			catch (err) { console.error('Snowfall event script at y=' + Math.round(E.y[a]), err); }
+		}
+	}
+	function eventsFrame(sY, vh) {
+		const nA = E.n;
+		if (!nA || !inst.options.events) return;
+		if (E.needPrefill) {
+			E.needPrefill = false;
+			for (let i = 0; i < nA; i++) {
+				const d0 = E.y[i] - sY;
+				let f0 = 0;
+				if (d0 < 0) f0 = 31;
+				else if (d0 < vh) {
+					f0 |= 1;
+					if (d0 < vh * 0.5) f0 |= 2;
+					let pok0 = false;
+					const w0 = E.wagon[i];
+					if (inst.options.wagons && w0 >= 0) pok0 = W.pos[w0] === 0 && W.free[w0] <= 0;
+					else if (inst.options.parkedAsView) pok0 = true;
+					if (pok0) f0 |= 4;
+				}
+				E.flags[i] = f0;
+			}
+		}
+		const hyst = inst.options.hysteresis;
+		const vhH = vh + hyst, vh2H = vh * 0.5 + hyst, vh2 = vh * 0.5;
+		const useW = inst.options.wagons, aliasV = inst.options.parkedAsView;
+		for (let i = 0; i < nA; i++) {
+			const d = E.y[i] - sY;
+			let f = E.flags[i];
+			const decl = E.decl[i];
+			if (d > vhH) {
+				f &= ~(1 | 2 | 4 | 16);
+				f &= ~8;
+			} else if (d >= 0) {
+				if (f & 8) {
+					f &= ~8;
+					f |= 1 | 2 | 4 | 16;
+				} else if (d > vh2H) f &= ~2;
+			}
+			if (d < vh && d >= 0) {
+				if (!(f & 1)) { f |= 1; if (decl & 1) fireAnchor(i, 0, sY); }
+				if (d < vh2 && !(f & 2)) { f |= 2; if (decl & 2) fireAnchor(i, 1, sY); }
+				/* parked needs the anchor on screen too: otherwise huge chapters fire it
+				   while the script is far below, view-first order breaks, and re-arm
+				   plus a still-pinned wagon fires it on reverse scroll. */
+				let pok = false;
+				const w = E.wagon[i];
+				if (useW && w >= 0) pok = W.pos[w] === 0 && W.free[w] <= 0;
+				else if (aliasV) pok = true;
+				if (pok && !(f & 4)) { f |= 4; if (decl & 4) fireAnchor(i, 2, sY); }
+			}
+			if (d < 0 && !(f & 8)) {
+				f |= 8; if (decl & 8) fireAnchor(i, 3, sY);
+				if (!(f & 1) && !(f & 16)) { f |= 16; if (decl & 16) fireAnchor(i, 4, sY); }
+			}
+			E.flags[i] = f;
+		}
+	}
 	function wagonsOff() {
 		if (!hasDOM) return;
 		for (let k = 0; k < W.n; k++) W.els[k].style.transform = '';
@@ -541,6 +721,7 @@ function createCore(opts) {
 	inst.use = function(sub) { inst.subs.push(sub); return sub; };
 	inst.use({ measure: wagonsMeasure, frame: wagonsFrame, off: wagonsOff });
 	inst.use({ measure: styleMeasure, frame: styleFrame, off: styleOff });
+	inst.use({ measure: eventsMeasure, frame: eventsFrame });
 
 	function coreFrame(sY, vh, vw) {
 		if (inst.destroyed || !inst.enabled) return;
@@ -548,11 +729,11 @@ function createCore(opts) {
 		for (let i = 0; i < subs.length; i++) subs[i].frame(sY, vh, vw);
 		if (inst.onFrame) inst.onFrame(inst);
 	}
-	inst.refresh = function() {
+	inst.refresh = function(replay) {
 		if (inst.destroyed || !hasDOM) return;
 		inst.stamp++;
 		const subs = inst.subs;
-		for (let i = 0; i < subs.length; i++) subs[i].measure();
+		for (let i = 0; i < subs.length; i++) subs[i].measure(replay);
 		coreFrame(window.scrollY || 0, window.innerHeight, window.innerWidth);
 	};
 	inst.step = function(sY, vh, vw) {
@@ -604,10 +785,11 @@ function createCore(opts) {
 const Snowfall = {
 	create: createCore,
 	default: null,
-	version: '0.3',
+	version: '0.4',
 	chain: chain,
 	stickyShown: stickyShown,
 	dirCode: dirCode,
+	eventCode: eventCode,
 	parseGap: parseGap,
 	parseSize: parseSize,
 	parseColor: parseColor,
@@ -616,12 +798,13 @@ const Snowfall = {
 	mixA: mixA
 };
 Snowfall.use = function(s) { return Snowfall.default.use(s); };
-Snowfall.refresh = function() { if (Snowfall.default) Snowfall.default.refresh(); };
+Snowfall.refresh = function(replay) { if (Snowfall.default) Snowfall.default.refresh(replay); };
 Snowfall.step = function(a, b, c) { if (Snowfall.default) Snowfall.default.step(a, b, c); };
 Snowfall.anchorY = function(el) { return Snowfall.default ? Snowfall.default.anchorY(el) : 0; };
 Snowfall.setEnabled = function(on) { if (Snowfall.default) Snowfall.default.setEnabled(on); };
 Object.defineProperty(Snowfall, 'wagons', { get: function() { return Snowfall.default ? Snowfall.default.wagons : undefined; } });
 Object.defineProperty(Snowfall, 'morph', { get: function() { return Snowfall.default ? Snowfall.default.morph : undefined; } });
+Object.defineProperty(Snowfall, 'events', { get: function() { return Snowfall.default ? Snowfall.default.events : undefined; } });
 Object.defineProperty(Snowfall, 'debug', { get: function() { return Snowfall.default ? Snowfall.default.debug : undefined; } });
 Object.defineProperty(Snowfall, 'options', { get: function() { return Snowfall.default ? Snowfall.default.options : undefined; } });
 Object.defineProperty(Snowfall, 'eventCount', { get: function() { return Snowfall.default ? Snowfall.default.eventCount : undefined; } });

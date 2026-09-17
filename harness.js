@@ -18,7 +18,7 @@ function mulberry32(seed) {
 function pick(rng, arr) { return arr[Math.floor(rng() * arr.length)]; }
 function maxY() { return Math.max(0, document.documentElement.scrollHeight - window.innerHeight); }
 function hasEng() { return !!(window.Snowfall && window.Snowfall.wagons); }
-function engRefresh() { if (window.Snowfall && Snowfall.refresh) Snowfall.refresh(); }
+function engRefresh(replay) { if (window.Snowfall && Snowfall.refresh) Snowfall.refresh(replay); }
 function wagons() { return Array.from(document.querySelectorAll('#app .snow-bg')); }
 function chapters() { return Array.from(document.querySelectorAll('#app h4.n')); }
 const raf2 = () => new Promise(res => requestAnimationFrame(() => requestAnimationFrame(res)));
@@ -167,6 +167,7 @@ function scriptsHTML(k, cfg) {
 		+ '<script type="txt" event="end">Snowlog("ch' + k + ' end")<\/script>'
 		+ '<script type="txt" event="skip">Snowlog("ch' + k + ' skip")<\/script>';
 	if (k === 1) s += '<script type="txt" event="center,parked">Snowlog("ch1 center+parked")<\/script>';
+	if (k === 1) s += '<script type="txt" event="view">let =<\/script>';
 	return s;
 }
 function chapterHTML(rng, k, cfg) {
@@ -568,34 +569,256 @@ function logTable() {
 async function qEvents() {
 	if (!hasEng()) return row('events', 1, 'no engine — scripts inert');
 	if (Snowfall.eventCount === undefined) return row('events', 1, 'events land in 0.4 — engine has no event subscriber yet');
+	const scripts = Array.from(document.querySelectorAll('#app script[type="txt"][event]'));
+	if (!scripts.length) return row('events', -1, 'no scripts (events=off?)');
 	const nCh = chapters().length;
 	if (!nCh) return row('events', -1, 'no chapters');
-	engRefresh(); setY(0); await raf2(); await raf2();
-	LOG.length = 0;
-	const mx = maxY();
-	for (let y = 200; y < mx; y += 200) { setY(y); await raf2(); }
-	setY(mx); await raf2();
-	const slow = logTable();
-	const bad = [];
-	for (let k = 1; k <= nCh; k++) {
-		const c = slow[k] || {};
-		for (const e of ['view', 'center', 'parked', 'end'])
-			if (c[e] !== 1) bad.push('ch' + k + ' ' + e + '×' + (c[e] || 0) + ' (slow)');
-		if (c.skip) bad.push('ch' + k + ' skip×' + c.skip + ' (slow)');
+	const expSet = {};
+	for (const el of scripts) {
+		const m = /ch(\d+)/.exec(el.textContent || '');
+		if (m) expSet[m[1]] = 1;
 	}
-	if ((slow[1] || {})['center+parked'] !== 2) bad.push('ch1 center+parked×' + ((slow[1] || {})['center+parked'] || 0) + ', want 2');
-	engRefresh(); setY(0); await raf2(); await raf2();
-	LOG.length = 0;
-	setY(mx); await raf2(); await raf2();
-	const flick = logTable();
-	for (let k = 2; k <= nCh - 1; k++) {
-		const c = flick[k] || {};
-		if (c.skip !== 1) bad.push('ch' + k + ' skip×' + (c[c.skip] || 0) + ' (flick)');
-		if (c.view) bad.push('ch' + k + ' view×' + c.view + ' (flick)');
-		if (c.center) bad.push('ch' + k + ' center×' + c.center + ' (flick)');
+	const expCh = Object.keys(expSet).map(Number).sort((a, b) => a - b);
+	if (!expCh.length) return row('events', -1, 'scripts log no ch numbers');
+	const vh = window.innerHeight, mx = maxY();
+	const hyst = (Snowfall.options && +Snowfall.options.hysteresis) || 40;
+	const bad = [];
+	let refreshes = 0, errCount = 0;
+	const origErr = console.error;
+	console.error = function() {
+		const a0 = arguments[0];
+		if (typeof a0 === 'string' && a0.indexOf('Snowfall event script') === 0) { errCount++; return; }
+		return origErr.apply(console, arguments);
+	};
+	const origW = Snowfall.options.wagons, origA = Snowfall.options.parkedAsView;
+	const doRefresh = replay => { refreshes++; engRefresh(replay); };
+	const slowSamples = () => {
+		const s = [0];
+		for (let y = 200; y < mx; y += 200) s.push(y);
+		if (s[s.length - 1] !== mx) s.push(mx);
+		return s;
+	};
+	const everParkedAt = (aY, w, Wy, Ex) => {
+		if (w < 0) return false;
+		const n = Wy.length, free = new Array(n), pos = new Array(n);
+		for (const sY of slowSamples()) {
+			const d = aY - sY;
+			if (d >= vh || d < 0) continue;
+			for (let i = 0; i < n; i++) free[i] = Wy[i] - sY;
+			Snowfall.chain(n, free, Ex, pos);
+			if (pos[w] === 0 && free[w] <= 0) return true;
+		}
+		return false;
+	};
+	try {
+		setY(Math.round(mx / 2)); await raf2();
+		LOG.length = 0;
+		doRefresh(false);
+		await raf2();
+		if (LOG.length) bad.push('reload mid-doc fired ' + LOG.length + '× (want 0)');
+		setY(0); await raf2();
+		LOG.length = 0;
+		doRefresh(true);
+		await raf2();
+		const w0 = (Snowfall.wagons && Snowfall.wagons.n) ? Array.from(Snowfall.wagons.pos.slice(0, Snowfall.wagons.n)) : null;
+		const bg0 = (Snowfall.morph && Snowfall.morph.n && Snowfall.debug) ? Snowfall.debug.styleBg : null;
+		for (let y = 200; y < mx; y += 200) { setY(y); await raf2(); }
+		setY(mx); await raf2();
+		const w1 = (Snowfall.wagons && Snowfall.wagons.n) ? Array.from(Snowfall.wagons.pos.slice(0, Snowfall.wagons.n)) : null;
+		const bg1 = (Snowfall.morph && Snowfall.morph.n && Snowfall.debug) ? Snowfall.debug.styleBg : null;
+		const slow = logTable();
+		const slowLog = LOG.slice();
+		const Ev0 = Snowfall.events;
+		const Ay0 = Ev0 && Ev0.n ? Array.from(Ev0.y.slice(0, Ev0.n)) : [];
+		const Aw0 = Ev0 && Ev0.n ? Array.from(Ev0.wagon.slice(0, Ev0.n)) : [];
+		const Wy0 = (Snowfall.wagons && Snowfall.wagons.n) ? Array.from(Snowfall.wagons.y.slice(0, Snowfall.wagons.n)) : [];
+		const Ex0 = (Snowfall.wagons && Snowfall.wagons.n) ? Array.from(Snowfall.wagons.ext.slice(0, Snowfall.wagons.n)) : [];
+		for (let j = 0; j < expCh.length; j++) {
+			const k = expCh[j], c = slow[k] || {};
+			for (const e of ['view', 'center', 'end']) if (c[e] !== 1) bad.push('ch' + k + ' ' + e + '×' + (c[e] || 0) + ' (slow)');
+			if (c.skip) bad.push('ch' + k + ' skip×' + c.skip + ' (slow)');
+			const pc = c.parked || 0;
+			if (pc !== 1) {
+				if (pc !== 0) bad.push('ch' + k + ' parked×' + pc + ' (slow)');
+				else if (j < Ay0.length && everParkedAt(Ay0[j], Aw0[j], Wy0, Ex0)) bad.push('ch' + k + ' parked×0 but wagon pins on slow samples');
+			}
+		}
+		if (expSet['1']) {
+			if ((slow[1] || {})['center+parked'] !== 2) bad.push('ch1 center+parked×' + ((slow[1] || {})['center+parked'] || 0) + ', want 2');
+			const ic = slowLog.indexOf('ch1 center'), ip = slowLog.indexOf('ch1 parked');
+			if (ic < 0 || ip < 0) bad.push('ch1 center/parked missing for order check');
+			else {
+				if (slowLog[ic + 1] !== 'ch1 center+parked') bad.push('ch1 center order: want center+parked right after center');
+				if (slowLog[ip + 1] !== 'ch1 center+parked') bad.push('ch1 parked order: want center+parked right after parked');
+				if (ic + 1 === ip + 1) bad.push('ch1 center/parked share one center+parked slot');
+			}
+		}
+		if (w0 && w1) {
+			let moved = false;
+			for (let i = 0; i < w0.length; i++) if (w0[i] !== w1[i]) { moved = true; break; }
+			if (!moved) bad.push('wagons did not move during slow (broken snippet killed frame?)');
+		}
+		if (bg0 !== null && bg1 !== null && bg0 === bg1 && Snowfall.morph.n > 1) bad.push('morph did not move during slow');
+		const len1 = LOG.length;
+		for (let y = mx - 200; y > 0; y -= 200) { setY(y); await raf2(); }
+		setY(0); await raf2();
+		if (LOG.length !== len1) bad.push('reverse fired ' + (LOG.length - len1) + '× (want 0)');
+		LOG.length = 0;
+		for (let y = 200; y < mx; y += 200) { setY(y); await raf2(); }
+		setY(mx); await raf2();
+		const slow2 = logTable();
+		for (let j = 0; j < expCh.length; j++) {
+			const k = expCh[j], c = slow2[k] || {};
+			const rearmed = j < Ay0.length ? Ay0[j] > vh + hyst : true;
+			if (rearmed) {
+				for (const e of ['view', 'center', 'end']) if (c[e] !== 1) bad.push('ch' + k + ' ' + e + '×' + (c[e] || 0) + ' (re-arm)');
+				if (c.skip) bad.push('ch' + k + ' skip×' + c.skip + ' (re-arm)');
+				const pc2 = c.parked || 0;
+				if (pc2 !== 1 && (pc2 !== 0 || everParkedAt(Ay0[j], Aw0[j], Wy0, Ex0))) bad.push('ch' + k + ' parked×' + pc2 + ' (re-arm)');
+			} else {
+				if (c.view || c.center || c.parked || c.skip) bad.push('ch' + k + ' early re-fired view/center/parked/skip (want end-only)');
+				if (c.end !== 1) bad.push('ch' + k + ' end×' + (c.end || 0) + ' (re-arm early, want 1)');
+			}
+		}
+		if (expSet['1'] && Ay0.length && Ay0[0] > vh + hyst && (slow2[1] || {})['center+parked'] !== 2)
+			bad.push('ch1 center+parked×' + ((slow2[1] || {})['center+parked'] || 0) + ' (re-arm, want 2)');
+		setY(0); await raf2();
+		LOG.length = 0;
+		doRefresh(true);
+		await raf2();
+		setY(mx); await raf2(); await raf2();
+		const flick = logTable();
+		const lo = Math.min.apply(null, expCh), hi = Math.max.apply(null, expCh);
+		const mids = expCh.filter(k => k !== lo && k !== hi);
+		for (const k of mids) {
+			const c = flick[k] || {};
+			if (c.skip !== 1) bad.push('ch' + k + ' skip×' + (c.skip || 0) + ' (flick)');
+			if (c.end !== 1) bad.push('ch' + k + ' end×' + (c.end || 0) + ' (flick)');
+			if (c.view) bad.push('ch' + k + ' view×' + c.view + ' (flick)');
+			if (c.center) bad.push('ch' + k + ' center×' + c.center + ' (flick)');
+			if (c.parked) bad.push('ch' + k + ' parked×' + c.parked + ' (flick)');
+		}
+		let thChecked = 0, thSkipped = 0;
+		let thAnchor = -1;
+		{
+			const Ev = Snowfall.events;
+			if (Ev && Ev.n) for (let i = 0; i < Ev.n; i++) {
+				const Y = Ev.y[i];
+				if (Y > vh + 12 && Y < mx - 12) { thAnchor = i; break; }
+			}
+		}
+		if (thAnchor < 0) thSkipped++;
+		else {
+			const Yt0 = Snowfall.events.y[thAnchor];
+			const offs = [[0, vh, 'view'], [1, vh / 2, 'center'], [3, 0, 'end']];
+			for (const t of offs) {
+				const bit = t[0], off = t[1], name = t[2];
+				const exp0 = Yt0 - off;
+				if (exp0 < 10 || exp0 > mx - 10) { thSkipped++; continue; }
+				setY(Math.round(exp0 - 10)); await raf2();
+				LOG.length = 0;
+				doRefresh(true);
+				await raf2();
+				const Ev1 = Snowfall.events;
+				if (!Ev1 || thAnchor >= Ev1.n) { bad.push(name + ' anchor lost after refresh'); continue; }
+				const exp1 = Ev1.y[thAnchor] - off;
+				if (Ev1.flags[thAnchor] & (1 << bit)) { bad.push(name + ' threshold pre-fired at -10px'); continue; }
+				let firedAt = -1;
+				for (let s = Math.round(exp1 - 9); s <= Math.round(exp1 + 10); s++) {
+					setY(s); await raf2();
+					if (Snowfall.events.flags[thAnchor] & (1 << bit)) { firedAt = window.scrollY; break; }
+				}
+				if (firedAt < 0) bad.push(name + ' threshold never fired near ' + Math.round(exp1));
+				else if (Math.abs(firedAt - exp1) > 2) bad.push(name + ' threshold off by ' + Math.abs(firedAt - exp1).toFixed(1) + 'px (want ±2)');
+				else thChecked++;
+			}
+			let pa = -1, pYw = 0;
+			{
+				const Ev = Snowfall.events, Wg = Snowfall.wagons;
+				if (Ev && Wg && Ev.n && Wg.n) {
+					const Wy = Array.from(Wg.y.slice(0, Wg.n)), Ex = Array.from(Wg.ext.slice(0, Wg.n));
+					for (let i = 0; i < Ev.n && pa < 0; i++) {
+						const w = Ev.wagon[i];
+						if (w < 0) continue;
+						const Ya = Ev.y[i], Yw = Wy[w], delta = Ya - Yw;
+						if (delta < 1 || delta >= vh) continue;
+						if (Yw < 10 || Yw > mx - 10) continue;
+						const sYt = Math.ceil(Yw);
+						const free = Wy.map(v => v - sYt), pos = new Array(Wy.length).fill(0);
+						Snowfall.chain(Wy.length, free, Ex, pos);
+						if (pos[w] === 0 && free[w] <= 0) { pa = i; pYw = Yw; }
+					}
+				}
+			}
+			if (pa < 0) thSkipped++;
+			else {
+				setY(Math.round(pYw - 10)); await raf2();
+				LOG.length = 0;
+				doRefresh(true);
+				await raf2();
+				const Ev2 = Snowfall.events;
+				if (!Ev2 || pa >= Ev2.n) bad.push('parked anchor lost after refresh');
+				else if (Ev2.flags[pa] & 4) bad.push('parked threshold pre-fired at -10px');
+				else {
+					const Wg2 = Snowfall.wagons;
+					const pYw1 = Wg2 && pa < Ev2.n && Ev2.wagon[pa] >= 0 ? Wg2.y[Ev2.wagon[pa]] : pYw;
+					let firedAt = -1;
+					for (let s = Math.round(pYw1 - 9); s <= Math.round(pYw1 + 10); s++) {
+						setY(s); await raf2();
+						if (Snowfall.events.flags[pa] & 4) { firedAt = window.scrollY; break; }
+					}
+					if (firedAt < 0) bad.push('parked threshold never fired near ' + Math.round(pYw1));
+					else if (Math.abs(firedAt - pYw1) > 2) bad.push('parked threshold off by ' + Math.abs(firedAt - pYw1).toFixed(1) + 'px (want ±2)');
+					else thChecked++;
+				}
+			}
+		}
+		const wTestCh = expCh.includes(2) ? 2 : expCh[0];
+		const wTestIdx = expCh.indexOf(wTestCh);
+		if (wTestIdx >= 0) {
+			Snowfall.options.wagons = 0; Snowfall.options.parkedAsView = 0;
+			setY(0); await raf2();
+			LOG.length = 0;
+			doRefresh(true);
+			await raf2();
+			{
+				const Ev = Snowfall.events;
+				const Yw = Ev && wTestIdx < Ev.n ? Ev.y[wTestIdx] : mx;
+				const walkTo = Math.min(mx, Yw + 12);
+				for (let y = 200; y < walkTo; y += 200) { setY(y); await raf2(); }
+				setY(walkTo); await raf2();
+			}
+			const t0 = logTable()[wTestCh] || {};
+			if (t0.view !== 1) bad.push('ch' + wTestCh + ' view×' + (t0.view || 0) + ' (wagons=0, want 1)');
+			if (t0.parked) bad.push('ch' + wTestCh + ' parked×' + t0.parked + ' (wagons=0, want 0)');
+			Snowfall.options.parkedAsView = 1;
+			setY(0); await raf2();
+			LOG.length = 0;
+			doRefresh(true);
+			await raf2();
+			{
+				const Ev = Snowfall.events;
+				const Yw = Ev && wTestIdx < Ev.n ? Ev.y[wTestIdx] : mx;
+				const walkTo = Math.min(mx, Yw + 12);
+				for (let y = 200; y < walkTo; y += 200) { setY(y); await raf2(); }
+				setY(walkTo); await raf2();
+			}
+			const t1 = logTable()[wTestCh] || {};
+			if (t1.view !== 1) bad.push('ch' + wTestCh + ' view×' + (t1.view || 0) + ' (alias, want 1)');
+			if (t1.parked !== 1) bad.push('ch' + wTestCh + ' parked×' + (t1.parked || 0) + ' (alias, want 1 with view)');
+			else {
+				const iv = LOG.indexOf('ch' + wTestCh + ' view'), ipa = LOG.indexOf('ch' + wTestCh + ' parked');
+				if (iv < 0 || ipa !== iv + 1) bad.push('ch' + wTestCh + ' alias order: parked must follow view immediately');
+			}
+		}
+		if (errCount !== refreshes) bad.push('broken snippet errors ' + errCount + '× for ' + refreshes + ' refreshes (want 1 per refresh)');
+	} finally {
+		if (hasEng() && Snowfall.options) { Snowfall.options.wagons = origW; Snowfall.options.parkedAsView = origA; }
+		try { engRefresh(); } catch (_e) {}
+		console.error = origErr;
 	}
 	if (bad.length) return row('events', 0, bad.slice(0, 6).join('; '));
-	return row('events', 1, nCh + ' chapter(s): slow 1× each, flick skips clean');
+	return row('events', 1, expCh.length + ' chapter(s): slow 1×, reverse 0, re-arm ok, flick skip+end, thresholds ±2px (' + thChecked + ' checked), wagons0+alias ok, broken isolated');
 }
 async function qMorph() {
 	if (!hasEng() || !Snowfall.morph) return row('morph', -1, 'no engine');
