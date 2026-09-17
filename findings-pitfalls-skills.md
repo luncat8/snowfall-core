@@ -37,6 +37,12 @@ matrix.
   pushes it".
 - Lateral `x` must scale push depth to viewport width (`f=d/ext·vw`), not 1:1
   pixels — 1:1 strands a 256px box mid-page.
+- Exits key on past-edge depth `dp=max(−pos,0)`, not full `d`: while riding,
+  every wagon rides the chain exactly like a top exit. Keying lateral `x` on
+  `d` detaches coupled wagons sideways from their text before they park.
+- anchorAlign must ask the engine (`pos < park−1`) whether a wagon is pushed:
+  coupling propagates from below, so a positive single-gap cushion does not
+  prove the wagon rides free. Skip coupled wagons, report the count.
 - `overflow:hidden|scroll|auto` on any wagon/stick ancestor traps `sticky`
   and silently kills parking. Horizontal safety is `overflow-x:clip`.
 - Culling with `display`/`visibility` pops on reverse scroll — leave

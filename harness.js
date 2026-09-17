@@ -347,7 +347,10 @@ function geom() {
 	const els = wagons();
 	if (hasEng() && Snowfall.wagons && Snowfall.wagons.n === els.length) {
 		const w = Snowfall.wagons;
-		return { els, Y: Array.from(w.y), ext: Array.from(w.ext), live: true };
+		return {
+			els, live: true, Y: Array.from(w.y), ext: Array.from(w.ext),
+			pos: Array.from(w.pos), free: Array.from(w.free)
+		};
 	}
 	const y = window.scrollY;
 	return {
@@ -399,26 +402,30 @@ async function qOverlap() {
 async function qAnchorAlign() {
 	let g = geom();
 	if (!g.els.length) return row('anchorAlign', -1, 'no wagons');
-	let checked = 0;
+	let checked = 0, skipped = 0;
 	const bad = [];
 	for (let i = 0; i < g.els.length; i++) {
 		const cush = i < g.els.length - 1 ? (g.Y[i + 1] - g.Y[i]) - g.ext[i] : Infinity;
-		if (cush < 0) continue;
-		checked++;
+		if (cush < 0) { skipped++; continue; }
+		/* coupling propagates from below, so the single-gap check is not enough:
+		   ask the engine whether this wagon is actually pushed right now */
 		setY(g.Y[i]); await raf2();
 		g = geom();
+		if (g.live && g.pos[i] < Math.max(g.free[i], 0) - 1) { skipped++; continue; }
+		checked++;
 		const y0 = g.els[i].getBoundingClientRect().top;
 		if (Math.abs(y0) > 1) bad.push('#' + i + ' free=0 → y=' + y0.toFixed(1));
 		const t = g.Y[i] - 300;
 		if (t < 0) continue;
 		setY(t); await raf2();
 		g = geom();
+		if (g.live && g.pos[i] < Math.max(g.free[i], 0) - 1) { skipped++; continue; }
 		const y3 = g.els[i].getBoundingClientRect().top;
 		if (Math.abs(y3 - 300) > 1) bad.push('#' + i + ' free=300 → y=' + y3.toFixed(1));
 	}
-	if (!checked) return row('anchorAlign', -1, 'no uncoupled wagons');
+	if (!checked) return row('anchorAlign', -1, skipped ? 'all wagons coupled, nothing unpushed to align' : 'no uncoupled wagons');
 	if (bad.length) return row('anchorAlign', 0, bad.slice(0, 4).join('; '));
-	return row('anchorAlign', 1, checked + ' wagon(s) ride on their text' + (hasEng() ? '' : ' (no engine — static)'));
+	return row('anchorAlign', 1, checked + ' wagon(s) ride on their text' + (skipped ? ', ' + skipped + ' skipped (coupled)' : '') + (hasEng() ? '' : ' (no engine — static)'));
 }
 async function qJump() {
 	const els = wagons();

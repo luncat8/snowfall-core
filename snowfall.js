@@ -217,11 +217,18 @@ function createCore(opts) {
 			const park = fr > 0 ? fr : 0;
 			const p = W.pos[i], d = park - p;
 			const sh = stickyShown(fr, e, W.pBot[i] - sY, W.pH[i], W.mb[i]);
+			/* exits diverge only past the edge (pos<0): while riding, every wagon
+			   respects the chain ceiling exactly like a top exit, so lateral and
+			   bottom wagons stay glued to their text until they park. Both
+			   branches meet at pos=0 with x=0, so no jump is possible. */
 			let dx = 0, dy = p - sh;
 			const dir = W.dir[i];
-			if (dir === 1) { dx = -(d / e) * vw; dy = park - sh; }
-			else if (dir === 2) { dx = (d / e) * vw; dy = park - sh; }
-			else if (dir === 3) { dy = park + d - sh; }
+			if (dir === 1 || dir === 2) {
+				const dp = p < 0 ? -p : 0;
+				dx = (dir === 1 ? -1 : 1) * (dp / e) * vw;
+				dy = (p > 0 ? p : 0) - sh;
+			}
+			else if (dir === 3) dy = (p > 0 ? p : -p) - sh;
 			if (dx !== W.lastX[i] || dy !== W.lastY[i]) {
 				W.els[i].style.transform = 'translate3d(' + dx + 'px,' + dy + 'px,0)';
 				W.lastX[i] = dx; W.lastY[i] = dy; writes++;
