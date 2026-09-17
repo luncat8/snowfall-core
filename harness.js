@@ -23,6 +23,20 @@ function wagons() { return Array.from(document.querySelectorAll('#app .snow-bg')
 function chapters() { return Array.from(document.querySelectorAll('#app h4.n')); }
 const raf2 = () => new Promise(res => requestAnimationFrame(() => requestAnimationFrame(res)));
 function setY(y) { window.scrollTo(0, clamp(Math.round(y), 0, maxY())); }
+/* 'rgb(r, g, b)' / 'rgba(r, g, b, a)' → [r,g,b,a255] or null */
+function cssRGBA(s) {
+	const m = /^rgba?\(\s*([\d.]+)\s*,\s*([\d.]+)\s*,\s*([\d.]+)(?:\s*,\s*([\d.]+))?\s*\)$/.exec(s || '');
+	if (!m) return null;
+	return [+m[1], +m[2], +m[3], m[4] === undefined ? 255 : Math.round(+m[4] * 255)];
+}
+function hex3(rgb) {
+	if (!rgb) return '—';
+	const h = v => ('0' + clamp(Math.round(v), 0, 255).toString(16)).slice(-2);
+	return '#' + h(rgb[0]) + h(rgb[1]) + h(rgb[2]);
+}
+function rootCls() {
+	return (document.documentElement.className || '').split(/\s+/).filter(c => c && c !== 'snow-off').join(' ');
+}
 /* tolerant transform parse: engines normalize translate3d spacing differently */
 function parseT(el) {
 	const s = el.style.transform || '';
@@ -121,7 +135,10 @@ function wagonHTML(rng, k, pal, cfg, free) {
 	let at = ' class="snow-bg" data-mode="' + mode + '" data-gap="' + gap + '"';
 	if (mode === 'fixed' || mode === 'auto') at += ' data-size="' + size + '"';
 	if (dir && dir !== 'top') at += ' data-dir="' + dir + '"';
-	if (cfg.style && rng() < 0.3) at += ' data-bg="' + pal.bg + '"';
+	/* every 3rd wagon anchor is fg-only (bg must hold previous); the choice is
+	   counter-based, not rng, so layouts are identical with style on or off */
+	if (cfg.style && rng() < 0.3)
+		at += WAGON_NO % 3 ? ' data-bg="' + pal.bg + '"' : ' data-fg="' + pal.fg + '"';
 	return '<div' + at + ' style="' + style + '"><span class="wtag">' + tag + '·' + mode
 		+ (mode === 'fixed' || mode === 'auto' ? '·' + size : '') + (dir && dir !== 'top' ? '·' + dir : '')
 		+ (free ? '·free' : '') + '</span></div>';
@@ -174,7 +191,14 @@ function chapterHTML(rng, k, cfg) {
 	s += scriptsHTML(k, cfg);
 	if (wantBot) s += stickHTML(k, 'bottom', rng);
 	const wrap = cfg.nest === 'both' ? (k % 2 ? 'section' : 'flat') : cfg.nest;
-	if (wrap === 'flat') return s;
+	if (wrap === 'flat') {
+		/* flat chapters carry their morph anchor on a zero-size <i>;
+		   same rng draws as the section branch, in the same order */
+		if (!cfg.style) return s;
+		let fat = ' data-bg="' + pal.bg + '" data-fg="' + pal.fg + '"';
+		if (k % 3 === 0) fat += ' data-style="' + pick(rng, ['night', 'fog', 'sunset']) + '" data-range="' + pick(rng, [80, 240, 800]) + '"';
+		return '<i class="snow-fg"' + fat + '></i>' + s;
+	}
 	let at = '';
 	if (cfg.style) {
 		at += ' data-bg="' + pal.bg + '" data-fg="' + pal.fg + '"';
@@ -261,10 +285,20 @@ function diagTick() {
 			+ ' writes:' + (d.writes === undefined ? '—' : d.writes);
 	}
 	const fps = (frames * 10 / 10).toFixed(0);
+	let theme = 'theme —';
+	if (hasEng() && Snowfall.morph && Snowfall.morph.n) {
+		const dd = Snowfall.debug || {};
+		const cs = getComputedStyle(document.documentElement);
+		theme = 'theme ' + hex3(cssRGBA(cs.backgroundColor)) + '/' + hex3(cssRGBA(cs.color))
+			+ ' cls:' + (rootCls() || '—')
+			+ ' t:' + (dd.styleT === undefined || dd.styleT < 0 ? '—' : (+dd.styleT).toFixed(2))
+			+ ' n:' + Snowfall.morph.n;
+	}
 	$('dstats').textContent = 'scrollY ' + y + ' · vh ' + vh + ' · doc ' + docH
 		+ '\n#bg ' + n + ' · ' + eng + ' · ' + act
 		+ '\nfps ' + fps + ' · worst ' + worstMs.toFixed(1) + 'ms'
 		+ '\nevents ' + logCounts() + ' · total ' + LOG.length
+		+ '\n' + theme
 		+ '\n#' + location.hash.replace(/^#/, '');
 	frames = 0; worstMs = 0;
 	const mx = maxY();
@@ -359,27 +393,38 @@ function geom() {
 		ext: els.map(e => e.getBoundingClientRect().height)
 	};
 }
+/* theme snapshot: computed colours on <html> + engine class set */
+function snapTheme() {
+	const cs = getComputedStyle(document.documentElement);
+	return cs.backgroundColor + '|' + cs.color + '|' + rootCls();
+}
 async function qReversibility() {
 	const els = wagons();
 	if (!els.length) return row('reversibility', -1, 'no wagons');
-	const mx = maxY(), N = 10, downs = [], ups = [];
+	const mx = maxY(), N = 10, downs = [], ups = [], tdowns = [], tups = [];
 	for (let k = 0; k < N; k++) {
 		const t = Math.round(mx * k / (N - 1));
 		setY(t); await raf2();
 		if (Math.abs(window.scrollY - t) > 1)
 			return row('reversibility', 0, 'scroll did not land: want ' + t + ' got ' + Math.round(window.scrollY));
 		downs.push(els.map(e => e.style.transform || ''));
+		tdowns.push(snapTheme());
 	}
 	for (let k = N - 1; k >= 0; k--) {
 		setY(Math.round(mx * k / (N - 1))); await raf2();
 		ups.unshift(els.map(e => e.style.transform || ''));
+		tups.unshift(snapTheme());
 	}
 	let differ = 0;
 	for (let k = 0; k < N; k++)
 		for (let i = 0; i < els.length; i++)
 			if (downs[k][i] !== ups[k][i]) differ++;
 	if (differ) return row('reversibility', 0, differ + ' transform(s) differ for equal scrollY');
-	return row('reversibility', 1, N + '/' + N + ' identical' + (hasEng() ? '' : ' (no engine — static)'));
+	let tdiffer = 0;
+	for (let k = 0; k < N; k++)
+		if (tdowns[k] !== tups[k]) tdiffer++;
+	if (tdiffer) return row('reversibility', 0, tdiffer + ' theme snapshot(s) differ for equal scrollY');
+	return row('reversibility', 1, N + '/' + N + ' identical (transforms + theme)' + (hasEng() ? '' : ' (no engine — static)'));
 }
 async function qOverlap() {
 	const els = wagons();
@@ -477,12 +522,21 @@ async function qStickSlots() {
 		const eTop = el.getBoundingClientRect().top + window.scrollY;
 		const eH = el.getBoundingClientRect().height;
 		const { side, off } = parkOffset(el);
+		/* true sticky rule: ride the flow position until the viewport slot
+		   engages, then hold it unless the parent's content box (margin box
+		   for the stick) constrains first; clamps past maxY ride, not park */
+		const scs = getComputedStyle(scope);
+		const ecs = getComputedStyle(el);
+		const padT = (parseFloat(scs.paddingTop) || 0) + (parseFloat(scs.borderTopWidth) || 0);
+		const padB = (parseFloat(scs.paddingBottom) || 0) + (parseFloat(scs.borderBottomWidth) || 0);
+		const mT = parseFloat(ecs.marginTop) || 0, mB = parseFloat(ecs.marginBottom) || 0;
 		if (side === 'top') {
 			if (sBot - eTop < 160) continue;
 			setY(eTop + Math.min(250, (sBot - eTop) * 0.3)); await raf2();
 			const r = el.getBoundingClientRect();
 			checked++;
-			if (Math.abs(r.top - off) > 2) { bad.push('top holds at ' + r.top.toFixed(1) + ', want ' + off); continue; }
+			const wantT = Math.max(eTop - window.scrollY, off, scope.getBoundingClientRect().top + padT + mT);
+			if (Math.abs(r.top - wantT) > 2) { bad.push('top holds at ' + r.top.toFixed(1) + ', want ' + wantT.toFixed(1)); continue; }
 			const hit = document.elementFromPoint(clamp(r.left + r.width / 2, 0, window.innerWidth - 1), clamp(r.top + r.height / 2, 0, vh - 1));
 			if (!hit || !hit.closest || !hit.closest('.snow-stick')) bad.push('top covered by ' + (hit ? hit.className || hit.tagName : 'nothing'));
 		} else {
@@ -490,7 +544,8 @@ async function qStickSlots() {
 			setY(eTop + eH - vh - Math.min(250, (eTop - sTop) * 0.3)); await raf2();
 			const r = el.getBoundingClientRect();
 			checked++;
-			if (Math.abs(r.bottom - (vh - off)) > 2) { bad.push('bottom holds at ' + r.bottom.toFixed(1) + ', want ' + (vh - off)); continue; }
+			const want = Math.min(eTop + eH - window.scrollY, vh - off, scope.getBoundingClientRect().bottom - padB - mB);
+			if (Math.abs(r.bottom - want) > 2) { bad.push('bottom holds at ' + r.bottom.toFixed(1) + ', want ' + want.toFixed(1)); continue; }
 			const hit = document.elementFromPoint(clamp(r.left + r.width / 2, 0, window.innerWidth - 1), clamp(r.top + r.height / 2, 0, vh - 1));
 			if (!hit || !hit.closest || !hit.closest('.snow-stick')) bad.push('bottom covered by ' + (hit ? hit.className || hit.tagName : 'nothing'));
 		}
@@ -542,6 +597,144 @@ async function qEvents() {
 	if (bad.length) return row('events', 0, bad.slice(0, 6).join('; '));
 	return row('events', 1, nCh + ' chapter(s): slow 1× each, flick skips clean');
 }
+async function qMorph() {
+	if (!hasEng() || !Snowfall.morph) return row('morph', -1, 'no engine');
+	const M0 = Snowfall.morph;
+	const n = M0.n;
+	if (!n) return row('morph', -1, 'no anchors (style=off?)');
+	const vh = window.innerHeight, mx = maxY();
+	const root = document.documentElement;
+	const Ay = Array.from(M0.ay), Rg = Array.from(M0.range);
+	const Sbg = Array.from(M0.sbg), Sfg = Array.from(M0.sfg);
+	const bad = [];
+	const bgNow = () => cssRGBA(getComputedStyle(root).backgroundColor);
+	const fgNow = () => cssRGBA(getComputedStyle(root).color);
+	const land = async sY => {
+		sY = Math.round(sY);
+		if (sY < 0 || sY > mx) return false;
+		setY(sY); await raf2();
+		return Math.abs(window.scrollY - sY) <= 1;
+	};
+	/* engine must never paint or reclass anchors (wagon transforms excepted) */
+	const snapAnchor = e => (e.getAttribute('style') || '').replace(/transform\s*:[^;]+;?/g, '') + '|' + (e.getAttribute('class') || '');
+	const before = M0.els.map(snapAnchor);
+	const srcAny = (kind, i) => { for (let k = i; k >= 0; k--) if (kind[k] !== 0) return k; return -1; };
+	const nextCol = (kind, i) => { for (let k = i + 1; k < n; k++) if (kind[k] === 1) return k; return -1; };
+	const chanEq = (got, ch, i) => got && got[0] === M0[ch[0]][i] && got[1] === M0[ch[1]][i] && got[2] === M0[ch[2]][i] && got[3] === M0[ch[3]][i];
+	let arrivals = 0, skipped = 0;
+	for (let i = 0; i < n; i++) {
+		/* arrival sampled 1px PAST the anchor: integer scrollY cannot hit ay
+		   exactly, and from above the value is held-exact (exact only outside
+		   the next colour zone, effective starts) */
+		if (i < n - 1 && Ay[i + 1] - Ay[i] <= 2) { skipped++; continue; }
+		const ub = nextCol(M0.bgKind, i), uf = nextCol(M0.fgKind, i);
+		const okB = ub < 0 || Ay[i] + 1 < Sbg[ub];
+		const okF = uf < 0 || Ay[i] + 1 < Sfg[uf];
+		if (!okB && !okF) { skipped++; continue; }
+		if (!(await land(Ay[i] + 1 - vh / 2))) { skipped++; continue; }
+		if (okB) {
+			const s = srcAny(M0.bgKind, i);
+			if (s < 0) skipped++;
+			else if (M0.bgKind[s] === 2) {
+				arrivals++;
+				if (root.style.getPropertyValue('--snow-bg') !== M0.tokBg[s])
+					bad.push('bg token switch at #' + i);
+			} else if (!chanEq(bgNow(), ['br', 'bg_', 'bb', 'ba'], s)) {
+				const g = bgNow();
+				bad.push('bg arrival #' + i + ': got ' + hex3(g) + ' want ' + hex3([M0.br[s], M0.bg_[s], M0.bb[s]]));
+			} else arrivals++;
+		}
+		if (okF) {
+			const s = srcAny(M0.fgKind, i);
+			if (s < 0) skipped++;
+			else if (M0.fgKind[s] === 2) {
+				arrivals++;
+				if (root.style.getPropertyValue('--snow-fg') !== M0.tokFg[s])
+					bad.push('fg token switch at #' + i);
+			} else if (!chanEq(fgNow(), ['fr', 'fg_', 'fb', 'fa'], s)) {
+				const g = fgNow();
+				bad.push('fg arrival #' + i + ': got ' + hex3(g) + ' want ' + hex3([M0.fr[s], M0.fg_[s], M0.fb[s]]));
+			} else arrivals++;
+		}
+	}
+	/* no-snap: 1px step into the anchor moves ≤ 2×mean slope + quantisation */
+	let snaps = 0;
+	for (let j = 0; j < n; j++) {
+		if (M0.bgKind[j] !== 1) continue;
+		const s = srcAny(M0.bgKind, j - 1);
+		if (s < 0 || M0.bgKind[s] !== 1) continue;
+		if (j > 0 && Ay[j] - Ay[j - 1] < 2) continue;
+		if (Ay[j] - Sbg[j] < 2) continue;
+		if (!(await land(Ay[j] - 1 - vh / 2))) continue;
+		const g0 = bgNow();
+		if (!(await land(Ay[j] - vh / 2))) continue;
+		const g1 = bgNow();
+		if (!g0 || !g1) { bad.push('snap #' + j + ': unreadable colour'); continue; }
+		snaps++;
+		/* ±0.5px landing on each sample → true Δc ≤ 2; ease slope ≤ 2/D */
+		const Deff = Math.max(2, Ay[j] - Sbg[j]);
+		const D = [Math.abs(M0.br[j] - M0.br[s]), Math.abs(M0.bg_[j] - M0.bg_[s]), Math.abs(M0.bb[j] - M0.bb[s])];
+		for (let ch = 0; ch < 3; ch++) {
+			const allow = Math.ceil(4 * D[ch] / Deff) + 1;
+			if (Math.abs(g1[ch] - g0[ch]) > allow)
+				bad.push('snap #' + j + ' ch' + ch + ': ' + Math.abs(g1[ch] - g0[ch]) + 'px-step > ' + allow);
+		}
+	}
+	/* class swap at c >= ay[j], ±2px; foreign classes untouched */
+	const uni = {};
+	for (let i = 0; i < n; i++)
+		for (const t of (M0.cls[i] || '').split(' ').filter(Boolean)) uni[t] = 1;
+	const le = c => { let k = -1; for (let i = 0; i < n; i++) if (Ay[i] <= c) k = i; return k; };
+	const wantCls = c => { const k = le(c); return k < 0 ? [] : (M0.cls[k] || '').split(' ').filter(Boolean); };
+	const clsOk = (c, tag) => {
+		const want = wantCls(c), have = rootCls().split(' ').filter(Boolean);
+		for (const t of want) if (have.indexOf(t) < 0) { bad.push('class ' + tag + ': missing .' + t); return; }
+		for (const t of have) if (uni[t] && want.indexOf(t) < 0) { bad.push('class ' + tag + ': stale .' + t); return; }
+	};
+	root.classList.add('qa-foreign');
+	let swaps = 0;
+	for (let j = 0; j < n; j++) {
+		if (j > 0 && Ay[j] - Ay[j - 1] <= 4) continue;
+		if (j < n - 1 && Ay[j + 1] - Ay[j] <= 4) continue;
+		if (!(await land(Ay[j] - 2 - vh / 2))) continue;
+		clsOk(Ay[j] - 2, '#' + j + '−2');
+		if (!(await land(Ay[j] + 2 - vh / 2))) continue;
+		clsOk(Ay[j] + 2, '#' + j + '+2');
+		swaps++;
+	}
+	if (!root.classList.contains('qa-foreign')) bad.push('foreign class removed by engine');
+	root.classList.remove('qa-foreign');
+	for (let i = 0; i < n; i++)
+		if (M0.els[i].isConnected && snapAnchor(M0.els[i]) !== before[i])
+			bad.push('anchor #' + i + ' style/class touched');
+	/* idle: zero setProperty while scrollY is unchanged */
+	await raf2();
+	const st = root.style;
+	const hadOwn = Object.prototype.hasOwnProperty.call(st, 'setProperty');
+	const prevOwn = st.setProperty;
+	let idleCalls = 0;
+	st.setProperty = function(nn, vv, pp) { idleCalls++; return CSSStyleDeclaration.prototype.setProperty.call(this, nn, vv, pp); };
+	await new Promise(res => setTimeout(res, 350));
+	if (hadOwn) st.setProperty = prevOwn; else delete st.setProperty;
+	if (idleCalls) bad.push('idle wrote ' + idleCalls + '× setProperty');
+	/* regen: refresh() picks up + drops an anchor, no reload */
+	const tmp = document.createElement('i');
+	tmp.className = 'snow-fg';
+	tmp.setAttribute('data-bg', '#123456');
+	tmp.setAttribute('data-fg', '#654321');
+	$('app').appendChild(tmp);
+	engRefresh();
+	const n1 = Snowfall.morph ? Snowfall.morph.n : -1;
+	tmp.remove();
+	engRefresh();
+	const n2 = Snowfall.morph ? Snowfall.morph.n : -1;
+	if (n1 !== n + 1) bad.push('regen: refresh saw ' + n1 + ' anchors, want ' + (n + 1));
+	if (n2 !== n) bad.push('regen: after remove saw ' + n2 + ', want ' + n);
+	if (!arrivals && !snaps && !swaps) return row('morph', -1, 'anchors unreachable at vh ' + vh);
+	if (bad.length) return row('morph', 0, bad.slice(0, 5).join('; '));
+	return row('morph', 1, arrivals + ' arrival(s), ' + snaps + ' snap(s), ' + swaps + ' swap(s), idle 0 writes, regen ok'
+		+ (skipped ? ', ' + skipped + ' skipped (zone/clamp)' : ''));
+}
 async function qaAll() {
 	if (qaBusy) return;
 	qaBusy = true;
@@ -556,6 +749,7 @@ async function qaAll() {
 		await qJump();
 		await qStickSlots();
 		await qEvents();
+		await qMorph();
 	} finally {
 		qaBusy = false;
 		$('qaBtn').disabled = false;

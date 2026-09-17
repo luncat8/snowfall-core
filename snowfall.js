@@ -1,4 +1,4 @@
-/* snowfall.js — visual novella scroll engine: core + wagons (0.2).
+/* snowfall.js — visual novella scroll engine: core + wagons (0.2) + style/theme morph (0.3).
 	Sticky park (compositor) + JS push chain (sync scroll handler).
 	Classic script, no modules; require()-able under node with zero DOM at load. */
 (function(global) {
@@ -17,9 +17,13 @@ function chain(n, free, ext, pos) {
 }
 /* what CSS position:sticky;top:0 shows without any transform.
 	CSS constrains the MARGIN box within the parent CONTENT box, so the
-	mirror needs content-box bottom and the (negative ok) marginBottom. */
+	mirror needs content-box bottom and the (negative ok) marginBottom.
+	No ext>=pH shortcut: measured in Chrome, a wagon taller than its parent
+	still parks at top:0 while the parent is visible and releases to the cap
+	once the parent's content bottom passes (the margin box is what fits, and
+	with overlay flow it is tiny). The min(park,cap) clamp covers every case;
+	the old shortcut returned flow and misplaced tall wagons by -free. */
 function stickyShown(free, ext, pBotC, pH, mb) {
-	if (ext >= pH) return free;
 	const park = free > 0 ? free : 0;
 	const cap = pBotC - ext - mb;
 	return cap < park ? cap : park;
@@ -52,6 +56,92 @@ function parseSize(ds) {
 	if (!(h > 0)) h = w;
 	return [w, h];
 }
+/* 0..255 int or null. Components are 0-255 (never 0-1 scaled); alpha is the
+   only 0-1 channel; both accept %. Out-of-range clamps (CSS behaviour). */
+function num255(s, isAlpha) {
+	if (s === undefined || s === null) return null;
+	const t = String(s).trim();
+	if (t === '') return null;
+	let v;
+	if (t[t.length - 1] === '%') v = parseFloat(t) * 255 / 100;
+	else { v = parseFloat(t); if (isAlpha) v = v * 255; }
+	if (!isFinite(v)) return null;
+	v = Math.round(v);
+	return v < 0 ? 0 : v > 255 ? 255 : v;
+}
+/* [r,g,b,a255] or null. #rgb/#rgba/#rrggbb/#rrggbbaa, rgb()/rgba() with comma
+   or space+slash syntax. Anything else (gradients, named colours) is a TOKEN:
+   the caller assigns it verbatim instead of lerping it. */
+function parseColor(s) {
+	if (s === undefined || s === null) return null;
+	const t = String(s).trim();
+	if (t === '') return null;
+	if (t[0] === '#') {
+		let h = t.slice(1);
+		if (h.length === 3 || h.length === 4) {
+			let e = '';
+			for (let k = 0; k < h.length; k++) e += h[k] + h[k];
+			h = e;
+		}
+		if (h.length !== 6 && h.length !== 8) return null;
+		for (let k = 0; k < h.length; k++) {
+			const c = h.charCodeAt(k) | 32;
+			if (!((c >= 48 && c <= 57) || (c >= 97 && c <= 102))) return null;
+		}
+		const n = parseInt(h, 16);
+		if (h.length === 6) return [(n >> 16) & 255, (n >> 8) & 255, n & 255, 255];
+		return [(n >>> 24) & 255, (n >> 16) & 255, (n >> 8) & 255, n & 255];
+	}
+	if (t.length < 10 || t[0] !== 'r' || t[1] !== 'g' || t[2] !== 'b') return null;
+	const m = /^rgba?\(([^)]+)\)$/.exec(t);
+	if (!m) return null;
+	const inner = m[1];
+	let a = 255, parts;
+	if (inner.indexOf(',') >= 0) {
+		parts = inner.split(',');
+		if (parts.length === 4) { a = num255(parts[3], true); parts = parts.slice(0, 3); }
+		else if (parts.length !== 3) return null;
+	} else {
+		const sides = inner.split('/');
+		if (sides.length > 2) return null;
+		parts = sides[0].trim().split(/\s+/);
+		if (parts.length !== 3) return null;
+		if (sides.length === 2) a = num255(sides[1], true);
+	}
+	const r = num255(parts[0], false), g = num255(parts[1], false), b = num255(parts[2], false);
+	if (r === null || g === null || b === null || a === null) return null;
+	return [r, g, b, a];
+}
+/* linear-light lerp: sRGB midpoints go muddy, linear ones stay clean.
+   Ends are exact (t<=0 → a, t>=1 → b); the LUT only serves the interior. */
+/* L2S needs 4096 entries: a 256-entry table quantises the dark end to ±6
+   sRGB steps (round-trip sRGB→linear→sRGB must be exact for all 256 inputs,
+   verified in node). 4 KB, built once. */
+const S2L = new Float64Array(256), L2S = new Uint8Array(4097);
+for (let v = 0; v < 256; v++) {
+	const s = v / 255;
+	S2L[v] = s <= 0.04045 ? s / 12.92 : Math.pow((s + 0.055) / 1.055, 2.4);
+}
+for (let k = 0; k <= 4096; k++) {
+	const l = k / 4096;
+	const s = l <= 0.0031308 ? l * 12.92 : 1.055 * Math.pow(l, 1 / 2.4) - 0.055;
+	L2S[k] = Math.round(Math.min(1, Math.max(0, s)) * 255);
+}
+function mixLin(a, b, t) {
+	if (t <= 0) return a;
+	if (t >= 1) return b;
+	return L2S[Math.round((S2L[a] + (S2L[b] - S2L[a]) * t) * 4096)];
+}
+function mixA(a, b, t) {
+	if (t <= 0) return a;
+	if (t >= 1) return b;
+	return Math.round(a + (b - a) * t);
+}
+function clamp01(t) { return t < 0 ? 0 : t > 1 ? 1 : t; }
+function ease01(t) {
+	t = clamp01(t);
+	return t < 0.5 ? 2 * t * t : 1 - Math.pow(-2 * t + 2, 2) / 2;
+}
 
 var CSS = '.snow-bg{position:sticky;top:0;z-index:-1;pointer-events:none;background-repeat:no-repeat;background-position:center}'
 	+ '.snow-bg[data-mode=tiled]{background-repeat:repeat}'
@@ -83,7 +173,9 @@ function createCore(opts) {
 		subs: [],
 		stamp: 0,
 		wagons: { n: 0, els: [], y: [], free: [], pos: [], ext: [], dir: [] },
-		debug: { n: 0, active: -1, parked: 0, pushed: 0, writes: 0 }
+		morph: { n: 0, els: [], ay: [], range: [], bgKind: [], fgKind: [], cls: [] },
+		debug: { n: 0, active: -1, parked: 0, pushed: 0, writes: 0,
+			styleN: 0, styleBg: -1, styleFg: -1, styleT: -1, styleCls: '' }
 	};
 	if (opts.options) for (const k in opts.options) inst.options[k] = +opts.options[k] || 0;
 
@@ -96,6 +188,22 @@ function createCore(opts) {
 		lastX: new Float64Array(0), lastY: new Float64Array(0), n: 0
 	};
 	let lastVh = 0, lastVw = 0;
+	const rootEl = hasDOM ? document.documentElement : null;
+
+	/* morph subscriber state (preallocated at measure, mutated in place) */
+	const M = {
+		els: [], n: 0, ay: new Float64Array(0), range: new Float64Array(0), rawRange: [],
+		bgKind: new Uint8Array(0), fgKind: new Uint8Array(0),
+		br: new Int16Array(0), bg_: new Int16Array(0), bb: new Int16Array(0), ba: new Int16Array(0),
+		fr: new Int16Array(0), fg_: new Int16Array(0), fb: new Int16Array(0), fa: new Int16Array(0),
+		tokBg: [], tokFg: [], cls: [],
+		srcBg: new Int32Array(0), srcFg: new Int32Array(0),
+		sbg: new Float64Array(0), sfg: new Float64Array(0)
+	};
+	let lastBgKind = -1, lastBgPack = 0, lastBgA = 0, lastTokBg = '';
+	let lastFgKind = -1, lastFgPack = 0, lastFgA = 0, lastTokFg = '';
+	let lastTq = -1, lastClsKey = null, lastClsArr = [];
+	const chBg = { v: -1, u: -1 }, chFg = { v: -1, u: -1 };
 
 	function ensureMarker(el) {
 		if (!hasDOM) return null;
@@ -242,8 +350,197 @@ function createCore(opts) {
 		inst.debug.pushed = pushed;
 		inst.debug.writes = writes;
 	}
+	function styleMeasure() {
+		M.n = 0;
+		M.els = [];
+		inst.morph = { n: 0, els: [], ay: [], range: [], bgKind: [], fgKind: [], cls: [] };
+		inst.debug.styleN = 0;
+		if (!hasDOM || !scope || !scope.querySelectorAll) return;
+		const found = scope.querySelectorAll('[data-bg],[data-fg],[data-style]');
+		const els = [];
+		for (let k = 0; k < found.length; k++) els.push(found[k]);
+		const n = els.length;
+		if (M.ay.length < n) {
+			M.ay = new Float64Array(n); M.range = new Float64Array(n);
+			M.bgKind = new Uint8Array(n); M.fgKind = new Uint8Array(n);
+			M.br = new Int16Array(n); M.bg_ = new Int16Array(n);
+			M.bb = new Int16Array(n); M.ba = new Int16Array(n);
+			M.fr = new Int16Array(n); M.fg_ = new Int16Array(n);
+			M.fb = new Int16Array(n); M.fa = new Int16Array(n);
+			M.srcBg = new Int32Array(n); M.srcFg = new Int32Array(n);
+		}
+		M.els = els; M.n = n;
+		M.rawRange = new Array(n); M.tokBg = new Array(n);
+		M.tokFg = new Array(n); M.cls = new Array(n);
+		const vh = window.innerHeight;
+		for (let i = 0; i < n; i++) {
+			const ds = els[i].dataset;
+			const bRaw = ds.bg !== undefined ? String(ds.bg).trim() : '';
+			if (bRaw === '') M.bgKind[i] = 0;
+			else {
+				const c = parseColor(bRaw);
+				if (c) { M.bgKind[i] = 1; M.br[i] = c[0]; M.bg_[i] = c[1]; M.bb[i] = c[2]; M.ba[i] = c[3]; }
+				else { M.bgKind[i] = 2; M.tokBg[i] = bRaw; }
+			}
+			const fRaw = ds.fg !== undefined ? String(ds.fg).trim() : '';
+			if (fRaw === '') M.fgKind[i] = 0;
+			else {
+				const c = parseColor(fRaw);
+				if (c) { M.fgKind[i] = 1; M.fr[i] = c[0]; M.fg_[i] = c[1]; M.fb[i] = c[2]; M.fa[i] = c[3]; }
+				else { M.fgKind[i] = 2; M.tokFg[i] = fRaw; }
+			}
+			M.rawRange[i] = parseFloat(ds.range);
+			M.cls[i] = ds.style !== undefined ? String(ds.style).trim().replace(/\s+/g, ' ') : '';
+			ensureMarker(els[i]);
+		}
+		const sY = window.scrollY || 0;
+		for (let i = 0; i < n; i++) M.ay[i] = els[i].__snowA.getBoundingClientRect().top + sY;
+		for (let i = 0; i < n; i++) {
+			const raw = M.rawRange[i];
+			if (raw === raw) M.range[i] = raw >= 1 ? raw : 1;
+			else {
+				const iv = i > 0 ? M.ay[i] - M.ay[i - 1] : vh * 0.6;
+				const d = Math.min(iv, vh * 0.6);
+				M.range[i] = d >= 1 ? d : 1;
+			}
+		}
+		if (M.sbg.length < n) { M.sbg = new Float64Array(n); M.sfg = new Float64Array(n); }
+		let sb = -1, sf = -1;
+		for (let i = 0; i < n; i++) {
+			if (M.bgKind[i] !== 0) {
+				M.sbg[i] = sb < 0 ? M.ay[i] - M.range[i] : Math.max(M.ay[i] - M.range[i], M.ay[sb]);
+				sb = i;
+			} else M.sbg[i] = M.ay[i];
+			if (M.fgKind[i] !== 0) {
+				M.sfg[i] = sf < 0 ? M.ay[i] - M.range[i] : Math.max(M.ay[i] - M.range[i], M.ay[sf]);
+				sf = i;
+			} else M.sfg[i] = M.ay[i];
+			M.srcBg[i] = sb; M.srcFg[i] = sf;
+		}
+		inst.morph = { n: n, els: els, ay: M.ay, range: M.range,
+			bgKind: M.bgKind, fgKind: M.fgKind, cls: M.cls,
+			br: M.br, bg_: M.bg_, bb: M.bb, ba: M.ba, fr: M.fr, fg_: M.fg_, fb: M.fb, fa: M.fa,
+			tokBg: M.tokBg, tokFg: M.tokFg, sbg: M.sbg, sfg: M.sfg };
+		inst.debug.styleN = n;
+	}
+	/* one channel at reading-line c, i = lastLE: out.v = value anchor (-1 none),
+	   out.u = morph target or -1. Target search SKIPS kind-0 anchors (they
+	   carry no channel info and must not disturb a running morph); the zone
+	   start S[u] is pre-clamped to the previous value anchor, so zones never
+	   overlap and t always runs 0→1 exactly. Colour→colour morphs; anything
+	   involving a token (or a missing source) holds, then switches at ay. */
+	function chanAt(kind, src, S, c, i, out) {
+		const n = M.n;
+		out.u = -1;
+		if (i < 0) { out.v = n ? src[0] : -1; return; }
+		let v = src[i];
+		let u = i + 1;
+		while (u < n && kind[u] === 0) u++;
+		if (u < n && c >= S[u]) {
+			if (kind[u] === 1 && v >= 0 && kind[v] === 1) out.u = u;
+			else if (c >= M.ay[u]) v = u;
+		}
+		out.v = v;
+	}
+	function chanT(u, S, c) {
+		const d = M.ay[u] - S[u];
+		if (d < 1) return c >= M.ay[u] ? 1 : 0;
+		return ease01((c - S[u]) / d);
+	}
+	function writeRGB(isBg, r, g, b, a) {
+		const p = (r << 16) | (g << 8) | b;
+		if (isBg) {
+			if (lastBgKind === 1 && lastBgPack === p && lastBgA === a) return;
+			lastBgKind = 1; lastBgPack = p; lastBgA = a;
+			rootEl.style.setProperty('--snow-bg', a >= 255
+				? 'rgb(' + r + ' ' + g + ' ' + b + ')'
+				: 'rgb(' + r + ' ' + g + ' ' + b + ' / ' + (a / 255).toFixed(3) + ')');
+			inst.debug.styleBg = p;
+		} else {
+			if (lastFgKind === 1 && lastFgPack === p && lastFgA === a) return;
+			lastFgKind = 1; lastFgPack = p; lastFgA = a;
+			rootEl.style.setProperty('--snow-fg', a >= 255
+				? 'rgb(' + r + ' ' + g + ' ' + b + ')'
+				: 'rgb(' + r + ' ' + g + ' ' + b + ' / ' + (a / 255).toFixed(3) + ')');
+			inst.debug.styleFg = p;
+		}
+	}
+	function writeTok(isBg, s) {
+		if (isBg) {
+			if (lastBgKind === 2 && lastTokBg === s) return;
+			lastBgKind = 2; lastTokBg = s;
+			rootEl.style.setProperty('--snow-bg', s);
+			inst.debug.styleBg = -2;
+		} else {
+			if (lastFgKind === 2 && lastTokFg === s) return;
+			lastFgKind = 2; lastTokFg = s;
+			rootEl.style.setProperty('--snow-fg', s);
+			inst.debug.styleFg = -2;
+		}
+	}
+	function styleFrame(sY, vh) {
+		const n = M.n;
+		if (!n || !inst.options.morph) return;
+		const c = sY + vh * 0.5;
+		let i = -1;
+		while (i + 1 < n && M.ay[i + 1] <= c) i++;
+		chanAt(M.bgKind, M.srcBg, M.sbg, c, i, chBg);
+		if (chBg.v >= 0) {
+			if (chBg.u >= 0) {
+				const u = chBg.u;
+				const t = chanT(u, M.sbg, c);
+				writeRGB(1, mixLin(M.br[chBg.v], M.br[u], t), mixLin(M.bg_[chBg.v], M.bg_[u], t),
+					mixLin(M.bb[chBg.v], M.bb[u], t), mixA(M.ba[chBg.v], M.ba[u], t));
+			}
+			else if (M.bgKind[chBg.v] === 2) writeTok(1, M.tokBg[chBg.v]);
+			else writeRGB(1, M.br[chBg.v], M.bg_[chBg.v], M.bb[chBg.v], M.ba[chBg.v]);
+		}
+		chanAt(M.fgKind, M.srcFg, M.sfg, c, i, chFg);
+		if (chFg.v >= 0) {
+			if (chFg.u >= 0) {
+				const u = chFg.u;
+				const t = chanT(u, M.sfg, c);
+				writeRGB(0, mixLin(M.fr[chFg.v], M.fr[u], t), mixLin(M.fg_[chFg.v], M.fg_[u], t),
+					mixLin(M.fb[chFg.v], M.fb[u], t), mixA(M.fa[chFg.v], M.fa[u], t));
+			}
+			else if (M.fgKind[chFg.v] === 2) writeTok(0, M.tokFg[chFg.v]);
+			else writeRGB(0, M.fr[chFg.v], M.fg_[chFg.v], M.fb[chFg.v], M.fa[chFg.v]);
+		}
+		const jt = i < 0 ? 0 : Math.min(i + 1, n - 1);
+		const q = Math.round(ease01((c - (M.ay[jt] - M.range[jt])) / M.range[jt]) * 64);
+		if (q !== lastTq) {
+			lastTq = q;
+			rootEl.style.setProperty('--snow-t', String(q / 64));
+			inst.debug.styleT = q / 64;
+		}
+		const key = i < 0 ? '' : M.cls[i];
+		if (key !== lastClsKey) {
+			for (let k = 0; k < lastClsArr.length; k++) rootEl.classList.remove(lastClsArr[k]);
+			lastClsArr = key === '' ? [] : key.split(' ');
+			for (let k = 0; k < lastClsArr.length; k++) rootEl.classList.add(lastClsArr[k]);
+			lastClsKey = key;
+			inst.debug.styleCls = key;
+		}
+	}
+	function wagonsOff() {
+		if (!hasDOM) return;
+		for (let k = 0; k < W.n; k++) W.els[k].style.transform = '';
+		W.lastX.fill(NaN); W.lastY.fill(NaN);
+	}
+	function styleOff() {
+		if (!hasDOM) return;
+		for (let k = 0; k < lastClsArr.length; k++) rootEl.classList.remove(lastClsArr[k]);
+		lastClsArr = []; lastClsKey = null;
+		rootEl.style.removeProperty('--snow-bg');
+		rootEl.style.removeProperty('--snow-fg');
+		rootEl.style.removeProperty('--snow-t');
+		lastBgKind = -1; lastFgKind = -1; lastTq = -1; lastTokBg = ''; lastTokFg = '';
+		inst.debug.styleBg = -1; inst.debug.styleFg = -1;
+		inst.debug.styleT = -1; inst.debug.styleCls = '';
+	}
 	inst.use = function(sub) { inst.subs.push(sub); return sub; };
-	inst.use({ measure: wagonsMeasure, frame: wagonsFrame });
+	inst.use({ measure: wagonsMeasure, frame: wagonsFrame, off: wagonsOff });
+	inst.use({ measure: styleMeasure, frame: styleFrame, off: styleOff });
 
 	function coreFrame(sY, vh, vw) {
 		if (inst.destroyed || !inst.enabled) return;
@@ -274,8 +571,8 @@ function createCore(opts) {
 		if (!hasDOM) return;
 		document.documentElement.classList.toggle('snow-off', !inst.enabled);
 		if (!inst.enabled) {
-			for (let i = 0; i < W.n; i++) W.els[i].style.transform = '';
-			W.lastX.fill(NaN); W.lastY.fill(NaN);
+			for (let s = inst.subs.length - 1; s >= 0; s--)
+				if (inst.subs[s].off) inst.subs[s].off();
 			inst.debug.writes = 0;
 		} else inst.step();
 	};
@@ -286,7 +583,8 @@ function createCore(opts) {
 			window.removeEventListener('scroll', onScroll);
 			window.removeEventListener('resize', onResize);
 			document.documentElement.classList.remove('snow-off');
-			for (let i = 0; i < W.n; i++) W.els[i].style.transform = '';
+			for (let s = inst.subs.length - 1; s >= 0; s--)
+				if (inst.subs[s].off) inst.subs[s].off();
 		}
 	};
 	function onScroll() {
@@ -306,12 +604,16 @@ function createCore(opts) {
 const Snowfall = {
 	create: createCore,
 	default: null,
-	version: '0.2',
+	version: '0.3',
 	chain: chain,
 	stickyShown: stickyShown,
 	dirCode: dirCode,
 	parseGap: parseGap,
-	parseSize: parseSize
+	parseSize: parseSize,
+	parseColor: parseColor,
+	num255: num255,
+	mixLin: mixLin,
+	mixA: mixA
 };
 Snowfall.use = function(s) { return Snowfall.default.use(s); };
 Snowfall.refresh = function() { if (Snowfall.default) Snowfall.default.refresh(); };
@@ -319,6 +621,7 @@ Snowfall.step = function(a, b, c) { if (Snowfall.default) Snowfall.default.step(
 Snowfall.anchorY = function(el) { return Snowfall.default ? Snowfall.default.anchorY(el) : 0; };
 Snowfall.setEnabled = function(on) { if (Snowfall.default) Snowfall.default.setEnabled(on); };
 Object.defineProperty(Snowfall, 'wagons', { get: function() { return Snowfall.default ? Snowfall.default.wagons : undefined; } });
+Object.defineProperty(Snowfall, 'morph', { get: function() { return Snowfall.default ? Snowfall.default.morph : undefined; } });
 Object.defineProperty(Snowfall, 'debug', { get: function() { return Snowfall.default ? Snowfall.default.debug : undefined; } });
 Object.defineProperty(Snowfall, 'options', { get: function() { return Snowfall.default ? Snowfall.default.options : undefined; } });
 Object.defineProperty(Snowfall, 'eventCount', { get: function() { return Snowfall.default ? Snowfall.default.eventCount : undefined; } });

@@ -4,7 +4,7 @@
 	--line:#2c3749; --accent:#6cf; --ok:#3ddc84; --fail:#ff5d5d; --skip:#b7950b;
 }
 *{box-sizing:border-box}
-html{background:#f4f6f9;color:#202633}
+html{background:var(--snow-bg,#f4f6f9);color:var(--snow-fg,#202633)}
 html,body{margin:0;padding:0}
 body{font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;overflow-x:clip}
 button,input,select{font:inherit}
@@ -44,6 +44,12 @@ button{cursor:pointer}
 #app h4.n{margin:0 0 12px;font-size:44px;line-height:1}
 #app .tail{height:100vh}
 script[type=txt]{display:none}
+/* free-floating morph anchors: zero box, out of flow, with or without engine */
+.snow-fg{position:absolute;width:0;height:0;margin:0;padding:0;border:0;overflow:hidden;visibility:hidden;pointer-events:none}
+/* demo data-style classes: paint only, zero layout shift by construction */
+html.night #app h4.n{outline:2px solid #6cf}
+html.fog #app{text-shadow:0 0 12px rgba(200,220,255,.9)}
+html.sunset .wtag{background:rgba(120,40,0,.6)}
 
 /* no-engine fallback: the picture paints BEHIND the following text (overlay),
    so the first scene after a background reads like the parked engine scene.

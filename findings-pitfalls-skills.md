@@ -16,6 +16,10 @@ matrix.
 - Mirror CSS sticky parent-aware in math
   (`min(max(free,0),parentBottom−ext)`), then *extend* it: when the parent
   ends before the next wagon arrives, hold via positive delta.
+- A taller-than-parent sticky box DOES park at `top:0` while the parent is
+  visible (the margin box is what fits, and with overlay flow it is tiny)
+  and releases to `parentBottom − ext − mb` after. Never shortcut the mirror
+  with `ext>=pH ⇒ flow` — it misplaces wagons by `−free`.
 - Chain is 1D (`pos[i]=min(park[i],pos[i+1]−ext[i])`), exits projected after.
   Never feed a 2D exit (bottom/left/right) back into the chain — a bottom
   exit un-pushes the wagon above it (observed bug).
@@ -67,6 +71,17 @@ matrix.
 
 - Lerp colours in linear light (LUTs), not sRGB — sRGB midpoints go muddy.
   Alpha is the only 0-1 channel; components are 0-255 with `%` support.
+- Size the linear→sRGB table at 4096, not 256 — a 256-entry table quantises
+  the dark end to ±6 sRGB steps. Gate: round-trip sRGB→linear→sRGB must be
+  exact for all 256 inputs (check in node).
+- Explicit `data-range` longer than the anchor interval creates overlapping
+  morph zones, which snap at the middle anchor (incoming completes exactly
+  where outgoing is already 2/3 done). Clamp each zone's effective start to
+  the previous value anchor's Y and divide by the effective span — ranges
+  compress instead of snapping, arrival stays exact.
+- Morph target search must skip anchors that lack the channel; otherwise
+  crossing a channel-less anchor re-pairs (source, target, t) mid-gradient
+  and jumps.
 - One reading line (`scrollY+vh/2`) for segment choice, lerp, and class swap;
   morph completes *at* the anchor so `t==1` meets the class swap exactly.
 - No `transition` on themed colour props — the lerp is the smoothing; a
@@ -101,3 +116,10 @@ matrix.
 - `background-image:<gradient> 50%/72px` is invalid CSS (position/size need
   the `background` shorthand) — emit `background-size` separately.
 - Prove every gate fails before trusting it green: break one thing, re-run.
+- Integer `scrollY` cannot hit a fractional anchor Y: sample arrival holds
+  1px *past* the anchor (bit-exact from above) and budget ±0.5px landing on
+  both ends of any gradient-step bound (true Δc ≤ 2).
+- `qStickSlots` must encode the true sticky rule — min/max of flow position,
+  viewport slot, and parent content-box constraint *including the stick's
+  own margins* — because short pages legitimately clamp the probe scroll at
+  `maxY` and short sections legitimately constrain the park.
