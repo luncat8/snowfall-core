@@ -18,7 +18,7 @@ function mulberry32(seed) {
 function pick(rng, arr) { return arr[Math.floor(rng() * arr.length)]; }
 function maxY() { return Math.max(0, document.documentElement.scrollHeight - window.innerHeight); }
 function hasEng() { return !!(window.Snowfall && window.Snowfall.wagons); }
-function engRefresh(replay) { if (window.Snowfall && Snowfall.refresh) Snowfall.refresh(replay); }
+function engRefresh(replay) { if (window.Snowfall && Snowfall.refresh) Snowfall.refresh(replay); indexLines(); }
 function wagons() { return Array.from(document.querySelectorAll('#app .snow-bg')); }
 function chapters() { return Array.from(document.querySelectorAll('#app h4.n')); }
 const raf2 = () => new Promise(res => requestAnimationFrame(() => requestAnimationFrame(res)));
@@ -48,7 +48,7 @@ function parseT(el) {
 
 /* ---------------- config in location.hash ---------------- */
 const IDS = ['preset', 'n', 'bgs', 'len', 'gap', 'flow', 'mode', 'size', 'dir', 'nest', 'stick'];
-const CHECKS = ['style', 'events', 'exampleGradient'];
+const CHECKS = ['style', 'events', 'exampleGradient', 'gutter', 'hudOn'];
 let SEED = 20260917;
 function getCfg() {
 	const c = { seed: SEED };
@@ -84,81 +84,71 @@ function writeHash() {
 	catch (e) { location.hash = s; }
 }
 
-/* ---------------- visuals: gradients + svg data uris, zero network ---------------- */
+/* ---------------- visuals: generated art, zero network ---------------- */
 const PALETTE = [
-	{ L: 'R', bg: '#c0392b', fg: '#fdf2e9', g: ['#7e1018', '#f44b45'] },
-	{ L: 'B', bg: '#2471a3', fg: '#eaf2f8', g: ['#14213d', '#4facfe'] },
-	{ L: 'G', bg: '#1e8449', fg: '#eafaf1', g: ['#0f5132', '#43e97b'] },
-	{ L: 'Y', bg: '#b7950b', fg: '#1a1500', g: ['#7d6608', '#f9e04b'] },
-	{ L: 'P', bg: '#6c3483', fg: '#f4ecf7', g: ['#330867', '#b388eb'] },
-	{ L: 'C', bg: '#5d6d7e', fg: '#f8f9fa', g: ['#232526', '#414345'] }
+	{ L: 'R', bg: '#3b1119', fg: '#ffe8e6', s: ['#8e2233', '#1c0a10'], dot: '#ff9a86', ang: 26 },
+	{ L: 'B', bg: '#0f1c38', fg: '#e7efff', s: ['#2a5aa8', '#0a1428'], dot: '#84c9ff', ang: -34 },
+	{ L: 'G', bg: '#0d2a20', fg: '#e7fff3', s: ['#2f9364', '#08211a'], dot: '#8ff0c0', ang: 18 },
+	{ L: 'Y', bg: '#33260a', fg: '#fff6dd', s: ['#c08a1e', '#1f1505'], dot: '#ffdc7a', ang: -22 },
+	{ L: 'P', bg: '#241035', fg: '#f3e8ff', s: ['#7b46c0', '#150a20'], dot: '#d8b4fe', ang: 41 },
+	{ L: 'C', bg: '#1b2027', fg: '#eef2f7', s: ['#4a5568', '#0d1116'], dot: '#cbd5e1', ang: -14 }
 ];
-const CAPTIONS = ['dawn breaks', 'the door opens', 'cold corridor', 'signal lost',
+const CHAPTER_NAMES = ['dawn breaks', 'the door opens', 'cold corridor', 'signal lost',
 	'night shift', 'paper maps', 'second floor', 'quiet engine'];
-/* bare data uri; call site wraps in url('…') so no quote ever closes its attribute */
-function svgURI(w, h, fill, label) {
-	const t = Math.min(w, h);
-	let cells = '';
-	for (let i = 0; i < 8; i++)
-		cells += '<rect x="' + (i * t / 8) + '" y="0" width="' + (t / 8) + '" height="' + (t / 8) + '" fill="' + (i % 2 ? '#ffffff' : '#000000') + '" opacity="0.85"/>';
-	const fs = Math.max(10, Math.floor(t / 12));
+function hash32(s) {
+	let h = 2166136261;
+	for (let i = 0; i < s.length; i++) { h ^= s.charCodeAt(i); h = Math.imul(h, 16777619); }
+	return h >>> 0;
+}
+/* striped bands + a big circle, generated in svg so the art stays crisp at any
+   size and every display mode keeps its own meaning (cover scales the 16:10
+   picture, contain letterboxes it, tiled repeats the seamless square, auto and
+   fixed draw it at the natural size). Returns url('data:…') ready for a style
+   attribute: the svg only uses double quotes, which encodeURIComponent escapes,
+   so no quote can ever close the attribute it is pasted into.
+   In repeat mode the bands run vertically with a period that divides the tile
+   width, so neighbouring tiles continue the same rhythm. */
+function artURI(w, h, pal, tag, tile) {
+	const rng = mulberry32(hash32(tag));
+	const short = Math.min(w, h);
+	const period = Math.max(12, Math.round(short / 6));
+	const stripe = Math.max(3, Math.round(period * 0.55));
+	const pw = tile ? Math.max(8, Math.round(w / Math.max(2, Math.round(w / Math.max(12, short / 5))))) : period;
+	const ph = tile ? h : Math.ceil((Math.sqrt(w * w + h * h) + period) / period) * period;
+	const sw = tile ? stripe : pw, sh = tile ? ph : stripe;
+	const ox = tile ? Math.round(pw / 2) : 0, oy = tile ? 0 : Math.round(ph / 2);
+	const fs = Math.max(9, Math.round(short / 34));
+	const cx = Math.round(tile ? w / 2 : w * (0.22 + rng() * 0.56));
+	const cy = Math.round(tile ? h / 2 : h * (0.24 + rng() * 0.5));
+	/* a repeated circle would wall the page in, so the tiling copy keeps the
+	   motif faint and drops the label — it repeats once per tile */
+	const r = Math.max(8, Math.round(short * (tile ? 0.16 : 0.22)));
 	const svg = '<svg xmlns="http://www.w3.org/2000/svg" width="' + w + '" height="' + h + '" viewBox="0 0 ' + w + ' ' + h + '">'
-		+ '<rect width="' + w + '" height="' + h + '" fill="' + fill + '"/>'
-		+ cells
-		+ '<rect x="0.5" y="0.5" width="' + (w - 1) + '" height="' + (h - 1) + '" fill="none" stroke="#ffffff" stroke-width="1" opacity="0.6"/>'
-		+ '<text x="8" y="' + (16 + fs) + '" font-size="' + fs + '" fill="#fff" font-family="monospace">' + label + '</text>'
-		+ '<text x="' + (w - 8) + '" y="' + (h - 8) + '" font-size="' + fs + '" fill="#fff" font-family="monospace" text-anchor="end">' + label + '</text>'
+		+ '<defs><pattern id="b" width="' + pw + '" height="' + ph + '" patternUnits="userSpaceOnUse" patternTransform="rotate(' + (tile ? 0 : pal.ang) + ')">'
+		+ '<rect width="100%" height="100%" fill="' + pal.s[1] + '"/>'
+		+ '<rect width="' + sw + '" height="' + sh + '" fill="' + pal.s[0] + '"/>'
+		+ '<rect x="' + ox + '" y="' + oy + '" width="' + sw + '" height="' + sh + '" fill="' + pal.s[0] + '" opacity="0.55"/>'
+		+ '</pattern></defs>'
+		+ '<rect width="' + w + '" height="' + h + '" fill="url(#b)"/>'
+		+ '<circle cx="' + cx + '" cy="' + cy + '" r="' + r + '" fill="' + pal.dot + '" opacity="' + (tile ? 0.3 : 0.85) + '"/>'
+		+ '<circle cx="' + cx + '" cy="' + cy + '" r="' + Math.round(r * 1.4) + '" fill="none" stroke="' + pal.dot
+		+ '" stroke-width="' + Math.max(1, Math.round(r / 20)) + '" opacity="' + (tile ? 0.22 : 0.45) + '"/>'
+		+ (tile ? '' : '<text x="' + (fs + 2) + '" y="' + (fs * 2) + '" font-family="monospace" font-size="' + fs + '" fill="#ffffff" opacity="0.55">' + tag + '</text>')
 		+ '</svg>';
-	return 'data:image/svg+xml,' + encodeURIComponent(svg);
+	return "url('data:image/svg+xml," + encodeURIComponent(svg) + "')";
 }
 function wagonVisual(pal, mode, size, tag) {
-	if (mode === 'tiled') return { img: "url('" + svgURI(128, 128, pal.bg, tag) + "')", sizeCss: '' };
-	if (mode === 'fixed' || mode === 'auto')
-		return { img: "url('" + svgURI(size, size, pal.bg, tag) + "')", sizeCss: '' };
-	return { img: 'linear-gradient(135deg,' + pal.g[0] + ',' + pal.g[1] + ')', sizeCss: '' };
+	if (mode === 'tiled') return artURI(160, 160, pal, tag, true);
+	if (mode === 'fixed' || mode === 'auto') return artURI(size, size, pal, tag, false);
+	return artURI(1600, 1000, pal, tag, false);
 }
 
 /* ---------------- generator ---------------- */
-let WAGON_NO = 0;
-function wagonHTML(rng, k, pal, cfg, free) {
-	WAGON_NO++;
-	const tag = 'bg' + WAGON_NO;
-	const mode = cfg.mode === 'mixed' ? pick(rng, ['cover', 'tiled', 'contain', 'fixed', 'auto']) : cfg.mode;
-	const size = cfg.size === 'mixed' ? pick(rng, [256, 512, 1024]) : +cfg.size;
-	let dir = '';
-	if (cfg.dir === 'mixed') dir = pick(rng, ['top', 'top', 'top', 'left', 'right', 'bottom']);
-	else if (cfg.dir !== 'none') dir = cfg.dir;
-	const gap = cfg.flow === 'mixed' ? pick(rng, ['0', '0', '120px', '50vh', '100vh'])
-		: cfg.flow === 'screen' ? '100vh' : '0';
-	const v = wagonVisual(pal, mode, size, tag);
-	let style = "background-image:" + v.img + ";";
-	if (mode === 'fixed' || mode === 'auto') style += 'width:' + size + 'px;height:' + size + 'px;';
-	let at = ' class="snow-bg" data-mode="' + mode + '" data-gap="' + gap + '"';
-	if (mode === 'fixed' || mode === 'auto') at += ' data-size="' + size + '"';
-	if (dir && dir !== 'top') at += ' data-dir="' + dir + '"';
-	/* every 3rd wagon anchor is fg-only (bg must hold previous); the choice is
-	   counter-based, not rng, so layouts are identical with style on or off */
-	if (cfg.style && rng() < 0.3)
-		at += WAGON_NO % 3 ? ' data-bg="' + pal.bg + '"' : ' data-fg="' + pal.fg + '"';
-	return '<div' + at + ' style="' + style + '"><span class="wtag">' + tag + '·' + mode
-		+ (mode === 'fixed' || mode === 'auto' ? '·' + size : '') + (dir && dir !== 'top' ? '·' + dir : '')
-		+ (free ? '·free' : '') + '</span></div>';
-}
-function linesHTML(k, from, count) {
-	let s = '';
-	for (let j = 0; j < count; j++) s += k + '·' + (from + j) + '<br>';
-	return s;
-}
-function runHTML(L, count) {
-	let s = '';
-	for (let j = 0; j < count; j++) s += L + '<br>';
-	return s;
-}
 function stickHTML(k, side, rng) {
 	if (side === 'top')
-		return '<div class="snow-stick" data-park="top" style="top:0">ch' + k + ' · ' + pick(rng, CAPTIONS) + '</div>';
+		return '<div class="snow-stick" data-park="top" style="top:0">ch' + k + ' · ' + pick(rng, CHAPTER_NAMES) + '</div>';
 	const lat = (rng() * 90).toFixed(1), lon = (rng() * 180).toFixed(1);
-	return '<div class="snow-stick" data-park="bottom" style="bottom:0">ch' + k + ' · loc ' + lat + 'N ' + lon + 'E</div>';
+	return '<div class="snow-stick" data-park="bottom" style="bottom:0">loc ' + lat + 'N ' + lon + 'E</div>';
 }
 function scriptsHTML(k, cfg) {
 	if (!cfg.events) return '';
@@ -170,59 +160,6 @@ function scriptsHTML(k, cfg) {
 	if (k === 1) s += '<script type="txt" event="center,parked">Snowlog("ch1 center+parked")<\/script>';
 	if (k === 1) s += '<script type="txt" event="view">let =<\/script>';
 	return s;
-}
-function chapterHTML(rng, k, cfg) {
-	const pal = PALETTE[(k - 1) % PALETTE.length];
-	const total = cfg.len === 'tiny' ? 18 : cfg.len === 'huge' ? 220
-		: cfg.preset === 'mixed' ? pick(rng, [18, 60, 60, 120, 220]) : 60;
-	const gapN = cfg.gap === 'zero' ? 0 : cfg.gap === 'same' ? 8
-		: cfg.gap === 'huge' ? 120 : Math.floor(rng() * 31);
-	const wantTop = cfg.stick === 'top' || cfg.stick === 'both';
-	const wantBot = cfg.stick === 'bottom' || cfg.stick === 'both';
-	let s = '<h4 class="n">' + k + '</h4>';
-	if (wantTop) s += stickHTML(k, 'top', rng);
-	s += linesHTML(k, 0, Math.min(gapN, total));
-	s += wagonHTML(rng, k, pal, cfg, false);
-	let rest = total - Math.min(gapN, total);
-	const mid = Math.floor(rest / 2);
-	s += linesHTML(k, gapN, mid);
-	if (cfg.preset === 'mixed' && rng() < 0.4 && rest > 10)
-		s += wagonHTML(rng, k, pal, cfg, true);
-	s += runHTML(pal.L, 3 + Math.floor(rng() * 5));
-	s += linesHTML(k, gapN + mid, rest - mid);
-	s += scriptsHTML(k, cfg);
-	if (wantBot) s += stickHTML(k, 'bottom', rng);
-	const wrap = cfg.nest === 'both' ? (k % 2 ? 'section' : 'flat') : cfg.nest;
-	if (wrap === 'flat') {
-		/* flat chapters carry their morph anchor on a zero-size <i>;
-		   same rng draws as the section branch, in the same order */
-		if (!cfg.style) return s;
-		let fat = ' data-bg="' + pal.bg + '" data-fg="' + pal.fg + '"';
-		if (k % 3 === 0) fat += ' data-style="' + pick(rng, ['night', 'fog', 'sunset']) + '" data-range="' + pick(rng, [80, 240, 800]) + '"';
-		return '<i class="snow-fg"' + fat + '></i>' + s;
-	}
-	let at = '';
-	if (cfg.style) {
-		at += ' data-bg="' + pal.bg + '" data-fg="' + pal.fg + '"';
-		if (k % 3 === 0) at += ' data-style="' + pick(rng, ['night', 'fog', 'sunset']) + '" data-range="' + pick(rng, [80, 240, 800]) + '"';
-	}
-	return '<section' + at + '>' + s + '</section>';
-}
-/* draft preset: short verbatim-style snippet, fixed content modulo seed visuals */
-function draftHTML(rng, cfg) {
-	const p1 = PALETTE[0], p2 = PALETTE[2];
-	const v1 = wagonVisual(p1, 'cover', 512, 'bg1');
-	const v2 = wagonVisual(p2, 'cover', 512, 'bg2');
-	return '<section><h4 class="n">1</h4>'
-		+ '1<br>1<br>'
-		+ '<div class="snow-bg" data-mode="cover" data-gap="0" style="background-image:' + v1.img + '"><span class="wtag">bg1·cover</span></div>'
-		+ 'any text and sections combinations with free placement of background-image and scripts in anywhere<br>'
-		+ '2<br>2<br>2<br>'
-		+ '<div class="snow-bg" data-mode="cover" data-dir="left" data-gap="0" style="background-image:' + v2.img + '"><span class="wtag">bg2·cover·left</span></div>'
-		+ '3<br>3<br>3<br>'
-		+ scriptsHTML(1, cfg)
-		+ '<h4 class="n">2</h4>2·0<br>2·1<br>2·2<br>'
-		+ '</section>';
 }
 function applyPreset(name) {
 	const set = (id, v) => { $(id).value = v; };
@@ -239,7 +176,6 @@ function applyPreset(name) {
 	$('nO').textContent = $('n').value;
 }
 /* ---------------- pasted-image example generator ---------------- */
-let EXAMPLE_HTML = '';
 function escapeHTML(value) {
 	return String(value).replace(/&/g, '&amp;').replace(/</g, '&lt;')
 		.replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
@@ -249,88 +185,9 @@ function exampleURL(source) {
 	return 'url("' + String(source).replace(/\\/g, '\\\\').replace(/"/g, '\\"')
 		.replace(/[\r\n]+/g, ' ') + '")';
 }
-function exampleMode(cfg, rng) {
-	return cfg.mode === 'mixed' ? pick(rng, ['cover', 'tiled', 'contain', 'fixed', 'auto']) : cfg.mode;
-}
-function exampleSize(cfg, rng) {
-	return cfg.size === 'mixed' ? pick(rng, [256, 512, 1024]) : +cfg.size;
-}
-function exampleDir(cfg, rng) {
-	if (cfg.dir === 'mixed') return pick(rng, ['top', 'top', 'left', 'right', 'bottom']);
-	return cfg.dir === 'none' ? '' : cfg.dir;
-}
-function exampleGap(cfg, rng) {
-	if (cfg.flow === 'mixed') return pick(rng, ['0', '0', '120px', '50vh', '100vh']);
-	return cfg.flow === 'screen' ? '100vh' : '0';
-}
-function exampleStickHTML(index, side) {
-	if (side === 'top') return '<div class="snow-stick" data-park="top">example ' + index + ' · caption</div>';
-	return '<div class="snow-stick" data-park="bottom">example ' + index + ' · location tag</div>';
-}
-function exampleScriptsHTML(index, cfg) {
-	if (!cfg.events) return '';
-	const name = 'example ' + index;
-	return '<script type="txt" event="view">if (window.Snowlog) Snowlog("' + name + ' view")<\/script>'
-		+ '<script type="txt" event="center">if (window.Snowlog) Snowlog("' + name + ' center")<\/script>'
-		+ '<script type="txt" event="parked">if (window.Snowlog) Snowlog("' + name + ' parked")<\/script>'
-		+ '<script type="txt" event="end">if (window.Snowlog) Snowlog("' + name + ' end")<\/script>'
-		+ '<script type="txt" event="skip">if (window.Snowlog) Snowlog("' + name + ' skip")<\/script>';
-}
-function exampleSceneHTML(index, source, gradient, cfg, rng) {
-	const pal = PALETTE[(index - 1) % PALETTE.length];
-	const mode = exampleMode(cfg, rng), size = exampleSize(cfg, rng);
-	const dir = exampleDir(cfg, rng), gap = exampleGap(cfg, rng);
-	const kind = gradient ? 'gradient' : 'image';
-	const label = gradient ? 'generated gradient' : 'pasted image ' + index;
-	const image = gradient ? 'linear-gradient(135deg,' + pal.g[0] + ',' + pal.g[1] + ')' : exampleURL(source);
-	let style = 'background-image:' + image + ';';
-	if (mode === 'fixed' || mode === 'auto') style += 'width:' + size + 'px;height:' + size + 'px;';
-	let attrs = ' class="snow-bg" data-example-kind="' + kind + '" data-mode="' + mode + '" data-gap="' + gap + '"';
-	if (mode === 'fixed' || mode === 'auto') attrs += ' data-size="' + size + '"';
-	if (dir && dir !== 'top') attrs += ' data-dir="' + dir + '"';
-	if (!gradient) attrs += ' data-source="' + escapeHTML(source) + '"';
-	let sceneAttrs = ' class="snow-example-scene" data-example-index="' + index + '"';
-	if (cfg.style) {
-		sceneAttrs += ' data-bg="' + pal.bg + '" data-fg="' + pal.fg + '"'
-			+ ' data-style="' + ['night', 'fog', 'sunset'][(index - 1) % 3] + '" data-range="240"';
-	}
-	const top = cfg.stick === 'top' || cfg.stick === 'both';
-	const bottom = cfg.stick === 'bottom' || cfg.stick === 'both';
-	let body = '<h3 class="snow-example-title">' + label + '</h3>'
-		+ '<p class="snow-example-copy">Write text here…</p>'
-		+ '<p class="snow-example-copy snow-example-meta">' + mode + ' · ' + (dir || 'top') + ' · gap ' + gap + '</p>';
-	if (top) body += exampleStickHTML(index, 'top');
-	body += '<div' + attrs + ' style="' + escapeHTML(style) + '"><span class="wtag">example·' + index + '·' + kind + '</span></div>'
-		+ '<p class="snow-example-copy">Write text here…</p>'
-		+ exampleScriptsHTML(index, cfg);
-	if (bottom) body += exampleStickHTML(index, 'bottom');
-	const wrap = cfg.nest === 'both' ? (index % 2 ? 'section' : 'flat') : cfg.nest;
-	return wrap === 'section' ? '<section' + sceneAttrs + '>' + body + '</section>' : body;
-}
-function exampleContainerHTML(cfg, sources) {
-	if (!sources.length && !cfg.exampleGradient) return '';
-	const rng = mulberry32((SEED ^ 0x4E584D50) >>> 0);
-	let body = '<div class="snow-example-heading">Pasted examples</div>';
-	for (let i = 0; i < sources.length; i++) body += exampleSceneHTML(i + 1, sources[i], false, cfg, rng);
-	if (cfg.exampleGradient) body += exampleSceneHTML(sources.length + 1, '', true, cfg, rng);
-	const holder = document.createElement('div');
-	holder.innerHTML = '<div class="snow-example-container" data-snowfall-example="image-list">' + body + '</div>';
-	return holder.firstElementChild.outerHTML;
-}
 function parseExampleImages(value) {
 	return String(value || '').split(/\r?\n/).map(s => s.trim())
 		.filter(s => s && s.charAt(0) !== '#');
-}
-function updateExampleOutput(html, count) {
-	EXAMPLE_HTML = html;
-	$('exampleOut').value = html;
-	$('exampleCopy').disabled = !html;
-	if (html) setExampleStatus(count + ' example(s) in preview · use QA to copy the container.', true);
-	else setExampleStatus('Paste an image URL or enable the gradient.', false);
-}
-function setExampleStatus(text, good) {
-	$('exampleStatus').className = good ? 'ok' : 'fail';
-	$('exampleStatus').textContent = text;
 }
 function fallbackCopy(text) {
 	const area = document.createElement('textarea');
@@ -345,22 +202,12 @@ function fallbackCopy(text) {
 	area.remove();
 	return ok;
 }
-function copyExamples() {
-	if (!EXAMPLE_HTML) { setExampleStatus('No example container to copy.', false); return; }
-	const done = ok => setExampleStatus(
-		ok ? 'Copied the example container outerHTML.' : 'Copy was blocked; select the HTML and copy it manually.', ok);
-	if (navigator.clipboard && navigator.clipboard.writeText) {
-		navigator.clipboard.writeText(EXAMPLE_HTML).then(() => done(true), () => done(fallbackCopy(EXAMPLE_HTML)));
-		return;
-	}
-	done(fallbackCopy(EXAMPLE_HTML));
-}
 
 /* ---------------- template + source editor ---------------- */
 let selectedBg = null, selectedHeading = null, sourceDirty = false, sourceTimer = 0;
 let lastApplied = '', headLineCache = null, paneQuietUntil = 0, scrollDriver = '', driverUntil = 0;
 const VOID_TAGS = { area:1, base:1, br:1, col:1, embed:1, hr:1, img:1, input:1, link:1, meta:1, param:1, source:1, track:1, wbr:1 };
-const DROP_STYLES = { transform:1, 'will-change':1, margin:1, 'margin-top':1, 'margin-right':1, 'margin-bottom':1, 'margin-left':1, top:1, bottom:1 };
+const DROP_STYLES = { transform:1, 'will-change':1, margin:1, 'margin-top':1, 'margin-right':1, 'margin-bottom':1, 'margin-left':1, top:1, bottom:1, width:1, height:1 };
 function cleanClone(node) {
 	if (node.nodeType === 3) return document.createTextNode(node.nodeValue);
 	if (node.nodeType !== 1 || node.classList.contains('snow-a') || node.classList.contains('wtag')) return null;
@@ -375,15 +222,24 @@ function cleanClone(node) {
 	for (const child of Array.from(node.childNodes)) { const copy = cleanClone(child); if (copy) out.appendChild(copy); }
 	return out;
 }
+/* script and style bodies are raw text: entities are NOT decoded when the
+   source is parsed again, so escaping quotes there would turn Snowlog("x")
+   into Snowlog(&quot;x&quot;) and the script would stop compiling on the first
+   apply. Only a closing tag can end raw text early, so it is neutralised. */
+const RAW_TEXT = { script: 1, style: 1 };
+function serializeText(tag, value) {
+	const text = String(value);
+	return RAW_TEXT[tag] ? text.replace(/<\/(script|style)/gi, '<\\/$1') : escapeHTML(text);
+}
 function serializeNode(node, depth) {
 	const tag = node.tagName.toLowerCase(), pad = '\t'.repeat(depth);
 	let open = '<' + tag;
 	for (const a of Array.from(node.attributes)) open += ' ' + a.name + '="' + escapeHTML(a.value) + '"';
 	open += '>';
-	if (!node.children.length) return pad + open + escapeHTML(node.textContent) + '</' + tag + '>';
+	if (!node.children.length) return pad + open + serializeText(tag, node.textContent) + '</' + tag + '>';
 	let text = pad + open;
 	for (const child of Array.from(node.childNodes)) {
-		if (child.nodeType === 3 && child.nodeValue.trim()) text += escapeHTML(child.nodeValue);
+		if (child.nodeType === 3 && child.nodeValue.trim()) text += serializeText(tag, child.nodeValue);
 		else if (child.nodeType === 1) text += '\n' + serializeNode(child, depth + 1);
 	}
 	return text + '\n' + pad + '</' + tag + '>';
@@ -446,8 +302,7 @@ function templateGap(cfg, rng) { return cfg.flow === 'mixed' ? pick(rng, ['0','1
 function sourceVisual(source, fallback, pal, mode, size, tag) {
 	if (source) return { image:exampleURL(source), source:source };
 	if (!fallback) return { image:'', source:'' };
-	const v = wagonVisual(pal, mode, size, tag);
-	return { image:v.img, source:'' };
+	return { image: wagonVisual(pal, mode, size, tag), source: '' };
 }
 function templateWagonHTML(k, j, cfg, rng, source, pal) {
 	const mode = templateMode(cfg, rng), size = cfg.size === 'mixed' ? pick(rng,[256,512,1024]) : +cfg.size;
@@ -460,19 +315,50 @@ function templateWagonHTML(k, j, cfg, rng, source, pal) {
 	if (visual.image) at += ' style="background-image:'+escapeHTML(visual.image)+';"';
 	return '<div'+at+'></div>';
 }
-function stubHTML(count) { return '<p class="snow-wip">Write text here…</p>'.repeat(count); }
+/* mock prose: real words, so the column, the gutter numbers and the reading
+   hud can be judged, and always the same for a given seed. Every line is one
+   <p class="ln">: a line box the gutter can count and the hud can measure. */
+const WORDS = ['still', 'iron', 'rail', 'cold', 'door', 'hall', 'light', 'snow', 'paper', 'map',
+	'harbor', 'signal', 'night', 'stone', 'window', 'engine', 'quiet', 'river', 'platform',
+	'letter', 'shadow', 'morning', 'cart', 'salt', 'glass', 'bell', 'tunnel', 'frost', 'lantern', 'rope'];
+function mockText(rng) {
+	const n = 4 + Math.floor(rng() * 5);
+	let s = '';
+	for (let i = 0; i < n; i++) s += (i ? ' ' : '') + pick(rng, WORDS);
+	return s.charAt(0).toUpperCase() + s.slice(1) + '.';
+}
+function lineBlock(count, rng) {
+	let s = '';
+	for (let j = 0; j < count; j++) s += '<p class="ln">' + mockText(rng) + '</p>';
+	return s;
+}
+function chapterHeadHTML(k) {
+	return '<div class="chapter-head"><span class="kicker">chapter</span><h4 class="n">' + k + '</h4>'
+		+ '<span class="name">' + CHAPTER_NAMES[(k - 1) % CHAPTER_NAMES.length] + '</span></div>';
+}
+function styleAttrs(k, pal) {
+	return ' data-bg="' + pal.bg + '" data-fg="' + pal.fg + '" data-style="'
+		+ ['night', 'fog', 'sunset'][(k - 1) % 3] + '" data-range="240"';
+}
 function templateChapterHTML(k, cfg, rng, sources, cursor) {
-	const pal = PALETTE[(k-1)%PALETTE.length], stubs = cfg.len === 'tiny' ? 1 : cfg.len === 'huge' ? 6 : 3;
-	const before = cfg.gap === 'zero' ? 0 : cfg.gap === 'huge' ? 2 : cfg.gap === 'mixed' ? 1 + (rng()<.5?0:1) : 1;
-	let body = '<h4 class="n">'+k+'</h4>'+stubHTML(before || 1);
-	if (cfg.stick === 'top' || cfg.stick === 'both') body += '<div class="snow-stick" data-park="top">chapter '+k+' · caption</div>';
-	for (let j=1;j<=+cfg.bgs;j++) { body += templateWagonHTML(k,j,cfg,rng,sources[cursor.i++]||'',pal)+stubHTML(stubs); }
-	if (!+cfg.bgs) body += stubHTML(stubs);
-	if (cfg.stick === 'bottom' || cfg.stick === 'both') body += '<div class="snow-stick" data-park="bottom">chapter '+k+' · location</div>';
-	body += scriptsHTML(k,cfg);
-	let attrs = '';
-	if (cfg.style) attrs = ' data-bg="'+pal.bg+'" data-fg="'+pal.fg+'" data-style="'+['night','fog','sunset'][(k-1)%3]+'" data-range="240"';
-	return '<section'+attrs+'>'+body+'</section>';
+	const pal = PALETTE[(k - 1) % PALETTE.length];
+	const per = cfg.len === 'tiny' ? 2 : cfg.len === 'huge' ? 14 : 5;
+	const before = cfg.gap === 'zero' ? 0 : cfg.gap === 'huge' ? per * 2
+		: cfg.gap === 'mixed' ? 1 + Math.floor(rng() * per) : per;
+	let body = chapterHeadHTML(k) + lineBlock(before, rng);
+	if (cfg.stick === 'top' || cfg.stick === 'both') body += stickHTML(k, 'top', rng);
+	for (let j = 1; j <= +cfg.bgs; j++) {
+		body += templateWagonHTML(k, j, cfg, rng, sources[cursor.i++] || '', pal) + lineBlock(per, rng);
+	}
+	if (!+cfg.bgs) body += lineBlock(per, rng);
+	if (cfg.stick === 'bottom' || cfg.stick === 'both') body += stickHTML(k, 'bottom', rng);
+	body += scriptsHTML(k, cfg);
+	const flat = (cfg.nest === 'both' ? (k % 2 ? 'section' : 'flat') : cfg.nest) === 'flat';
+	/* flat chapters carry their morph anchor on a zero-size <i> instead of a
+	   section: free-placement markup for the author, one anchor per chapter
+	   for the engine, and the wagons still ride out of the text column */
+	if (flat) return cfg.style ? '<i class="snow-fg"' + styleAttrs(k, pal) + '></i>' + body : body;
+	return '<section' + (cfg.style ? styleAttrs(k, pal) : '') + '>' + body + '</section>';
 }
 function build() {
 	flushSource(); const cfg=getCfg(), rng=mulberry32(SEED), sources=parseExampleImages($('exampleImages').value), cursor={i:0}, parts=[];
@@ -482,10 +368,42 @@ function build() {
 }
 function mutatePreview(fn) { flushSource(); fn(); engRefresh(); writeSource(true); }
 function addChapter() {
-	mutatePreview(() => { const cfg=getCfg(), hs=chapters(), k=hs.length ? Math.max(...hs.map(h=>+h.textContent||0))+1 : 1; const box=document.createElement('div'); box.innerHTML=templateChapterHTML(k,cfg,mulberry32((SEED+k)>>>0),parseExampleImages($('exampleImages').value),{i:wagons().length}); $('app').insertBefore(box.firstElementChild,$('app').querySelector('.tail')); selectedHeading=chapters().slice(-1)[0]; });
+	mutatePreview(() => {
+		const cfg=getCfg(), hs=chapters(), k=hs.length ? Math.max(...hs.map(h=>+h.textContent||0))+1 : 1;
+		const box=document.createElement('div'), tail=$('app').querySelector('.tail');
+		box.innerHTML=templateChapterHTML(k,cfg,mulberry32((SEED+k)>>>0),parseExampleImages($('exampleImages').value),{i:wagons().length});
+		while (box.firstChild) $('app').insertBefore(box.firstChild, tail);
+		selectedHeading=chapters().slice(-1)[0];
+	});
+}
+/* where a new background belongs: at the end of the selected chapter's own
+   markup. Chapters are sections or, when flat, loose children of #app, so the
+   insert point must be a DIRECT child of the container — a nested match from
+   querySelector would make insertBefore throw. The bottom stick or the script
+   block ends a chapter, and the next chapter head ends the loose run. */
+function chapterEndNode(cont, h) {
+	const app = $('app');
+	let start = null;
+	if (cont === app) { start = h; while (start.parentElement && start.parentElement !== app) start = start.parentElement; }
+	for (let n = start ? start.nextElementSibling : cont.firstElementChild; n; n = n.nextElementSibling) {
+		if (cont === app && (n.matches('h4.n') || n.querySelector('h4.n'))) return n;
+		if (n.matches('.snow-stick[data-park=bottom]') || n.matches('script[type="txt"]')) return n;
+	}
+	return null;
 }
 function addBackground() {
-	mutatePreview(() => { let h=selectedHeading && selectedHeading.isConnected ? selectedHeading : chapters().slice(-1)[0]; if(!h){addChapter();return;} const section=h.closest('section')||$('app'), cfg=getCfg(), pal=PALETTE[(chapters().indexOf(h))%PALETTE.length], box=document.createElement('div'); box.innerHTML=templateWagonHTML(+h.textContent||1,wagons().length+1,cfg,mulberry32(SEED+wagons().length),'',pal)+stubHTML(1); const tail=section.querySelector('.snow-stick[data-park=bottom],script[type="txt"]'); while(box.firstChild)section.insertBefore(box.firstChild,tail); selectedBg=Array.from(section.querySelectorAll('.snow-bg')).slice(-1)[0]; });
+	mutatePreview(() => {
+		const h = selectedHeading && selectedHeading.isConnected ? selectedHeading : chapters().slice(-1)[0];
+		if (!h) { addChapter(); return; }
+		const section = h.closest('section') || $('app'), cfg = getCfg();
+		const pal = PALETTE[(chapters().indexOf(h)) % PALETTE.length];
+		const rng = mulberry32(SEED + wagons().length);
+		const box = document.createElement('div');
+		box.innerHTML = templateWagonHTML(+h.textContent||1, wagons().length+1, cfg, rng, '', pal) + lineBlock(1, rng);
+		const end = chapterEndNode(section, h);
+		while (box.firstChild) section.insertBefore(box.firstChild, end);
+		selectedBg = Array.from(section.querySelectorAll('.snow-bg')).slice(-1)[0];
+	});
 }
 const BG_FIELDS = [
 	{ key:'source', label:'image URL', type:'text' },
@@ -547,15 +465,52 @@ function currentBackground() {
 	for (const bg of ws) { const d = Math.abs(bg.getBoundingClientRect().top - window.innerHeight / 2); if (d < best) { best = d; found = bg; } }
 	return found;
 }
+/* reading-line hud: chapter number, chapter name and the number of the line at
+   the middle of the screen. Lines are indexed with the engine, so a tick is a
+   binary search over cached elements plus one backwards walk for the number. */
+let LINES = [], hudEl = null, hudHead = null;
+function indexLines() { LINES = Array.from(document.querySelectorAll('#app .ln')); }
+function lineAtReading() {
+	const y = window.innerHeight / 2;
+	let lo = 0, hi = LINES.length - 1, hit = null;
+	while (lo <= hi) {
+		const mid = (lo + hi) >> 1;
+		if (LINES[mid].getBoundingClientRect().top <= y) { hit = LINES[mid]; lo = mid + 1; }
+		else hi = mid - 1;
+	}
+	return hit || LINES[0] || null;
+}
+function lineNumber(el) {
+	let n = 1;
+	for (let p = el.previousElementSibling; p; p = p.previousElementSibling) {
+		if (p.classList.contains('ln')) n++;
+		else if (p.classList.contains('chapter-head')) break;
+	}
+	return n;
+}
+function updateHud(heading) {
+	if (document.body.classList.contains('no-hud')) return;
+	const el = lineAtReading();
+	if (el === hudEl && heading === hudHead) return;
+	hudEl = el; hudHead = heading;
+	const named = heading && heading.parentElement ? heading.parentElement.querySelector('.name') : null;
+	$('hudCh').textContent = heading ? heading.textContent.trim() : '—';
+	$('hudMeta').textContent = '· ' + (named && named.textContent ? named.textContent + ' · ' : '')
+		+ (el ? 'line ' + lineNumber(el) : 'no line block');
+}
 function updateInspector() {
 	const hs = chapters(), line = window.scrollY + window.innerHeight / 2;
 	let heading = hs[0] || null;
 	for (const item of hs) if (item.getBoundingClientRect().top + window.scrollY <= line) heading = item;
 	const bg = currentBackground();
+	updateHud(heading);
 	if (document.activeElement && document.activeElement.closest && document.activeElement.closest('#inspector')) return;
 	if (heading === selectedHeading && bg === selectedBg) return;
 	selectedHeading = heading; selectedBg = bg;
-	$('sceneTitle').textContent = heading ? 'chapter ' + heading.textContent.trim() : 'No scene at reading line';
+	const named = heading && heading.parentElement ? heading.parentElement.querySelector('.name') : null;
+	$('sceneTitle').textContent = heading
+		? 'chapter ' + heading.textContent.trim() + (named && named.textContent ? ' · ' + named.textContent : '')
+		: 'No scene at reading line';
 	$('backgroundTitle').textContent = bg ? 'background ' + (wagons().indexOf(bg) + 1) : 'No background at reading line';
 	$('sceneFields').replaceChildren(); $('backgroundFields').replaceChildren();
 	const scene = heading ? heading.closest('section') : null;
@@ -582,13 +537,22 @@ function applyInspector(e) {
 		if (value) el.setAttribute('data-' + key, value); else el.removeAttribute('data-' + key);
 	});
 }
+/* layout switches are pure body classes; the drawer ones never move #app, the
+   gutter one does, so only that one needs an engine refresh */
 function toggleSource(force){const on=force===undefined?!document.body.classList.contains('src'):force;document.body.classList.toggle('src',on);$('sourceToggle').setAttribute('aria-pressed',on?'true':'false');engRefresh();}
+function togglePanels(force){const on=force===undefined?!document.body.classList.contains('panels'):force;document.body.classList.toggle('panels',on);}
+function toggleQa(force){const on=force===undefined?!document.body.classList.contains('qapanel'):force;document.body.classList.toggle('qapanel',on);}
+function applyLayout() {
+	document.body.classList.toggle('no-gutter', !$('gutter').checked);
+	document.body.classList.toggle('no-hud', !$('hudOn').checked);
+	engRefresh();
+}
 function headLines(){if(headLineCache)return headLineCache;headLineCache=[];$('src').value.split('\n').forEach((line,i)=>{if(/<h4\b[^>]*class="[^"]*\bn\b/.test(line))headLineCache.push(i);});return headLineCache;}
 function syncPreviewToSource(){if(!$('syncScroll').checked||qaBusy||document.activeElement===$('src')||scrollDriver==='source'&&Date.now()<driverUntil)return;const hs=chapters();if(!selectedHeading||!hs.length)return;const i=hs.indexOf(selectedHeading),lines=headLines();if(i<0||!lines[i])return;paneQuietUntil=Date.now()+300;$('src').scrollTop=Math.max(0,lines[i]*18-$('src').clientHeight/4);}
 function copyTemplate(){flushSource();writeSource(true);const text=$('src').value,done=ok=>sourceStatus(ok?'copied template HTML':'copy blocked · select source manually',!ok);if(navigator.clipboard&&navigator.clipboard.writeText)navigator.clipboard.writeText(text).then(()=>done(true),()=>done(fallbackCopy(text)));else done(fallbackCopy(text));}
 
 /* ---------------- diagnostics @10Hz ---------------- */
-let frames = 0, worstMs = 0, lastT = 0, panelH = 0;
+let frames = 0, worstMs = 0, lastT = 0;
 function fpsLoop(t) {
 	if (lastT) { frames++; if (t - lastT > worstMs) worstMs = t - lastT; }
 	lastT = t;
@@ -635,7 +599,6 @@ function diagTick() {
 		+ '\n#' + location.hash.replace(/^#/, '');
 	frames = 0; worstMs = 0;
 	const mx = maxY();
-	$('mark').textContent = String(y);
 	$('mark').style.top = (mx ? y / mx * (vh - 24) : 0) + 'px';
 	if ($('wire').checked) paintWires();
 	if ($('estate').checked) {
@@ -644,9 +607,6 @@ function diagTick() {
 			? JSON.stringify(Snowfall.debug, (k, v) => v instanceof Float64Array ? Array.from(v).slice(0, 12) : v)
 			: '(no engine)';
 	} else $('estatePre').style.display = 'none';
-	/* narrow viewports: panel growth shifts #app, so re-measure on change only */
-	const h = $('gen').offsetHeight + $('diag').offsetHeight;
-	if (h !== panelH) { panelH = h; engRefresh(); }
 }
 function paintWires() {
 	const box = $('wires');
@@ -942,6 +902,7 @@ async function qEvents() {
 		}
 		return false;
 	};
+	let thChecked = 0, thSkipped = 0;
 	try {
 		setY(Math.round(mx / 2)); await raf2();
 		LOG.length = 0;
@@ -954,11 +915,16 @@ async function qEvents() {
 		await raf2();
 		const w0 = (Snowfall.wagons && Snowfall.wagons.n) ? Array.from(Snowfall.wagons.pos.slice(0, Snowfall.wagons.n)) : null;
 		const bg0 = (Snowfall.morph && Snowfall.morph.n && Snowfall.debug) ? Snowfall.debug.styleBg : null;
-		for (let y = 200; y < mx; y += 200) { setY(y); await raf2(); }
+		const styleTrail = [];
+		for (let y = 200; y < mx; y += 200) { setY(y); await raf2(); if (Snowfall.debug) styleTrail.push(Snowfall.debug.styleBg); }
 		setY(mx); await raf2();
 		const w1 = (Snowfall.wagons && Snowfall.wagons.n) ? Array.from(Snowfall.wagons.pos.slice(0, Snowfall.wagons.n)) : null;
 		const bg1 = (Snowfall.morph && Snowfall.morph.n && Snowfall.debug) ? Snowfall.debug.styleBg : null;
 		const slow = logTable();
+		/* the theme must move at some point on the way down, not merely differ
+		   between the two ends: a chapter count that lands on the same palette
+		   (chapter 7 reuses chapter 1's) makes the endpoints match by design */
+		const styleSeen = new Set(styleTrail);
 		const slowLog = LOG.slice();
 		const Ev0 = Snowfall.events;
 		const Ay0 = Ev0 && Ev0.n ? Array.from(Ev0.y.slice(0, Ev0.n)) : [];
@@ -990,27 +956,33 @@ async function qEvents() {
 			for (let i = 0; i < w0.length; i++) if (w0[i] !== w1[i]) { moved = true; break; }
 			if (!moved) bad.push('wagons did not move during slow (broken snippet killed frame?)');
 		}
-		if (bg0 !== null && bg1 !== null && bg0 === bg1 && Snowfall.morph.n > 1) bad.push('morph did not move during slow');
+		if (Snowfall.morph.n > 1 && styleSeen.size < 2) bad.push('morph did not move during slow (style stayed ' + bg0 + ')');
 		const len1 = LOG.length;
 		for (let y = mx - 200; y > 0; y -= 200) { setY(y); await raf2(); }
 		setY(0); await raf2();
 		if (LOG.length !== len1) bad.push('reverse fired ' + (LOG.length - len1) + '× (want 0)');
+		/* re-arm is the engine's own state: a chapter counts as re-armed when its
+		   view flag is clear at scroll 0. Predicting it from the anchor height
+		   breaks at viewports where the anchor sits just inside the first screen. */
+		const flags0 = Snowfall.events && Snowfall.events.flags ? Array.from(Snowfall.events.flags.slice(0, expCh.length)) : [];
 		LOG.length = 0;
 		for (let y = 200; y < mx; y += 200) { setY(y); await raf2(); }
 		setY(mx); await raf2();
 		const slow2 = logTable();
+		/* re-arm is per event, not per chapter: a chapter whose view threshold
+		   sits above the fold keeps its view flag at scroll 0 while center and
+		   end clear, so the pass may log center/end again and must not log view.
+		   flags0 is the engine's own state at scroll 0 (see the check above). */
 		for (let j = 0; j < expCh.length; j++) {
-			const k = expCh[j], c = slow2[k] || {};
-			const rearmed = j < Ay0.length ? Ay0[j] > vh + hyst : true;
-			if (rearmed) {
-				for (const e of ['view', 'center', 'end']) if (c[e] !== 1) bad.push('ch' + k + ' ' + e + '×' + (c[e] || 0) + ' (re-arm)');
-				if (c.skip) bad.push('ch' + k + ' skip×' + c.skip + ' (re-arm)');
-				const pc2 = c.parked || 0;
-				if (pc2 !== 1 && (pc2 !== 0 || everParkedAt(Ay0[j], Aw0[j], Wy0, Ex0))) bad.push('ch' + k + ' parked×' + pc2 + ' (re-arm)');
-			} else {
-				if (c.view || c.center || c.parked || c.skip) bad.push('ch' + k + ' early re-fired view/center/parked/skip (want end-only)');
-				if (c.end !== 1) bad.push('ch' + k + ' end×' + (c.end || 0) + ' (re-arm early, want 1)');
+			const k = expCh[j], c = slow2[k] || {}, fl = flags0.length > j ? flags0[j] : 0;
+			for (const t of [['view', 1], ['center', 2], ['end', 8]]) {
+				const want = fl & t[1] ? 0 : 1;
+				if ((c[t[0]] || 0) !== want) bad.push('ch' + k + ' ' + t[0] + '×' + (c[t[0]] || 0) + ' (slow, ' + (want ? 're-armed' : 'already seen') + ')');
 			}
+			if (c.skip) bad.push('ch' + k + ' skip×' + c.skip + ' (slow)');
+			const pc2 = c.parked || 0;
+			if (fl & 4) { if (pc2) bad.push('ch' + k + ' parked×' + pc2 + ' (slow, already seen)'); }
+			else if (pc2 !== 1 && (pc2 !== 0 || everParkedAt(Ay0[j], Aw0[j], Wy0, Ex0))) bad.push('ch' + k + ' parked×' + pc2 + ' (slow, re-armed)');
 		}
 		if (expSet['1'] && Ay0.length && Ay0[0] > vh + hyst && (slow2[1] || {})['center+parked'] !== 2)
 			bad.push('ch1 center+parked×' + ((slow2[1] || {})['center+parked'] || 0) + ' (re-arm, want 2)');
@@ -1030,7 +1002,6 @@ async function qEvents() {
 			if (c.center) bad.push('ch' + k + ' center×' + c.center + ' (flick)');
 			if (c.parked) bad.push('ch' + k + ' parked×' + c.parked + ' (flick)');
 		}
-		let thChecked = 0, thSkipped = 0;
 		let thAnchor = -1;
 		{
 			const Ev = Snowfall.events;
@@ -1315,7 +1286,7 @@ async function qaAll() {
 /* ---------------- boot ---------------- */
 function bind(id, ev, fn) { $(id).addEventListener(ev, fn); }
 function boot() {
-	readHash(); build();
+	readHash(); build(); applyLayout();
 	bind('reg','click',build); bind('seed','click',()=>{SEED=(Math.random()*0xFFFFFFFF)>>>0;build();});
 	bind('addChapter','click',addChapter); bind('addBackground','click',addBackground); bind('templateCopy','click',copyTemplate);
 	bind('sourceToggle','click',()=>toggleSource()); bind('applySource','click',applySource); bind('exampleImages','change',build); bind('exampleGradient','change',build);
@@ -1329,9 +1300,11 @@ function boot() {
 	bind('src','scroll',()=>{if(Date.now()<paneQuietUntil||!$('syncScroll').checked||qaBusy)return;scrollDriver='source';driverUntil=Date.now()+600;const lines=headLines(),top=$('src').scrollTop/18;let i=0;for(let k=0;k<lines.length;k++)if(lines[k]<=top)i=k;const h=chapters()[i];if(h)setY(h.getBoundingClientRect().top+window.scrollY-window.innerHeight*.1);});
 	bind('top','click',()=>setY(0));bind('bot','click',()=>setY(maxY()));bind('prev','click',()=>gotoChapter(-1));bind('next','click',()=>gotoChapter(1));bind('jump','change',jumpTo);bind('auto','click',toggleAuto);bind('qaBtn','click',()=>{flushSource();qaAll();});
 	bind('wire','change',()=>{$('wires').classList.toggle('on',$('wire').checked);if(!$('wire').checked)$('wires').innerHTML='';});
+	bind('panelTab','click',()=>togglePanels()); bind('qaTab','click',()=>toggleQa());
+	bind('gutter','change',applyLayout); bind('hudOn','change',applyLayout);
 	window.addEventListener('wheel',e=>{if(e.target!==$('src')){scrollDriver='preview';driverUntil=Date.now()+600;}},{passive:true}); window.addEventListener('resize',engRefresh);
-	document.addEventListener('keydown',e=>{const t=(e.target&&e.target.tagName)||'';if((e.key==='s'||e.key==='S')&&t!=='INPUT'&&t!=='SELECT'&&t!=='TEXTAREA'){toggleSource();return;}if(t==='INPUT'||t==='SELECT'||t==='TEXTAREA')return;if(e.key==='r')build();else if(e.key==='t')setY(0);else if(e.key==='b')setY(maxY());else if(e.key==='q')qaAll();else if(e.key===' ') {e.preventDefault();toggleAuto();}});
-	panelH=$('gen').offsetHeight+$('diag').offsetHeight;requestAnimationFrame(fpsLoop);setInterval(diagTick,100);diagTick();
+	document.addEventListener('keydown',e=>{const t=(e.target&&e.target.tagName)||'';if((e.key==='s'||e.key==='S')&&t!=='INPUT'&&t!=='SELECT'&&t!=='TEXTAREA'){toggleSource();return;}if(t==='INPUT'||t==='SELECT'||t==='TEXTAREA')return;if(e.key==='r')build();else if(e.key==='t')setY(0);else if(e.key==='b')setY(maxY());else if(e.key==='q')qaAll();else if(e.key==='p')togglePanels();else if(e.key==='d')toggleQa();else if(e.key===' ') {e.preventDefault();toggleAuto();}});
+	requestAnimationFrame(fpsLoop);setInterval(diagTick,100);diagTick();
 }
 if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', boot);
 else boot();

@@ -1,13 +1,89 @@
-/* Snowfall authoring harness. The story remains page-scrolled so sticky scenes work. */
-:root{--panel:#111827;--panel2:#1f2937;--ink:#f3f4f6;--dim:#9ca3af;--line:#374151;--accent:#67e8f9;--ok:#4ade80;--fail:#fb7185;--skip:#facc15}
-*{box-sizing:border-box}html{background:var(--snow-bg,#f4f6f9);color:var(--snow-fg,#202633)}html,body{margin:0;padding:0}body{font-family:system-ui,-apple-system,"Segoe UI",sans-serif;overflow-x:clip}button,input,select,textarea{font:inherit}button{cursor:pointer}
-#gen,#diag{background:var(--panel);color:var(--ink)}#gen{padding:10px 12px}#controls{display:block}.panel-title{display:flex;flex-direction:column;margin:3px 2px 12px}.panel-title small{color:var(--dim);margin-top:3px;font-size:11px}
-#srcbar{position:sticky;top:-10px;z-index:5;display:flex;align-items:center;gap:9px;background:var(--panel);padding:8px 0;border-bottom:1px solid var(--line);margin-bottom:10px;font-size:11px}#srcbar button{background:var(--panel2);color:var(--ink);border:1px solid var(--line);border-radius:6px;padding:5px 8px}#srcbar output{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--ok)}#srcbar output.warn{color:var(--fail)}#srcbar label{white-space:nowrap}
-#gen fieldset,#gen details{border:1px solid var(--line);border-radius:8px;margin:0 0 10px;padding:8px 10px 10px}#gen legend{padding:0 6px;color:var(--accent);font-size:12px;font-weight:600}#gen label{display:flex;align-items:center;gap:6px;margin:6px 0;font-size:12px}#gen label.rowf{justify-content:space-between}#gen select,#gen input,#gen textarea{background:var(--panel2);color:var(--ink);border:1px solid var(--line);border-radius:6px;padding:4px 6px}#gen textarea{display:block;width:100%;resize:vertical;font:11px/1.4 ui-monospace,monospace}#gen input[type=range]{flex:1;accent-color:var(--accent)}#gen output{color:var(--dim)}#gen .btns{display:flex;flex-wrap:wrap;gap:6px;margin-top:8px}#gen .btns button{background:var(--panel2);color:var(--ink);border:1px solid var(--line);border-radius:6px;padding:6px 9px;font-size:12px}#gen .primary button:first-child,.add-fieldset button{border-color:#0891b2}.warning{color:#fbbf24}.hint{display:block;font-size:11px;margin-top:7px}.add-fieldset{background:#172033}
-#inspector{border:0}#inspector h3{margin:14px 2px 8px;font-size:13px;color:var(--ink)}#sceneInspector{border-left:3px solid #a78bfa!important}#backgroundInspector{border-left:3px solid #22d3ee!important}#sceneTitle,#backgroundTitle{display:block;color:var(--accent);font-size:12px;margin-bottom:5px}#sceneFields label,#backgroundFields label{display:grid;grid-template-columns:105px minmax(0,1fr);align-items:center;color:var(--dim)}#sceneFields input,#sceneFields select,#backgroundFields input,#backgroundFields select{min-width:0;width:100%}#sceneFields input[type=color]{height:30px;padding:2px;cursor:pointer}#src{display:none;width:100%;min-height:260px;background:#090e18;color:#dbeafe;border:1px solid var(--line);border-radius:7px;padding:10px;resize:vertical;font:12px/18px ui-monospace,SFMono-Regular,Menlo,monospace;tab-size:4;white-space:pre;overflow:auto}
-#diag{padding:10px 12px;font-size:12px}#diag pre{margin:0 0 8px;white-space:pre-wrap;font:11px/1.5 ui-monospace,monospace}.qrow{border:1px solid var(--line);border-radius:6px;padding:4px 8px;font:11px/1.4 ui-monospace,monospace}.qrow.ok b{color:var(--ok)}.qrow.fail b{color:var(--fail)}.qrow.skip b{color:var(--skip)}.qrow small{display:block;color:var(--dim)}#estatePre{display:none}
-#app{position:relative;max-width:760px;margin:0 auto;padding:32px 24px 0;font-size:18px;line-height:1.65;text-shadow:0 0 7px rgba(255,255,255,.95),0 1px 3px rgba(255,255,255,.9)}#app section{margin:0 0 64px;padding:28px}#app h4.n{margin:0 0 12px;font-size:44px;line-height:1}.snow-wip{border-left:3px solid rgba(8,145,178,.45);padding-left:12px;color:inherit}.tail{height:100vh}script[type=txt]{display:none}.snow-fg{position:absolute;width:0;height:0;overflow:hidden;visibility:hidden}
-.snow-bg{position:relative;display:block;width:100%;margin:0 0 24px;overflow:hidden;z-index:-1;background-position:center;background-repeat:no-repeat;border-radius:10px}.snow-bg[data-mode=cover],.snow-bg[data-mode=tiled],.snow-bg[data-mode=contain]{height:var(--snow-vh,100vh);min-height:420px;margin-bottom:calc(-1 * var(--snow-vh,100vh))}.snow-bg[data-mode=tiled]{background-repeat:repeat}.snow-bg[data-mode=contain]{background-size:contain;background-color:#0c0f16}.snow-bg[data-mode=cover]{background-size:cover}.snow-bg[data-gap]:not([data-gap="0"]){margin-bottom:0}.snow-stick{position:sticky;z-index:5;margin:8px 0;padding:6px 12px;font-size:13px;color:#fff;background:rgba(10,14,22,.82);border:1px solid #33405a;border-radius:8px}.snow-stick[data-park=top]{top:0}.snow-stick[data-park=bottom]{bottom:0}
-#rail{position:fixed;top:0;bottom:0;width:14px;pointer-events:none;opacity:.5;background:repeating-linear-gradient(180deg,#6cf 0 1px,transparent 1px 100px)}#mark{position:fixed;width:52px;margin-left:-58px;text-align:right;pointer-events:none;font:10px/1 monospace;color:var(--dim)}#wires{position:fixed;inset:0;pointer-events:none;z-index:50;display:none}#wires.on{display:block}#wires i{position:absolute}#wires i.a{border:1px dashed #fb7185}#wires i.r{border:1px solid #4ade80}
-@media(min-width:1100px){body{padding:0 330px 0 300px}#gen{position:fixed;left:0;top:0;bottom:0;width:286px;overflow-y:auto;z-index:100}#diag{position:fixed;right:0;top:0;bottom:0;width:316px;overflow-y:auto;z-index:100}#rail,#mark{left:292px}body.src{padding-left:620px}body.src #gen{width:606px;display:flex;flex-direction:column;overflow:hidden}body.src #controls{display:none}body.src #src{display:block;flex:1;min-height:0;resize:none}body.src #srcbar{position:static;flex:none}}
-@media(max-width:1099px){#gen,#diag{position:static;width:auto}#rail,#mark{display:none}body.src #controls{display:none}body.src #src{display:block;height:40vh}}
+/* Snowfall authoring harness. The preview is the whole page: controls and QA
+   are overlay drawers, the story text lives in the page gutter and backgrounds
+   span the visible page (the engine pulls each wagon out of the text column). */
+:root{--panel:#111827;--panel2:#1f2937;--ink:#f3f4f6;--dim:#9ca3af;--line:#374151;--accent:#67e8f9;--ok:#4ade80;--fail:#fb7185;--skip:#facc15;
+	--col:clamp(1rem,7vw,9rem);--gut:3.2rem;--measure:44rem;--glass:rgba(8,11,16,.62)}
+*{box-sizing:border-box}html{background:var(--snow-bg,#0e1116);color:var(--snow-fg,#eef2f7);overflow-x:clip}
+html,body{margin:0;padding:0}body{font-family:system-ui,-apple-system,"Segoe UI",sans-serif;overflow-x:clip}
+button,input,select,textarea{font:inherit}button{cursor:pointer}
+
+/* ---------------- whole-page story surface ---------------- */
+#app{position:relative;max-width:none;margin:0;padding:0 var(--col);font-size:clamp(17px,.45vw + 15px,20px);line-height:1.6;
+	/* the halo keeps white text readable over bright generated art */
+	text-shadow:0 1px 2px rgba(0,0,0,.9),0 0 1px rgba(0,0,0,.8),0 0 8px rgba(0,0,0,.75),0 0 20px rgba(0,0,0,.5)}
+#app section{margin:0;padding:0 0 .6rem}
+/* the tail is the blank run-out after the last line. It must clear a full
+   viewport for the last chapter to scroll past the top — at exactly 100vh its
+   anchors sit on max scroll and the engine's `end` event can never fire. */
+.tail{height:108vh}
+.chapter-head{display:flex;flex-direction:column;max-width:var(--measure);padding:26vh 0 5vh;counter-reset:line}
+#app section{counter-reset:line}
+.chapter-head .kicker{font:600 .76rem/1 ui-monospace,monospace;letter-spacing:.34em;text-transform:uppercase;opacity:.72}
+.chapter-head h4.n{margin:.12em 0 0;font:700 clamp(3.4rem,13vw,9rem)/.92 system-ui,sans-serif;letter-spacing:-.045em}
+.chapter-head .name{margin-top:.35em;font-size:clamp(1.05rem,1.7vw,1.7rem);opacity:.85}
+.ln{position:relative;margin:0;padding-left:var(--gut);max-width:var(--measure);counter-increment:line}
+.ln::before{content:counter(line);position:absolute;left:0;width:calc(var(--gut) - .9rem);text-align:right;opacity:.34;
+	font:500 .74em/1.75 ui-monospace,monospace}
+.snow-wip{opacity:.55;font-style:italic}
+#app p,#app h2,#app h3,#app h4{margin:0;max-width:var(--measure)}
+.snow-fg{position:absolute;width:0;height:0;overflow:hidden;visibility:hidden}
+.wtag{position:absolute;left:1rem;top:1rem;padding:.25rem .5rem;border-radius:.35rem;background:var(--glass);color:#fff;
+	font:11px/1.2 ui-monospace,monospace;letter-spacing:.05em;opacity:.8}
+/* engine-off / js-off fallback: wagons stay in flow but still span the page */
+.snow-bg{width:100vw;margin-left:calc(50% - 50vw)}
+.snow-bg[data-mode=cover]{background-size:cover}.snow-bg[data-mode=tiled]{background-repeat:repeat;background-size:auto}
+.snow-bg[data-mode=contain]{background-size:contain;background-color:#0c0f16}.snow-bg[data-mode=fixed]{background-size:100% 100%}
+.snow-stick{display:block;width:max-content;max-width:min(var(--measure),100%);margin:1rem 0;padding:.4rem .8rem;border:1px solid #ffffff2e;
+	border-radius:.4rem;background:var(--glass);font:12px/1.35 ui-monospace,monospace;letter-spacing:.02em;backdrop-filter:blur(4px)}
+.snow-stick[data-park=top]{top:0}.snow-stick[data-park=bottom]{bottom:0}
+
+/* reading-line HUD: chapter name + line number at the middle of the screen */
+#hud{position:fixed;top:0;left:calc(var(--col) + var(--gut));z-index:9;display:flex;gap:.55rem;align-items:baseline;padding:.45rem .8rem;
+	border:1px solid #ffffff24;border-top:0;border-radius:0 0 .5rem .5rem;background:var(--glass);backdrop-filter:blur(6px);
+	font:11px/1.3 ui-monospace,monospace;white-space:nowrap;pointer-events:none}
+#hud b{color:var(--accent);font-weight:600}#hud #hudMeta{opacity:.82}
+body.no-hud #hud{display:none}body.no-gutter .ln::before{display:none}body.no-gutter .ln{padding-left:0}
+
+/* ---------------- overlay drawers ---------------- */
+#gen,#diag{position:fixed;top:0;bottom:0;z-index:110;width:min(340px,92vw);overflow-y:auto;background:var(--panel);color:var(--ink);
+	transition:transform .18s ease}
+#gen{left:0;padding:10px 12px;transform:translateX(-101%)}#diag{right:0;padding:10px 12px;font-size:12px;transform:translateX(101%)}
+body.panels #gen{transform:none;box-shadow:0 0 44px #000b}body.qapanel #diag{transform:none;box-shadow:0 0 44px #000b}
+#panelTab,#qaTab{position:fixed;top:50%;z-index:120;width:22px;height:78px;padding:0;border:1px solid var(--line);background:#0b1220d9;
+	color:var(--dim);font:10px/1 ui-monospace,monospace;writing-mode:vertical-rl;letter-spacing:.14em;backdrop-filter:blur(6px)}
+#panelTab{left:0;border-left:0;border-radius:0 8px 8px 0;transform:translateY(-50%)}
+#qaTab{right:0;border-right:0;border-radius:8px 0 0 8px;transform:translateY(-50%)}
+#panelTab:hover,#qaTab:hover{color:var(--ink)}
+.controls{display:block}.panel-title{display:flex;flex-direction:column;margin:3px 2px 12px}.panel-title small{color:var(--dim);margin-top:3px;font-size:11px}
+#srcbar{position:sticky;top:-10px;z-index:5;display:flex;align-items:center;gap:9px;background:var(--panel);padding:8px 0;border-bottom:1px solid var(--line);margin-bottom:10px;font-size:11px}
+#srcbar button{background:var(--panel2);color:var(--ink);border:1px solid var(--line);border-radius:6px;padding:5px 8px}
+#srcbar output{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--ok)}#srcbar output.warn{color:var(--fail)}#srcbar label{white-space:nowrap}
+#gen fieldset,#gen details{border:1px solid var(--line);border-radius:8px;margin:0 0 10px;padding:8px 10px 10px}
+#gen legend{padding:0 6px;color:var(--accent);font-size:12px;font-weight:600}#gen label{display:flex;align-items:center;gap:6px;margin:6px 0;font-size:12px}
+#gen label.rowf{justify-content:space-between}#gen select,#gen input,#gen textarea{background:var(--panel2);color:var(--ink);border:1px solid var(--line);border-radius:6px;padding:4px 6px}
+#gen textarea{display:block;width:100%;resize:vertical;font:11px/1.4 ui-monospace,monospace}#gen input[type=range]{flex:1;accent-color:var(--accent)}
+#gen output{color:var(--dim)}#gen .btns{display:flex;flex-wrap:wrap;gap:6px;margin-top:8px}
+#gen .btns button{background:var(--panel2);color:var(--ink);border:1px solid var(--line);border-radius:6px;padding:6px 9px;font-size:12px}
+#gen .primary button:first-child,.add-fieldset button{border-color:#0891b2}.warning{color:#fbbf24}.hint{display:block;font-size:11px;margin-top:7px}
+.add-fieldset{background:#172033}
+#inspector{border:0}#inspector h3{margin:14px 2px 8px;font-size:13px;color:var(--ink)}
+#sceneInspector{border-left:3px solid #a78bfa!important}#backgroundInspector{border-left:3px solid #22d3ee!important}
+#sceneTitle,#backgroundTitle{display:block;color:var(--accent);font-size:12px;margin-bottom:5px}
+#sceneFields label,#backgroundFields label{display:grid;grid-template-columns:105px minmax(0,1fr);align-items:center;color:var(--dim)}
+#sceneFields input,#sceneFields select,#backgroundFields input,#backgroundFields select{min-width:0;width:100%}
+#sceneFields input[type=color]{height:30px;padding:2px;cursor:pointer}
+#src{display:none;width:100%;min-height:260px;background:#090e18;color:#dbeafe;border:1px solid var(--line);border-radius:7px;padding:10px;resize:vertical;
+	font:12px/18px ui-monospace,SFMono-Regular,Menlo,monospace;tab-size:4;white-space:pre;overflow:auto}
+body.src #gen{width:min(680px,96vw);display:flex;flex-direction:column;overflow:hidden}
+body.src .controls{display:none}body.src #src{display:block;flex:1;min-height:0;resize:none}body.src #srcbar{position:static;flex:none}
+#diag pre{margin:0 0 8px;white-space:pre-wrap;font:11px/1.5 ui-monospace,monospace}
+.qrow{border:1px solid var(--line);border-radius:6px;padding:4px 8px;font:11px/1.4 ui-monospace,monospace}
+.qrow.ok b{color:var(--ok)}.qrow.fail b{color:var(--fail)}.qrow.skip b{color:var(--skip)}.qrow small{display:block;color:var(--dim)}
+#estatePre{display:none}
+/* left scroll rail: a tick per 100px of document plus a dot at the reading
+   position — the raw scrollY lives in the diagnostics drawer instead */
+#rail{position:fixed;top:0;bottom:0;left:0;width:6px;pointer-events:none;opacity:.3;background:repeating-linear-gradient(180deg,#ffffff8c 0 1px,transparent 1px 100px)}
+#mark{position:fixed;left:0;width:6px;height:14px;margin-top:-7px;border-radius:0 2px 2px 0;pointer-events:none;background:var(--accent);opacity:.5}
+#wires{position:fixed;inset:0;pointer-events:none;z-index:50;display:none}
+#wires.on{display:block}#wires i{position:absolute}#wires i.a{border:1px dashed #fb7185}#wires i.r{border:1px solid #4ade80}
+@media(max-width:700px){:root{--col:1rem;--gut:2.4rem}.chapter-head{padding-top:18vh}#rail,#mark{display:none}}

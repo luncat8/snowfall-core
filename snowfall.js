@@ -147,6 +147,20 @@ function mixA(a, b, t) {
 	return Math.round(a + (b - a) * t);
 }
 function clamp01(t) { return t < 0 ? 0 : t > 1 ? 1 : t; }
+/* cached parent padding/border for the anchor phase. The horizontal fields are
+	read before any margin write (see the phase comment in wagonsMeasure), so a
+	wagon can be pulled out of its parent's text column without a second layout
+	pass; the vertical ones stay valid because parent boxes only grow downward. */
+function parentPad(par, pads) {
+	for (let k = 0; k < pads.length; k++) if (pads[k].el === par) return pads[k];
+	const cs = getComputedStyle(par);
+	const pad = { el: par,
+		pt: parseFloat(cs.paddingTop) || 0, pb: parseFloat(cs.paddingBottom) || 0,
+		bt: parseFloat(cs.borderTopWidth) || 0, bb: parseFloat(cs.borderBottomWidth) || 0,
+		cl: parseFloat(cs.paddingLeft) || 0, cb: parseFloat(cs.borderLeftWidth) || 0 };
+	pads.push(pad);
+	return pad;
+}
 function ease01(t) {
 	t = clamp01(t);
 	return t < 0.5 ? 2 * t * t : 1 - Math.pow(-2 * t + 2, 2) / 2;
@@ -197,6 +211,7 @@ function createCore(opts) {
 		pos: new Float64Array(0), ext: new Float64Array(0),
 		pBot: new Float64Array(0), pH: new Float64Array(0), mb: new Float64Array(0),
 		gap: new Float64Array(0), dir: new Uint8Array(0),
+		box: new Float64Array(0), parL: new Float64Array(0), lastMl: new Float64Array(0),
 		lastX: new Float64Array(0), lastY: new Float64Array(0), n: 0
 	};
 	let lastVh = 0, lastVw = 0;
@@ -257,6 +272,10 @@ function createCore(opts) {
 		if (!hasDOM || !scope || !scope.querySelectorAll) return;
 		injectCSS(document);
 		const vh = window.innerHeight, vw = window.innerWidth;
+		/* art wagons span the visible page, never their parent's text column.
+		   innerWidth counts the classic scrollbar, clientWidth is what the user
+		   actually sees, so the art is not clipped on the right. */
+		const spanW = document.documentElement.clientWidth || vw;
 		if (vh !== lastVh || vw !== lastVw) {
 			lastVh = vh; lastVw = vw;
 			document.documentElement.style.setProperty('--snow-vh', vh + 'px');
@@ -276,6 +295,8 @@ function createCore(opts) {
 			W.pBot = new Float64Array(n); W.pH = new Float64Array(n);
 			W.mb = new Float64Array(n); W.gap = new Float64Array(n);
 			W.dir = new Uint8Array(n);
+			W.box = new Float64Array(n); W.parL = new Float64Array(n);
+			W.lastMl = new Float64Array(n);
 			W.lastX = new Float64Array(n); W.lastY = new Float64Array(n);
 		}
 		W.els = els; W.n = n;
@@ -290,52 +311,64 @@ function createCore(opts) {
 				const s = parseSize(ds);
 				el.style.width = s[0] + 'px';
 				el.style.height = s[1] + 'px';
+				W.box[i] = s[0];
 			} else {
-				el.style.width = '100%';
+				el.style.width = spanW + 'px';
 				el.style.height = 'var(--snow-vh,100vh)';
+				W.box[i] = 0;
 			}
 			if (el.style.willChange !== 'transform') el.style.willChange = 'transform';
 			/* engine owns wagon margins: marker Y must equal border-top exactly,
-			   and the sticky mirror assumes marginTop 0 (see stickyShown) */
+			   and the sticky mirror assumes marginTop 0 (see stickyShown). The
+			   horizontal margins are the page-span offset, written in the margin
+			   phase (after the parent read, before the marker read). */
 			if (el.style.marginTop !== '0px') el.style.marginTop = '0px';
-			if (el.style.marginLeft !== '0px') el.style.marginLeft = '0px';
-			if (el.style.marginRight !== '0px') el.style.marginRight = '0px';
 			W.dir[i] = dirCode(ds.dir);
 			W.gap[i] = parseGap(ds.gap, vh, rem);
 			ensureMarker(el);
 		}
 		/* strict phases: box writes → ext reads → margin writes → anchor reads.
 		   marginBottom shifts everything below it (including shared parents),
-		   so NO reads of markers/parents may interleave with margin writes. */
+		   so NO reads of markers/parents may interleave with margin writes.
+		   The parent's CONTENT left is a horizontal read, immune to that shift,
+		   so it is taken here and the span margin is ready before the marker. */
+		const pads = [];
 		for (let i = 0; i < n; i++) {
-			const e = els[i].offsetHeight;
+			const el = els[i], par = el.parentElement;
+			const e = el.offsetHeight;
 			W.ext[i] = e > 1 ? e : 1;
+			const pad = parentPad(par, pads);
+			W.parL[i] = par.getBoundingClientRect().left + pad.cl + pad.cb;
 		}
 		for (let i = 0; i < n; i++) {
+			const el = els[i];
 			const mb = W.gap[i] - W.ext[i];
 			W.mb[i] = mb;
-			els[i].style.marginBottom = mb + 'px';
+			el.style.marginBottom = mb + 'px';
+			/* left edge of the page minus the parent's content left: the wagon
+			   then starts at viewport 0 whatever column it was authored in.
+			   Explicit boxes (fixed/auto) are centred in the page instead. */
+			const box = W.box[i];
+			const ml = (box > 0 ? (spanW - box) / 2 : 0) - W.parL[i];
+			if (ml !== W.lastMl[i]) { el.style.marginLeft = ml + 'px'; W.lastMl[i] = ml; }
+			if (el.style.marginRight !== '0px') el.style.marginRight = '0px';
 		}
-		const pads = [];
+		/* the margin writes above change the page height, and a browser clamps
+		   scrollY when the document shrinks under it, so the scroll offset is
+		   read HERE, with the anchors: an offset captured before the writes is
+		   stale and every document coordinate comes out shifted. */
+		const sYNow = window.scrollY || 0;
 		for (let i = 0; i < n; i++) {
 			const el = els[i];
 			const r = el.__snowA.getBoundingClientRect();
-			W.y[i] = r.top + sY;
-			const par = el.parentElement;
-			let pad = null;
-			for (let k = 0; k < pads.length; k++) if (pads[k].el === par) pad = pads[k];
-			if (!pad) {
-				const cs = getComputedStyle(par);
-				pad = { el: par, t: parseFloat(cs.paddingTop) || 0, b: parseFloat(cs.paddingBottom) || 0,
-					bt: parseFloat(cs.borderTopWidth) || 0, bb: parseFloat(cs.borderBottomWidth) || 0 };
-				pads.push(pad);
-			}
+			W.y[i] = r.top + sYNow;
+			const par = el.parentElement, pad = parentPad(par, pads);
 			const pr = par.getBoundingClientRect();
-			W.pBot[i] = pr.bottom + sY - pad.b - pad.bb;
-			const ch = pr.height - pad.t - pad.b - pad.bt - pad.bb;
+			W.pBot[i] = pr.bottom + sYNow - pad.pb - pad.bb;
+			const ch = pr.height - pad.pt - pad.pb - pad.bt - pad.bb;
 			W.pH[i] = ch > 0 ? ch : 0;
 		}
-		W.lastX.fill(NaN); W.lastY.fill(NaN);
+		W.lastX.fill(NaN); W.lastY.fill(NaN); W.lastMl.fill(NaN);
 		inst.wagons = { n: n, els: els, y: W.y, free: W.free, pos: W.pos, ext: W.ext, dir: W.dir };
 		inst.debug.n = n;
 	}
@@ -581,6 +614,8 @@ function createCore(opts) {
 		}
 		if (S.decl.length < m) { S.decl = new Uint8Array(m); S.anchor = new Int32Array(m); }
 		S.fn = new Array(m); S.cnt = new Uint16Array(m * 5);
+		/* same rule as the wagons: read the scroll with the anchors, after the
+		   wagon margins have settled the document height */
 		const sY0 = window.scrollY || 0;
 		for (let i = 0; i < m; i++) E.y[i] = tmpEls[i].__snowA.getBoundingClientRect().top + sY0;
 		for (let i = 0; i < m; i++) {
