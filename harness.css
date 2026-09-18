@@ -17,7 +17,9 @@ button{cursor:pointer}
 #gen legend{padding:0 6px;color:var(--dim);font-size:12px}
 #gen label{display:flex;align-items:center;gap:6px;margin:5px 0;font-size:13px}
 #gen label.rowf{justify-content:space-between}
-#gen select,#gen input[type=number]{background:var(--panel2);color:var(--ink);border:1px solid var(--line);border-radius:6px;padding:4px 6px}
+#gen select,#gen input[type=number],#gen textarea{background:var(--panel2);color:var(--ink);border:1px solid var(--line);border-radius:6px;padding:4px 6px}
+#gen textarea{display:block;width:100%;resize:vertical;font:11px/1.4 ui-monospace,Menlo,monospace}
+#gen textarea[readonly]{color:#c8d2e0}
 #gen input[type=range]{flex:1;accent-color:var(--accent)}
 #gen output{min-width:2ch;text-align:right;color:var(--dim)}
 #gen .btns{display:flex;flex-wrap:wrap;gap:6px;margin-top:8px}
@@ -25,6 +27,10 @@ button{cursor:pointer}
 #gen .btns button:hover{border-color:var(--accent)}
 #gen .btns button:disabled{opacity:.4;cursor:default}
 #gen .btns button[data-on="1"]{border-color:var(--ok);color:var(--ok)}
+#gen .hint{display:block;color:var(--dim);font-size:11px;line-height:1.35;margin-top:7px}
+#exampleStatus{display:block;color:var(--dim);font-size:11px;line-height:1.35;margin-top:5px;min-height:1.35em}
+#exampleStatus.ok{color:var(--ok)}
+#exampleStatus.fail{color:var(--fail)}
 #diag{padding:10px 12px;font-size:12px}
 #diag pre{margin:0 0 8px;white-space:pre-wrap;font:11px/1.5 ui-monospace,Menlo,monospace;color:var(--ink)}
 #qa{display:flex;flex-direction:column;gap:4px}
@@ -43,6 +49,13 @@ button{cursor:pointer}
 #app section{margin:0 0 64px;padding:28px 28px 36px}
 #app h4.n{margin:0 0 12px;font-size:44px;line-height:1}
 #app .tail{height:100vh}
+#app .snow-example-container{isolation:isolate;margin:72px 0 40px;padding:18px 18px 28px;border:1px solid rgba(108,204,255,.42);border-radius:14px;background:rgba(18,25,38,.08)}
+#app .snow-example-container > .snow-example-heading{margin:0 0 18px;font-size:14px;letter-spacing:.08em;text-transform:uppercase;color:var(--panel)}
+#app .snow-example-container > section.snow-example-scene{margin:0 0 44px;padding:18px 18px 28px;border:1px dashed rgba(108,204,255,.42);border-radius:10px}
+#app .snow-example-container > section.snow-example-scene:last-child{margin-bottom:0}
+#app .snow-example-title{margin:0 0 10px;font-size:24px;line-height:1.15}
+#app .snow-example-copy{font-size:14px;line-height:1.45;margin:10px 0;color:inherit}
+#app .snow-example-container .snow-bg{border-radius:8px;z-index:-1}
 script[type=txt]{display:none}
 /* free-floating morph anchors: zero box, out of flow, with or without engine */
 .snow-fg{position:absolute;width:0;height:0;margin:0;padding:0;border:0;overflow:hidden;visibility:hidden;pointer-events:none}

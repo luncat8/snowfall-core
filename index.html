@@ -54,6 +54,19 @@
 		<label class="rowf"><input id="events" type="checkbox" checked> script events</label>
 	</fieldset>
 	<fieldset>
+		<legend>examples · paste images</legend>
+		<label for="exampleImages">image URLs, one per line</label>
+		<textarea id="exampleImages" rows="5" spellcheck="false" placeholder="https://example.test/scene-1.jpg&#10;https://example.test/scene-2.jpg"></textarea>
+		<label class="rowf"><input id="exampleGradient" type="checkbox" checked> include gradient</label>
+		<div class="btns">
+			<button id="exampleGenerate" type="button">generate HTML</button>
+			<button id="exampleCopy" type="button" disabled>copy outerHTML</button>
+		</div>
+		<textarea id="exampleOut" rows="8" readonly spellcheck="false" aria-label="Generated example HTML"></textarea>
+		<output id="exampleStatus" aria-live="polite"></output>
+		<small class="hint">Uses the wagon settings above. The preview stays in the test story.</small>
+	</fieldset>
+	<fieldset>
 		<legend>qa</legend>
 		<label class="rowf">chapter <input id="jump" type="number" value="1" min="1" max="12" style="width:52px"></label>
 		<label class="rowf">speed <output id="spd">6</output>

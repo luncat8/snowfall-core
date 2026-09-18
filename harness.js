@@ -48,7 +48,7 @@ function parseT(el) {
 
 /* ---------------- config in location.hash ---------------- */
 const IDS = ['preset', 'n', 'len', 'gap', 'flow', 'mode', 'size', 'dir', 'nest', 'stick'];
-const CHECKS = ['style', 'events'];
+const CHECKS = ['style', 'events', 'exampleGradient'];
 let SEED = 20260917;
 function getCfg() {
 	const c = { seed: SEED };
@@ -237,6 +237,136 @@ function applyPreset(name) {
 	}
 	$('nO').textContent = $('n').value;
 }
+/* ---------------- pasted-image example generator ---------------- */
+let EXAMPLE_REQUESTED = false;
+let EXAMPLE_SOURCES = [];
+let EXAMPLE_HTML = '';
+let EXAMPLE_COPY_TIMER = 0;
+function escapeHTML(value) {
+	return String(value).replace(/&/g, '&amp;').replace(/</g, '&lt;')
+		.replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+}
+/* Keep the URL inside a quoted CSS url() value. HTML escaping happens after this. */
+function exampleURL(source) {
+	return 'url("' + String(source).replace(/\\/g, '\\\\').replace(/"/g, '\\"')
+		.replace(/[\r\n]+/g, ' ') + '")';
+}
+function exampleMode(cfg, rng) {
+	return cfg.mode === 'mixed' ? pick(rng, ['cover', 'tiled', 'contain', 'fixed', 'auto']) : cfg.mode;
+}
+function exampleSize(cfg, rng) {
+	return cfg.size === 'mixed' ? pick(rng, [256, 512, 1024]) : +cfg.size;
+}
+function exampleDir(cfg, rng) {
+	if (cfg.dir === 'mixed') return pick(rng, ['top', 'top', 'left', 'right', 'bottom']);
+	return cfg.dir === 'none' ? '' : cfg.dir;
+}
+function exampleGap(cfg, rng) {
+	if (cfg.flow === 'mixed') return pick(rng, ['0', '0', '120px', '50vh', '100vh']);
+	return cfg.flow === 'screen' ? '100vh' : '0';
+}
+function exampleStickHTML(index, side) {
+	if (side === 'top') return '<div class="snow-stick" data-park="top">example ' + index + ' · caption</div>';
+	return '<div class="snow-stick" data-park="bottom">example ' + index + ' · location tag</div>';
+}
+function exampleScriptsHTML(index, cfg) {
+	if (!cfg.events) return '';
+	const name = 'example ' + index;
+	return '<script type="txt" event="view">if (window.Snowlog) Snowlog("' + name + ' view")<\/script>'
+		+ '<script type="txt" event="center">if (window.Snowlog) Snowlog("' + name + ' center")<\/script>'
+		+ '<script type="txt" event="parked">if (window.Snowlog) Snowlog("' + name + ' parked")<\/script>'
+		+ '<script type="txt" event="end">if (window.Snowlog) Snowlog("' + name + ' end")<\/script>'
+		+ '<script type="txt" event="skip">if (window.Snowlog) Snowlog("' + name + ' skip")<\/script>';
+}
+function exampleSceneHTML(index, source, gradient, cfg, rng) {
+	const pal = PALETTE[(index - 1) % PALETTE.length];
+	const mode = exampleMode(cfg, rng), size = exampleSize(cfg, rng);
+	const dir = exampleDir(cfg, rng), gap = exampleGap(cfg, rng);
+	const kind = gradient ? 'gradient' : 'image';
+	const label = gradient ? 'generated gradient' : 'pasted image ' + index;
+	const image = gradient ? 'linear-gradient(135deg,' + pal.g[0] + ',' + pal.g[1] + ')' : exampleURL(source);
+	let style = 'background-image:' + image + ';';
+	if (mode === 'fixed' || mode === 'auto') style += 'width:' + size + 'px;height:' + size + 'px;';
+	let attrs = ' class="snow-bg" data-example-kind="' + kind + '" data-mode="' + mode + '" data-gap="' + gap + '"';
+	if (mode === 'fixed' || mode === 'auto') attrs += ' data-size="' + size + '"';
+	if (dir && dir !== 'top') attrs += ' data-dir="' + dir + '"';
+	if (!gradient) attrs += ' data-source="' + escapeHTML(source) + '"';
+	let sceneAttrs = ' class="snow-example-scene" data-example-index="' + index + '"';
+	if (cfg.style) {
+		sceneAttrs += ' data-bg="' + pal.bg + '" data-fg="' + pal.fg + '"'
+			+ ' data-style="' + ['night', 'fog', 'sunset'][(index - 1) % 3] + '" data-range="240"';
+	}
+	const top = cfg.stick === 'top' || cfg.stick === 'both';
+	const bottom = cfg.stick === 'bottom' || cfg.stick === 'both';
+	let body = '<h3 class="snow-example-title">' + label + '</h3>'
+		+ '<p class="snow-example-copy">' + mode + ' · ' + (dir || 'top') + ' · gap ' + gap + '</p>';
+	if (top) body += exampleStickHTML(index, 'top');
+	body += '<div' + attrs + ' style="' + escapeHTML(style) + '"><span class="wtag">example·' + index + '·' + kind + '</span></div>'
+		+ '<p class="snow-example-copy">text continues after the visual anchor · ' + index + '</p>'
+		+ exampleScriptsHTML(index, cfg);
+	if (bottom) body += exampleStickHTML(index, 'bottom');
+	const wrap = cfg.nest === 'both' ? (index % 2 ? 'section' : 'flat') : cfg.nest;
+	return wrap === 'section' ? '<section' + sceneAttrs + '>' + body + '</section>' : body;
+}
+function exampleContainerHTML(cfg, sources) {
+	if (!sources.length && !cfg.exampleGradient) return '';
+	const rng = mulberry32((SEED ^ 0x4E584D50) >>> 0);
+	let body = '<div class="snow-example-heading">Pasted examples</div>';
+	for (let i = 0; i < sources.length; i++) body += exampleSceneHTML(i + 1, sources[i], false, cfg, rng);
+	if (cfg.exampleGradient) body += exampleSceneHTML(sources.length + 1, '', true, cfg, rng);
+	const holder = document.createElement('div');
+	holder.innerHTML = '<div class="snow-example-container" data-snowfall-example="image-list">' + body + '</div>';
+	return holder.firstElementChild.outerHTML;
+}
+function updateExampleOutput(cfg) {
+	if (!EXAMPLE_REQUESTED) return;
+	EXAMPLE_HTML = exampleContainerHTML(cfg, EXAMPLE_SOURCES);
+	$('exampleOut').value = EXAMPLE_HTML;
+	$('exampleCopy').disabled = !EXAMPLE_HTML;
+}
+function parseExampleImages(value) {
+	return String(value || '').split(/\r?\n/).map(s => s.trim())
+		.filter(s => s && s.charAt(0) !== '#');
+}
+function generateExamples() {
+	EXAMPLE_SOURCES = parseExampleImages($('exampleImages').value);
+	EXAMPLE_REQUESTED = true;
+	build();
+	const count = EXAMPLE_SOURCES.length + ($('exampleGradient').checked ? 1 : 0);
+	$('exampleStatus').className = count ? 'ok' : 'fail';
+	$('exampleStatus').textContent = count ? count + ' example(s) generated · preview added below' : 'Paste an image URL or enable the gradient.';
+}
+function setExampleStatus(text, good) {
+	$('exampleStatus').className = good ? 'ok' : 'fail';
+	$('exampleStatus').textContent = text;
+}
+function fallbackCopy(text) {
+	const area = document.createElement('textarea');
+	area.value = text;
+	area.setAttribute('readonly', '');
+	area.style.position = 'fixed';
+	area.style.opacity = '0';
+	document.body.appendChild(area);
+	area.select();
+	let ok = false;
+	try { ok = document.execCommand('copy'); } catch (e) { ok = false; }
+	area.remove();
+	return ok;
+}
+function copyExamples() {
+	if (!EXAMPLE_HTML) { setExampleStatus('Generate the examples first.', false); return; }
+	const done = ok => {
+		setExampleStatus(ok ? 'Copied the container outerHTML.' : 'Copy was blocked; select the HTML and copy it manually.', ok);
+		if (EXAMPLE_COPY_TIMER) clearTimeout(EXAMPLE_COPY_TIMER);
+		if (ok) EXAMPLE_COPY_TIMER = setTimeout(() => updateExampleOutput(getCfg()), 1800);
+	};
+	if (navigator.clipboard && navigator.clipboard.writeText) {
+		navigator.clipboard.writeText(EXAMPLE_HTML).then(() => done(true), () => done(fallbackCopy(EXAMPLE_HTML)));
+		return;
+	}
+	done(fallbackCopy(EXAMPLE_HTML));
+}
+
 function build() {
 	const cfg = getCfg();
 	const rng = mulberry32(SEED);
@@ -247,8 +377,17 @@ function build() {
 		const n = clamp(+cfg.n || 6, 1, 12);
 		for (let k = 1; k <= n; k++) parts.push(chapterHTML(rng, k, cfg));
 	}
+	if (EXAMPLE_REQUESTED) {
+		const examples = exampleContainerHTML(cfg, EXAMPLE_SOURCES);
+		EXAMPLE_HTML = examples;
+		if (examples) parts.push(examples);
+	}
 	parts.push('<div class="tail"></div>');
 	$('app').innerHTML = parts.join('');
+	if (EXAMPLE_REQUESTED) {
+		$('exampleOut').value = EXAMPLE_HTML;
+		$('exampleCopy').disabled = !EXAMPLE_HTML;
+	}
 	LOG.length = 0;
 	$('qa').innerHTML = '';
 	$('jump').max = chapters().length || 1;
@@ -994,6 +1133,8 @@ function boot() {
 	bind('jump', 'change', jumpTo);
 	bind('auto', 'click', toggleAuto);
 	bind('qaBtn', 'click', qaAll);
+	bind('exampleGenerate', 'click', generateExamples);
+	bind('exampleCopy', 'click', copyExamples);
 	bind('n', 'input', () => { $('nO').textContent = $('n').value; });
 	bind('speed', 'input', () => { $('spd').textContent = $('speed').value; });
 	bind('preset', 'change', () => applyPreset($('preset').value));
