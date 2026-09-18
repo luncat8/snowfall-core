@@ -55,6 +55,7 @@ button{cursor:pointer}
 #app .snow-example-container > section.snow-example-scene:last-child{margin-bottom:0}
 #app .snow-example-title{margin:0 0 10px;font-size:24px;line-height:1.15}
 #app .snow-example-copy{font-size:14px;line-height:1.45;margin:10px 0;color:inherit}
+#app .snow-example-meta{font:11px/1.4 ui-monospace,Menlo,monospace;opacity:.7}
 #app .snow-example-container .snow-bg{border-radius:8px;z-index:-1}
 script[type=txt]{display:none}
 /* free-floating morph anchors: zero box, out of flow, with or without engine */

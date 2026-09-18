@@ -238,10 +238,7 @@ function applyPreset(name) {
 	$('nO').textContent = $('n').value;
 }
 /* ---------------- pasted-image example generator ---------------- */
-let EXAMPLE_REQUESTED = false;
-let EXAMPLE_SOURCES = [];
 let EXAMPLE_HTML = '';
-let EXAMPLE_COPY_TIMER = 0;
 function escapeHTML(value) {
 	return String(value).replace(/&/g, '&amp;').replace(/</g, '&lt;')
 		.replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
@@ -299,10 +296,11 @@ function exampleSceneHTML(index, source, gradient, cfg, rng) {
 	const top = cfg.stick === 'top' || cfg.stick === 'both';
 	const bottom = cfg.stick === 'bottom' || cfg.stick === 'both';
 	let body = '<h3 class="snow-example-title">' + label + '</h3>'
-		+ '<p class="snow-example-copy">' + mode + ' · ' + (dir || 'top') + ' · gap ' + gap + '</p>';
+		+ '<p class="snow-example-copy">Write text here…</p>'
+		+ '<p class="snow-example-copy snow-example-meta">' + mode + ' · ' + (dir || 'top') + ' · gap ' + gap + '</p>';
 	if (top) body += exampleStickHTML(index, 'top');
 	body += '<div' + attrs + ' style="' + escapeHTML(style) + '"><span class="wtag">example·' + index + '·' + kind + '</span></div>'
-		+ '<p class="snow-example-copy">text continues after the visual anchor · ' + index + '</p>'
+		+ '<p class="snow-example-copy">Write text here…</p>'
 		+ exampleScriptsHTML(index, cfg);
 	if (bottom) body += exampleStickHTML(index, 'bottom');
 	const wrap = cfg.nest === 'both' ? (index % 2 ? 'section' : 'flat') : cfg.nest;
@@ -318,23 +316,16 @@ function exampleContainerHTML(cfg, sources) {
 	holder.innerHTML = '<div class="snow-example-container" data-snowfall-example="image-list">' + body + '</div>';
 	return holder.firstElementChild.outerHTML;
 }
-function updateExampleOutput(cfg) {
-	if (!EXAMPLE_REQUESTED) return;
-	EXAMPLE_HTML = exampleContainerHTML(cfg, EXAMPLE_SOURCES);
-	$('exampleOut').value = EXAMPLE_HTML;
-	$('exampleCopy').disabled = !EXAMPLE_HTML;
-}
 function parseExampleImages(value) {
 	return String(value || '').split(/\r?\n/).map(s => s.trim())
 		.filter(s => s && s.charAt(0) !== '#');
 }
-function generateExamples() {
-	EXAMPLE_SOURCES = parseExampleImages($('exampleImages').value);
-	EXAMPLE_REQUESTED = true;
-	build();
-	const count = EXAMPLE_SOURCES.length + ($('exampleGradient').checked ? 1 : 0);
-	$('exampleStatus').className = count ? 'ok' : 'fail';
-	$('exampleStatus').textContent = count ? count + ' example(s) generated · preview added below' : 'Paste an image URL or enable the gradient.';
+function updateExampleOutput(html, count) {
+	EXAMPLE_HTML = html;
+	$('exampleOut').value = html;
+	$('exampleCopy').disabled = !html;
+	if (html) setExampleStatus(count + ' example(s) in preview · use QA to copy the container.', true);
+	else setExampleStatus('Paste an image URL or enable the gradient.', false);
 }
 function setExampleStatus(text, good) {
 	$('exampleStatus').className = good ? 'ok' : 'fail';
@@ -354,12 +345,9 @@ function fallbackCopy(text) {
 	return ok;
 }
 function copyExamples() {
-	if (!EXAMPLE_HTML) { setExampleStatus('Generate the examples first.', false); return; }
-	const done = ok => {
-		setExampleStatus(ok ? 'Copied the container outerHTML.' : 'Copy was blocked; select the HTML and copy it manually.', ok);
-		if (EXAMPLE_COPY_TIMER) clearTimeout(EXAMPLE_COPY_TIMER);
-		if (ok) EXAMPLE_COPY_TIMER = setTimeout(() => updateExampleOutput(getCfg()), 1800);
-	};
+	if (!EXAMPLE_HTML) { setExampleStatus('No example container to copy.', false); return; }
+	const done = ok => setExampleStatus(
+		ok ? 'Copied the example container outerHTML.' : 'Copy was blocked; select the HTML and copy it manually.', ok);
 	if (navigator.clipboard && navigator.clipboard.writeText) {
 		navigator.clipboard.writeText(EXAMPLE_HTML).then(() => done(true), () => done(fallbackCopy(EXAMPLE_HTML)));
 		return;
@@ -377,17 +365,12 @@ function build() {
 		const n = clamp(+cfg.n || 6, 1, 12);
 		for (let k = 1; k <= n; k++) parts.push(chapterHTML(rng, k, cfg));
 	}
-	if (EXAMPLE_REQUESTED) {
-		const examples = exampleContainerHTML(cfg, EXAMPLE_SOURCES);
-		EXAMPLE_HTML = examples;
-		if (examples) parts.push(examples);
-	}
+	const sources = parseExampleImages($('exampleImages').value);
+	const examples = exampleContainerHTML(cfg, sources);
+	if (examples) parts.push(examples);
 	parts.push('<div class="tail"></div>');
 	$('app').innerHTML = parts.join('');
-	if (EXAMPLE_REQUESTED) {
-		$('exampleOut').value = EXAMPLE_HTML;
-		$('exampleCopy').disabled = !EXAMPLE_HTML;
-	}
+	updateExampleOutput(examples, sources.length + (cfg.exampleGradient ? 1 : 0));
 	LOG.length = 0;
 	$('qa').innerHTML = '';
 	$('jump').max = chapters().length || 1;
@@ -1133,8 +1116,9 @@ function boot() {
 	bind('jump', 'change', jumpTo);
 	bind('auto', 'click', toggleAuto);
 	bind('qaBtn', 'click', qaAll);
-	bind('exampleGenerate', 'click', generateExamples);
 	bind('exampleCopy', 'click', copyExamples);
+	bind('exampleImages', 'change', build);
+	bind('exampleGradient', 'change', build);
 	bind('n', 'input', () => { $('nO').textContent = $('n').value; });
 	bind('speed', 'input', () => { $('spd').textContent = $('speed').value; });
 	bind('preset', 'change', () => applyPreset($('preset').value));

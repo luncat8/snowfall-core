@@ -58,13 +58,9 @@
 		<label for="exampleImages">image URLs, one per line</label>
 		<textarea id="exampleImages" rows="5" spellcheck="false" placeholder="https://example.test/scene-1.jpg&#10;https://example.test/scene-2.jpg"></textarea>
 		<label class="rowf"><input id="exampleGradient" type="checkbox" checked> include gradient</label>
-		<div class="btns">
-			<button id="exampleGenerate" type="button">generate HTML</button>
-			<button id="exampleCopy" type="button" disabled>copy outerHTML</button>
-		</div>
 		<textarea id="exampleOut" rows="8" readonly spellcheck="false" aria-label="Generated example HTML"></textarea>
 		<output id="exampleStatus" aria-live="polite"></output>
-		<small class="hint">Uses the wagon settings above. The preview stays in the test story.</small>
+		<small class="hint">The preview rebuilds with regen (r). Each background gets text stubs before and after it. Use the QA copy button for the whole container.</small>
 	</fieldset>
 	<fieldset>
 		<legend>qa</legend>
@@ -83,6 +79,7 @@
 			<button id="next" type="button">▸</button>
 			<button id="auto" type="button" data-on="0">autoscroll (space)</button>
 			<button id="qaBtn" type="button">QA all (q)</button>
+			<button id="exampleCopy" type="button" disabled>copy example outerHTML</button>
 		</div>
 	</fieldset>
 </form>
