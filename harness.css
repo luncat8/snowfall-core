@@ -1,125 +1,13 @@
-/* snowfall 0.1 harness — diagnostic look. Never sets background on #app. */
-:root{
-	--panel:#141a24; --panel2:#1d2534; --ink:#e8edf5; --dim:#9ba8ba;
-	--line:#2c3749; --accent:#6cf; --ok:#3ddc84; --fail:#ff5d5d; --skip:#b7950b;
-}
-*{box-sizing:border-box}
-html{background:var(--snow-bg,#f4f6f9);color:var(--snow-fg,#202633)}
-html,body{margin:0;padding:0}
-body{font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;overflow-x:clip}
-button,input,select{font:inherit}
-button{cursor:pointer}
-
-/* ---------- control + diagnostics panels ---------- */
-#gen,#diag{background:var(--panel);color:var(--ink)}
-#gen{padding:10px 12px}
-#gen fieldset{border:1px solid var(--line);border-radius:8px;margin:0 0 10px;padding:8px 10px 10px}
-#gen legend{padding:0 6px;color:var(--dim);font-size:12px}
-#gen label{display:flex;align-items:center;gap:6px;margin:5px 0;font-size:13px}
-#gen label.rowf{justify-content:space-between}
-#gen select,#gen input[type=number],#gen textarea{background:var(--panel2);color:var(--ink);border:1px solid var(--line);border-radius:6px;padding:4px 6px}
-#gen textarea{display:block;width:100%;resize:vertical;font:11px/1.4 ui-monospace,Menlo,monospace}
-#gen textarea[readonly]{color:#c8d2e0}
-#gen input[type=range]{flex:1;accent-color:var(--accent)}
-#gen output{min-width:2ch;text-align:right;color:var(--dim)}
-#gen .btns{display:flex;flex-wrap:wrap;gap:6px;margin-top:8px}
-#gen .btns button{background:var(--panel2);color:var(--ink);border:1px solid var(--line);border-radius:6px;padding:5px 9px;font-size:13px}
-#gen .btns button:hover{border-color:var(--accent)}
-#gen .btns button:disabled{opacity:.4;cursor:default}
-#gen .btns button[data-on="1"]{border-color:var(--ok);color:var(--ok)}
-#gen .hint{display:block;color:var(--dim);font-size:11px;line-height:1.35;margin-top:7px}
-#exampleStatus{display:block;color:var(--dim);font-size:11px;line-height:1.35;margin-top:5px;min-height:1.35em}
-#exampleStatus.ok{color:var(--ok)}
-#exampleStatus.fail{color:var(--fail)}
-#diag{padding:10px 12px;font-size:12px}
-#diag pre{margin:0 0 8px;white-space:pre-wrap;font:11px/1.5 ui-monospace,Menlo,monospace;color:var(--ink)}
-#qa{display:flex;flex-direction:column;gap:4px}
-.qrow{border:1px solid var(--line);border-radius:6px;padding:4px 8px;font:11px/1.4 ui-monospace,Menlo,monospace}
-.qrow b{margin-right:8px}
-.qrow.ok b{color:var(--ok)}
-.qrow.fail{border-color:var(--fail)}
-.qrow.fail b{color:var(--fail)}
-.qrow.skip b{color:var(--skip)}
-.qrow small{display:block;color:var(--dim)}
-#estate{display:none;margin-top:8px;max-height:220px;overflow:auto}
-
-/* ---------- story ---------- */
-#app{max-width:760px;margin:0 auto;padding:32px 24px 0;font-size:18px;line-height:1.65;
-	text-shadow:0 0 7px rgba(255,255,255,.95),0 1px 3px rgba(255,255,255,.9)}
-#app section{margin:0 0 64px;padding:28px 28px 36px}
-#app h4.n{margin:0 0 12px;font-size:44px;line-height:1}
-#app .tail{height:100vh}
-#app .snow-example-container{isolation:isolate;margin:72px 0 40px;padding:18px 18px 28px;border:1px solid rgba(108,204,255,.42);border-radius:14px;background:rgba(18,25,38,.08)}
-#app .snow-example-container > .snow-example-heading{margin:0 0 18px;font-size:14px;letter-spacing:.08em;text-transform:uppercase;color:var(--panel)}
-#app .snow-example-container > section.snow-example-scene{margin:0 0 44px;padding:18px 18px 28px;border:1px dashed rgba(108,204,255,.42);border-radius:10px}
-#app .snow-example-container > section.snow-example-scene:last-child{margin-bottom:0}
-#app .snow-example-title{margin:0 0 10px;font-size:24px;line-height:1.15}
-#app .snow-example-copy{font-size:14px;line-height:1.45;margin:10px 0;color:inherit}
-#app .snow-example-meta{font:11px/1.4 ui-monospace,Menlo,monospace;opacity:.7}
-#app .snow-example-container .snow-bg{border-radius:8px;z-index:-1}
-script[type=txt]{display:none}
-/* free-floating morph anchors: zero box, out of flow, with or without engine */
-.snow-fg{position:absolute;width:0;height:0;margin:0;padding:0;border:0;overflow:hidden;visibility:hidden;pointer-events:none}
-/* demo data-style classes: paint only, zero layout shift by construction */
-html.night #app h4.n{outline:2px solid #6cf}
-html.fog #app{text-shadow:0 0 12px rgba(200,220,255,.9)}
-html.sunset .wtag{background:rgba(120,40,0,.6)}
-
-/* no-engine fallback: the picture paints BEHIND the following text (overlay),
-   so the first scene after a background reads like the parked engine scene.
-   Nonzero data-gap keeps flow (a pure image beat). */
-.snow-bg{position:relative;display:block;width:100%;margin:0 0 24px;overflow:hidden;z-index:-1;
-	background-position:center;background-repeat:no-repeat;border-radius:10px}
-.snow-bg[data-mode=cover],.snow-bg[data-mode=tiled],.snow-bg[data-mode=contain]{height:var(--snow-vh,100vh);min-height:420px;margin-bottom:calc(-1 * var(--snow-vh,100vh))}
-.snow-bg[data-mode=tiled]{background-repeat:repeat}
-.snow-bg[data-mode=contain]{background-size:contain;background-color:#0c0f16}
-.snow-bg[data-mode=cover]{background-size:cover}
-.snow-bg[data-mode=fixed],.snow-bg[data-mode=auto]{background-position:top left}
-.snow-bg[data-size="256"]{height:256px;margin-bottom:-256px}
-.snow-bg[data-size="512"]{height:512px;margin-bottom:-512px}
-.snow-bg[data-size="1024"]{height:1024px;margin-bottom:-1024px}
-.snow-bg[data-gap]:not([data-gap="0"]){margin-bottom:0}
-/* exact partial-gap footprints (engine sets marginBottom = gap - height) */
-.snow-bg[data-mode=cover][data-gap="50vh"],.snow-bg[data-mode=tiled][data-gap="50vh"],.snow-bg[data-mode=contain][data-gap="50vh"]{margin-bottom:calc(50vh - var(--snow-vh,100vh))}
-.snow-bg[data-mode=cover][data-gap="120px"],.snow-bg[data-mode=tiled][data-gap="120px"],.snow-bg[data-mode=contain][data-gap="120px"]{margin-bottom:calc(120px - var(--snow-vh,100vh))}
-.snow-bg[data-size="256"][data-gap="50vh"]{margin-bottom:calc(50vh - 256px)}
-.snow-bg[data-size="512"][data-gap="50vh"]{margin-bottom:calc(50vh - 512px)}
-.snow-bg[data-size="1024"][data-gap="50vh"]{margin-bottom:calc(50vh - 1024px)}
-.snow-bg[data-size="256"][data-gap="120px"]{margin-bottom:-136px}
-.snow-bg[data-size="512"][data-gap="120px"]{margin-bottom:-392px}
-.snow-bg[data-size="1024"][data-gap="120px"]{margin-bottom:-904px}
-.wtag{position:absolute;right:10px;bottom:8px;pointer-events:none;
-	font:11px/1.5 ui-monospace,Menlo,monospace;color:#fff;
-	background:rgba(0,0,0,.5);padding:2px 8px;border-radius:4px}
-
-/* parked text slots: pure CSS sticky, works with and without the engine */
-.snow-stick{position:sticky;z-index:5;margin:8px 0;padding:6px 12px;
-	font-size:13px;letter-spacing:.04em;color:#fff;background:rgba(10,14,22,.82);
-	border:1px solid #33405a;border-radius:8px;backdrop-filter:blur(4px)}
-.snow-stick[data-park=top]{top:0}
-.snow-stick[data-park=bottom]{bottom:0}
-
-/* ---------- rail, marker, wireframes ---------- */
-#rail{position:fixed;top:0;bottom:0;width:14px;pointer-events:none;opacity:.5;
-	background:repeating-linear-gradient(180deg,#6cf 0 1px,transparent 1px 100px)}
-#mark{position:fixed;width:52px;margin-left:-58px;text-align:right;pointer-events:none;
-	font:10px/1 ui-monospace,Menlo,monospace;color:var(--dim)}
-#wires{position:fixed;inset:0;pointer-events:none;z-index:50;display:none}
-#wires.on{display:block}
-#wires i{position:absolute}
-#wires i.a{border:1px dashed #ff5d5d}
-#wires i.r{border:1px solid #3ddc84}
-
-/* ---------- layout: fixed sidebars on wide, stacked flow below 1100px ---------- */
-@media (min-width:1100px){
-	body{padding:0 330px 0 300px}
-	#gen{position:fixed;left:0;top:0;bottom:0;width:286px;overflow-y:auto;z-index:100}
-	#diag{position:fixed;right:0;top:0;bottom:0;width:316px;overflow-y:auto;z-index:100}
-	#rail{left:292px}
-	#mark{left:292px}
-}
-@media (max-width:1099px){
-	#gen,#diag{position:static;width:auto}
-	#rail{display:none}
-	#mark{display:none}
-}
+/* Snowfall authoring harness. The story remains page-scrolled so sticky scenes work. */
+:root{--panel:#111827;--panel2:#1f2937;--ink:#f3f4f6;--dim:#9ca3af;--line:#374151;--accent:#67e8f9;--ok:#4ade80;--fail:#fb7185;--skip:#facc15}
+*{box-sizing:border-box}html{background:var(--snow-bg,#f4f6f9);color:var(--snow-fg,#202633)}html,body{margin:0;padding:0}body{font-family:system-ui,-apple-system,"Segoe UI",sans-serif;overflow-x:clip}button,input,select,textarea{font:inherit}button{cursor:pointer}
+#gen,#diag{background:var(--panel);color:var(--ink)}#gen{padding:10px 12px}#controls{display:block}.panel-title{display:flex;flex-direction:column;margin:3px 2px 12px}.panel-title small{color:var(--dim);margin-top:3px;font-size:11px}
+#srcbar{position:sticky;top:-10px;z-index:5;display:flex;align-items:center;gap:9px;background:var(--panel);padding:8px 0;border-bottom:1px solid var(--line);margin-bottom:10px;font-size:11px}#srcbar button{background:var(--panel2);color:var(--ink);border:1px solid var(--line);border-radius:6px;padding:5px 8px}#srcbar output{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--ok)}#srcbar output.warn{color:var(--fail)}#srcbar label{white-space:nowrap}
+#gen fieldset,#gen details{border:1px solid var(--line);border-radius:8px;margin:0 0 10px;padding:8px 10px 10px}#gen legend{padding:0 6px;color:var(--accent);font-size:12px;font-weight:600}#gen label{display:flex;align-items:center;gap:6px;margin:6px 0;font-size:12px}#gen label.rowf{justify-content:space-between}#gen select,#gen input,#gen textarea{background:var(--panel2);color:var(--ink);border:1px solid var(--line);border-radius:6px;padding:4px 6px}#gen textarea{display:block;width:100%;resize:vertical;font:11px/1.4 ui-monospace,monospace}#gen input[type=range]{flex:1;accent-color:var(--accent)}#gen output{color:var(--dim)}#gen .btns{display:flex;flex-wrap:wrap;gap:6px;margin-top:8px}#gen .btns button{background:var(--panel2);color:var(--ink);border:1px solid var(--line);border-radius:6px;padding:6px 9px;font-size:12px}#gen .primary button:first-child,.add-fieldset button{border-color:#0891b2}.warning{color:#fbbf24}.hint{display:block;font-size:11px;margin-top:7px}.add-fieldset{background:#172033}
+#inspectTitle{display:block;color:var(--accent);font-size:12px;margin-bottom:8px}#inspectFields label{display:grid;grid-template-columns:115px 1fr;align-items:center;color:var(--dim)}#inspectFields input{min-width:0;width:100%}#src{display:none;width:100%;min-height:260px;background:#090e18;color:#dbeafe;border:1px solid var(--line);border-radius:7px;padding:10px;resize:vertical;font:12px/18px ui-monospace,SFMono-Regular,Menlo,monospace;tab-size:4;white-space:pre;overflow:auto}
+#diag{padding:10px 12px;font-size:12px}#diag pre{margin:0 0 8px;white-space:pre-wrap;font:11px/1.5 ui-monospace,monospace}.qrow{border:1px solid var(--line);border-radius:6px;padding:4px 8px;font:11px/1.4 ui-monospace,monospace}.qrow.ok b{color:var(--ok)}.qrow.fail b{color:var(--fail)}.qrow.skip b{color:var(--skip)}.qrow small{display:block;color:var(--dim)}#estatePre{display:none}
+#app{position:relative;max-width:760px;margin:0 auto;padding:32px 24px 0;font-size:18px;line-height:1.65;text-shadow:0 0 7px rgba(255,255,255,.95),0 1px 3px rgba(255,255,255,.9)}#app section{margin:0 0 64px;padding:28px}#app h4.n{margin:0 0 12px;font-size:44px;line-height:1}.snow-wip{border-left:3px solid rgba(8,145,178,.45);padding-left:12px;color:inherit}.tail{height:100vh}script[type=txt]{display:none}.snow-fg{position:absolute;width:0;height:0;overflow:hidden;visibility:hidden}
+.snow-bg{position:relative;display:block;width:100%;margin:0 0 24px;overflow:hidden;z-index:-1;background-position:center;background-repeat:no-repeat;border-radius:10px}.snow-bg[data-mode=cover],.snow-bg[data-mode=tiled],.snow-bg[data-mode=contain]{height:var(--snow-vh,100vh);min-height:420px;margin-bottom:calc(-1 * var(--snow-vh,100vh))}.snow-bg[data-mode=tiled]{background-repeat:repeat}.snow-bg[data-mode=contain]{background-size:contain;background-color:#0c0f16}.snow-bg[data-mode=cover]{background-size:cover}.snow-bg[data-gap]:not([data-gap="0"]){margin-bottom:0}.snow-stick{position:sticky;z-index:5;margin:8px 0;padding:6px 12px;font-size:13px;color:#fff;background:rgba(10,14,22,.82);border:1px solid #33405a;border-radius:8px}.snow-stick[data-park=top]{top:0}.snow-stick[data-park=bottom]{bottom:0}
+#rail{position:fixed;top:0;bottom:0;width:14px;pointer-events:none;opacity:.5;background:repeating-linear-gradient(180deg,#6cf 0 1px,transparent 1px 100px)}#mark{position:fixed;width:52px;margin-left:-58px;text-align:right;pointer-events:none;font:10px/1 monospace;color:var(--dim)}#wires{position:fixed;inset:0;pointer-events:none;z-index:50;display:none}#wires.on{display:block}#wires i{position:absolute}#wires i.a{border:1px dashed #fb7185}#wires i.r{border:1px solid #4ade80}
+@media(min-width:1100px){body{padding:0 330px 0 300px}#gen{position:fixed;left:0;top:0;bottom:0;width:286px;overflow-y:auto;z-index:100}#diag{position:fixed;right:0;top:0;bottom:0;width:316px;overflow-y:auto;z-index:100}#rail,#mark{left:292px}body.src{padding-left:620px}body.src #gen{width:606px;display:flex;flex-direction:column;overflow:hidden}body.src #controls{display:none}body.src #src{display:block;flex:1;min-height:0;resize:none}body.src #srcbar{position:static;flex:none}}
+@media(max-width:1099px){#gen,#diag{position:static;width:auto}#rail,#mark{display:none}body.src #controls{display:none}body.src #src{display:block;height:40vh}}
