@@ -677,6 +677,7 @@ lateRun([2, 1, 0], 'loads out of order', false);
 	};
 	doc.getElementById = id => id === 'app'
 		? { querySelectorAll: sel => sel.indexOf('snow-hd') >= 0 ? wags : { length: 0 } } : null;
+	doc.querySelectorAll = sel => sel.indexOf('snow-hd') >= 0 ? wags : [];
 	const errs = [];
 	const origErr = console.error;
 	function run(withMath) {
@@ -710,6 +711,9 @@ lateRun([2, 1, 0], 'loads out of order', false);
 	ok(rootCls.indexOf('snow-ready') < 0, 'the JS sizing class stays off');
 	const A2 = run(HD);
 	eqv(A2.count(), 1, 'the real hdregion.js passes the handshake');
+	const dbg = A2.debug();
+	ok(dbg.length === 2 && /managed=1/.test(dbg[0]) && /jsSizing=1/.test(dbg[1]),
+		'debug() reports the state the frame decides from');
 	ok(!!wags[0].kids[1].style.width, 'and the crop is laid out again');
 	ok(rootCls.indexOf('snow-ready') >= 0, 'with JS sizing on');
 }

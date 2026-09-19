@@ -463,6 +463,26 @@ const api = {
 	count: function() { return R.n; },
 	/* live state for the QA probe — read-only by convention */
 	arrays: function() { return { els: R.els, base: R.base, hd: R.hd, wi: R.wi, hdOK: R.hdOK, ready: R.ready, nh: R.nh }; },
+	/* one console call for "why is nothing painted": a line per wagon with the
+	   exact values frame() decides from, plus the page-level state. Layout is
+	   never read here — style.display is what the adapter itself wrote. */
+	debug: function() {
+		const out = [];
+		for (let i = 0; i < R.n; i++) {
+			out.push('#' + i + ' managed=' + R.hdOK[i] + ' decoded=' + R.ready[i]
+				+ ' crop=' + (R.nh[i] | 0) + 'x' + (R.nhh[i] | 0)
+				+ ' base=' + (R.nb[i] | 0) + 'x' + (R.nbh[i] | 0)
+				+ ' display=' + (R.hd[i] ? R.hd[i].style.display || '(shown)' : 'no crop element')
+				+ ' rect=' + R.rx[i] + ',' + R.ry[i] + ' ' + R.rw[i] + 'x' + R.rh[i]
+				+ ' box=' + (R.lwb[i] || 0).toFixed(0) + 'x' + (R.lhb[i] || 0).toFixed(0));
+		}
+		out.push('n=' + R.n + ' of ' + document.querySelectorAll('#app .snow-bg.snow-hd').length
+			+ ' .snow-hd wagons, tableKeys=' + Object.keys(global.REGIONS || {}).length
+			+ ', jsSizing=' + (readyOn ? 1 : 0) + ', inspect=' + (inspectOn ? 1 : 0)
+			+ ', hdMath=' + hdOKmod + ', vp=' + (global.Snowfall && global.Snowfall.viewport
+				? global.Snowfall.viewport.width + 'x' + global.Snowfall.viewport.height : 'none'));
+		return out;
+	},
 	view: function(i) { return { zoom: R.zoom[i], panX: R.px[i], panY: R.py[i] }; },
 	setView: setView,
 	zoomAt: zoomAt,
