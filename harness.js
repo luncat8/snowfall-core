@@ -351,6 +351,17 @@ const REAL_SCENES = [
 	{ base: 'img/1.avif', hd: 'img/1_c.avif', x: 477, y: 239, w: 804, h: 1056, bw: 1920, bh: 1536 },
 	{ base: 'img/3.avif', hd: 'img/3_c.avif', x: 476, y: 101, w: 1016, h: 900, bw: 1984, bh: 1152 }
 ];
+/* REAL_SCENES[i] mounted twice would be TWO wagons on ONE key: the table is
+   indexed by base src, so the second write would re-rect the first wagon's crop
+   (and a `nohd` rotation would delete the other wagon's hd). One scene per
+   wagon, claimed here and released only when build() resets the table. */
+const REAL_CLAIMED = [];
+function claimRealScene() {
+	for (let i = 0; i < REAL_SCENES.length; i++) {
+		if (REAL_CLAIMED.indexOf(i) < 0) { REAL_CLAIMED.push(i); return REAL_SCENES[i]; }
+	}
+	return null;
+}
 function regionEntryCase(k) { return k % 3 === 2 ? 'none' : k % 3 === 0 ? 'nohd' : 'full'; }
 function regionWagonInner(k, j, pal, visual, real) {
 	if (!visual.src) return '';
@@ -358,13 +369,17 @@ function regionWagonInner(k, j, pal, visual, real) {
 	const ec = regionEntryCase(k);
 	const alt = 'Scene ' + k + '.' + j;
 	if (real) {
-		const s = REAL_SCENES[(k + j) % REAL_SCENES.length];
-		if (ec === 'none') return '<img src="' + s.base + '" alt="' + alt + '">';
-		const entry = { x: s.x, y: s.y, w: s.w, h: s.h, hd: s.hd, bw: s.bw, bh: s.bh };
-		if (ec === 'nohd') delete entry.hd;
-		(window.REGIONS = window.REGIONS || {})[s.base] = entry;
-		return '<img src="' + s.base + '" alt="' + alt + ' outpainted base">'
-			+ '<img src="' + s.hd + '" alt="" aria-hidden="true">';
+		const s = claimRealScene();
+		/* no unclaimed file left: fall through to generated art, so the wagon
+		   still gets a picture and a key of its own instead of an empty box */
+		if (s) {
+			if (ec === 'none') return '<img src="' + s.base + '" alt="' + alt + '">';
+			const entry = { x: s.x, y: s.y, w: s.w, h: s.h, hd: s.hd, bw: s.bw, bh: s.bh };
+			if (ec === 'nohd') delete entry.hd;
+			(window.REGIONS = window.REGIONS || {})[s.base] = entry;
+			return '<img src="' + s.base + '" alt="' + alt + ' outpainted base">'
+				+ '<img src="' + s.hd + '" alt="" aria-hidden="true">';
+		}
 	}
 	const tag = 'ch' + k + '·bg' + j;
 	const rng = mulberry32(hash32(tag + '·rect'));
@@ -394,7 +409,7 @@ function templateWagonHTML(k, j, cfg, rng, source, pal) {
 	if (mode === 'fixed' || mode === 'auto') at += ' data-size="'+size+'"';
 	if (dir !== 'top') at += ' data-dir="'+dir+'"';
 	if (visual.source) at += ' data-source="'+escapeHTML(visual.source)+'"';
-	if (isHd) return '<div'+at+'>' + regionWagonInner(k, j, pal, visual, !!cfg.realScenes) + '</div>';
+	if (isHd) return '<div'+at+'>' + regionWagonInner(k, j, pal, visual, cfg.realScenes ? 'real' : '') + '</div>';
 	if (visual.image) at += ' style="background-image:'+escapeHTML(visual.image)+';"';
 	return '<div'+at+'></div>';
 }
@@ -445,7 +460,7 @@ function templateChapterHTML(k, cfg, rng, sources, cursor) {
 }
 function build() {
 	flushSource(); const cfg=getCfg(), rng=mulberry32(SEED), sources=parseExampleImages($('exampleImages').value), cursor={i:0}, parts=[];
-	window.REGIONS = {};
+	window.REGIONS = {}; REAL_CLAIMED.length = 0;
 	for (let k=1;k<=clamp(+cfg.n||1,1,12);k++) parts.push(templateChapterHTML(k,cfg,rng,sources,cursor));
 	$('app').innerHTML=parts.join('')+'<div class="tail"></div>'; LOG.length=0; $('qa').innerHTML=''; $('jump').max=chapters().length||1;
 	window.scrollTo(0,0); writeHash(); engRefresh(); writeSource(false);
@@ -1396,6 +1411,7 @@ async function qRegion() {
 	if (!vp || vp.width !== document.documentElement.clientWidth)
 		return row('region', 0, 'engine predates the 0.5.5 viewport contract');
 	const bad = [];
+	const keys = {};
 	const subs = (Snowfall.default && Snowfall.default.subs) || [];
 	const asub = subs.filter(s => s.frame === api.frame)[0];
 	if (!asub) bad.push('adapter subscriber not registered via Snowfall.use');
@@ -1420,7 +1436,9 @@ async function qRegion() {
 	   so a declared hd whose <img> is missing degrades exactly like no entry */
 	const entryOf = (img, cropEl) => {
 		const e = rawOf(img);
-		return e && e.hd && cropEl ? e : null;
+		if (!e || !e.hd || !cropEl) return null;
+		if (HDM.normKey(cropEl.getAttribute('src') || '') !== HDM.normKey(e.hd)) return null;
+		return e;
 	};
 	const layoutOf = (b, v, cropEl) => {
 		const e = entryOf(b, cropEl);
@@ -1443,10 +1461,22 @@ async function qRegion() {
 	console.error = function() { const a = String(arguments[0]); if (/region|HD/i.test(a)) errs.push(a); return origErr.apply(console, arguments); };
 	console.warn = function() { const a = String(arguments[0]); if (/region|HD/i.test(a)) warns.push(a); };
 	let checked = 0, fitted = 0, centred = 0;
+	/* a crop is positioned only while the adapter takes gestures, so a passive
+	   probe would skip the painted-box checks on a page that is fine: turn
+	   inspect on for the measurement and put the toggle back afterwards */
+	const wasInspect = api.getInspect();
+	if (!wasInspect) api.setInspect(true);
 	try {
 		for (let i = 0; i < A.els.length; i++) {
 			const el = A.els[i], b = A.base[i], h = A.hd[i], wi = A.wi[i];
 			if (wi < 0 || !b) { bad.push('#' + i + ' unmapped wagon'); continue; }
+			/* one file, one crop: the table is keyed by the base src, so a second
+			   wagon on the same picture gets the FIRST wagon's rect and its crop
+			   floats over the wrong part of the art */
+			const key = HDM.normKey(b.getAttribute('src') || '');
+			if (keys[key] !== undefined) bad.push('#' + i + ' shares its base src with #' + keys[key]
+				+ ' — REGIONS is keyed by src, so one file cannot carry two crops');
+			else keys[key] = i;
 			setY(Math.round(wgs.y[wi]) + 1);
 			await raf2();
 			api.setView(i, 1, 0, 0);
@@ -1582,6 +1612,7 @@ async function qRegion() {
 				bad.push('re-enabled children were not repainted identically');
 		}
 	} finally {
+		if (!wasInspect) api.setInspect(false);
 		console.error = origErr; console.warn = origWarn;
 	}
 	if (errs.length) bad.push(errs.length + ' console error(s): ' + errs[0]);

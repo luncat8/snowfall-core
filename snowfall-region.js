@@ -136,7 +136,11 @@ function measure() {
 		const el = els[i], b = bases[i], hd = hds[i];
 		el.classList.add('snow-hd-live');
 		const entry = table ? table[HD.normKey(b.getAttribute('src') || '')] : null;
-		R.hdOK[i] = entry && entry.hd && hd ? 1 : 0;
+		/* the crop element must be the file the entry names: a table from another
+		   build, or a swapped second <img>, would otherwise paint a different
+		   picture over this base and look like a region placed at the wrong spot */
+		R.hdOK[i] = entry && entry.hd && hd &&
+			HD.normKey(hd.getAttribute('src') || '') === HD.normKey(entry.hd) ? 1 : 0;
 		/* the rect exists to place the crop. With no crop to paint the base IS
 		   the picture, so it is framed whole (cover) rather than magnified into
 		   a blurry zoom of a rect nobody ever shows */
@@ -200,12 +204,15 @@ function frame(sY, vh, vw) {
 		const nb = b.naturalWidth, nbh = b.naturalHeight;
 		if (nb !== R.nb[i] || nbh !== R.nbh[i]) { R.nb[i] = nb; R.nbh[i] = nbh; }
 		const bw = R.nb[i], bh = R.nbh[i];
-		if (!(bw > 0 && bh > 0)) continue;
+		/* every exit from this wagon's pass must decide the crop: leaving it
+		   alone would keep whatever the last pass wrote, or the host CSS, and
+		   an unhidden crop over an unsized base sits on the wrong box */
+		if (!(bw > 0 && bh > 0)) { hideCrop(i, hd); continue; }
 		region.x = R.rx[i]; region.y = R.ry[i];
 		region.w = R.rw[i]; region.h = R.rh[i]; region.maxZoom = R.mz[i];
 		view.zoom = R.zoom[i]; view.panX = R.px[i]; view.panY = R.py[i];
 		HD.finalLayout(vw, vh, bw, bh, region, view, L);
-		if (!L.ok) continue;
+		if (!L.ok) { hideCrop(i, hd); continue; }
 		/* finalLayout canonicalized `view` in place — persist it, so the
 		   clamp has one authority and re-running the frame is a no-op */
 		R.zoom[i] = view.zoom; R.px[i] = view.panX; R.py[i] = view.panY;
@@ -218,10 +225,7 @@ function frame(sY, vh, vw) {
 			R.lwb[i] = L.w; R.lhb[i] = L.h; R.lxb[i] = L.x; R.lyb[i] = L.y;
 		}
 		if (!hd) continue;
-		if (!(R.hdOK[i] && R.ready[i])) {
-			if (R.disp[i] !== 0) { hd.style.display = 'none'; R.disp[i] = 0; }
-			continue;
-		}
+		if (!(R.hdOK[i] && R.ready[i])) { hideCrop(i, hd); continue; }
 		if (!same(L.hw, R.lwh[i]) || !same(L.hh, R.lhh[i]) ||
 			!same(L.hx, R.lhx[i]) || !same(L.hy, R.lhy[i])) {
 			const st = hd.style;
@@ -232,6 +236,10 @@ function frame(sY, vh, vw) {
 		}
 		if (R.disp[i] !== 1) { hd.style.display = ''; R.disp[i] = 1; }
 	}
+}
+
+function hideCrop(i, hd) {
+	if (hd && R.disp[i] !== 0) { hd.style.display = 'none'; R.disp[i] = 0; }
 }
 
 function clearImg(el) {

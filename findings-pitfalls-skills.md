@@ -338,3 +338,23 @@ implementation, on the reference's own images and rects.
   `<img>`: pre-hiding it in the markup, or in a fixture's style, makes a broken
   adapter look correct. The gate now asserts the crop is NOT pre-hidden, and
   that `off()` — not the markup — is what clears it.
+- A GUI test that depends on a UI mode must set that mode itself and restore it.
+  The `region` QA row reports "crop not shown" on healthy pages if it measures
+  passively, because a crop is only positioned while inspect is on; it turns
+  `setInspect(true)` on for the measurement and puts the checkbox back in `finally`.
+  Drive the public setter — the adapter's `onInspect` callback keeps the checkbox
+  honest — never dispatch synthetic events.
+- Readiness and geometry must be per wagon, and every early `continue` in the
+  frame pass still has to decide the crop's display: an exit that writes nothing
+  leaves whatever the last pass or the host CSS left, which is a crop sitting on
+  an unsized base. A fixture whose images are all `complete` never runs the
+  decode-after-measure path, so it passes while a real page shows one crop out of
+  four. (Skill: for anything load-driven, drive `load` events one at a time, in
+  order and out of order, across a rebuild, and assert the untouched wagons.)
+- Author-side fallback CSS and JS-written pixels must not fight over one
+  property. `harness.css` keeps `.snow-hd img{max-height:100vh;object-fit:contain}`
+  for the engine-off page; the adapter answers with a strictly more specific
+  `html.snow-ready .snow-hd-live>img{max-height:none;object-fit:fill}`. The
+  override wins on specificity, not on order, and `test/region.js` scans both
+  texts so neither side regresses silently. (Skill: pin such pairs with a static
+  scan of every selector that sets a property the JS writes.)

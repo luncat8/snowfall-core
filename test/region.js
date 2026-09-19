@@ -496,12 +496,188 @@ function fakeWagon(children, mode) {
 	}
 }
 
+/* ---------------- images that decode after measure ----------------
+   The crop stays hidden until its OWN <img> reports a natural size, and after
+   boot only its load handler can set that flag. So readiness is per wagon and
+   the arrival order of the loads must not matter: every region wagon ends with
+   its own crop over its own rect, whether the loads land in order, late, out
+   of order, or in the middle of a rebuild that shifts every index. A DOM whose
+   images are all `complete` (the block above) never runs this path, and a table
+   keyed by the base src (one file, one crop) would then pass while painting
+   three quarters of a page at the wrong rect. */
+const LATE_CW = 1000, LATE_CH = 700, LATE_BW = 1600, LATE_BH = 1000, LATE_RW = 600, LATE_RH = 400;
+/* one rect per wagon, so a shared or stale entry shows up as a shifted crop */
+const LATE_RECT = [{ x: 100, y: 50 }, { x: 300, y: 200 }, { x: 700, y: 500 }, { x: 60, y: 40 }];
+function lateImg(src, nw, nh) {
+	const img = fakeImg(src, nw, nh);
+	img.complete = false; img.naturalWidth = 0; img.naturalHeight = 0;
+	img._size = [nw, nh]; img._h = {};
+	img.addEventListener = function (t, fn) { (this._h[t] = this._h[t] || []).push(fn); };
+	return img;
+}
+function decode(img) {
+	img.complete = true; img.naturalWidth = img._size[0]; img.naturalHeight = img._size[1];
+	const hs = img._h.load || [];
+	for (let i = 0; i < hs.length; i++) hs[i]({ currentTarget: img, target: img });
+}
+function lateFit(rect) {
+	return HD.finalLayout(LATE_CW, LATE_CH, LATE_BW, LATE_BH,
+		{ x: rect.x, y: rect.y, w: LATE_RW, h: LATE_RH, maxZoom: 0 }, { zoom: 1, panX: 0, panY: 0 }, {});
+}
+/* the fallback is "no rect at all", not "a rect at the origin" */
+const LATE_WHOLE = HD.finalLayout(LATE_CW, LATE_CH, LATE_BW, LATE_BH,
+	{ x: 0, y: 0, w: 0, h: 0 }, { zoom: 1, panX: 0, panY: 0 }, {});
+function lateNum(s) { return parseFloat(s) || 0; }
+function latePaints(img, o, kind) {
+	const want = kind === 'crop' ? [o.hw, o.hh, o.hx, o.hy] : [o.w, o.h, o.x, o.y];
+	const t = /translate\(([-\d.]+)px,([-\d.]+)px\)/.exec(img.style.transform || '');
+	return Math.abs(lateNum(img.style.width) - want[0]) <= 1e-6 && Math.abs(lateNum(img.style.height) - want[1]) <= 1e-6
+		&& !!t && Math.abs(+t[1] - want[2]) <= 1e-6 && Math.abs(+t[2] - want[3]) <= 1e-6;
+}
+/* wagon 3's entry names a crop its markup does not carry: nothing is painted */
+function lateRun(order, label, withRebuild) {
+	const wags = [], hdImg = [];
+	for (let i = 0; i < 4; i++) {
+		const src = 'img/' + i + '.png';
+		const b = lateImg(src, LATE_BW, LATE_BH), h = lateImg(src + '_c.png', LATE_RW, LATE_RH);
+		wags.push(fakeWagon([b, h])); hdImg.push(h);
+	}
+	const REGIONS = {};
+	for (let i = 0; i < 3; i++) REGIONS['img/' + i + '.png'] =
+		{ x: LATE_RECT[i].x, y: LATE_RECT[i].y, w: LATE_RW, h: LATE_RH, hd: 'img/' + i + '.png_c.png' };
+	REGIONS['img/3.png'] = { x: LATE_RECT[3].x, y: LATE_RECT[3].y, w: LATE_RW, h: LATE_RH, hd: 'img/other_c.png' };
+	const fakeEl = () => ({
+		style: {}, classList: { add: () => {}, remove: () => {}, toggle: () => {} },
+		appendChild: () => {}, setAttribute: () => {}, querySelector: () => ({ checked: false, addEventListener: () => {} }),
+		innerHTML: '', textContent: '', id: '', hidden: false
+	});
+	const rootCls = [];
+	const trackCls = {
+		add: c => { if (rootCls.indexOf(c) < 0) rootCls.push(c); },
+		remove: c => { const i = rootCls.indexOf(c); if (i >= 0) rootCls.splice(i, 1); },
+		toggle: () => {}, contains: c => rootCls.indexOf(c) >= 0
+	};
+	const doc = {
+		readyState: 'complete',
+		documentElement: Object.assign(fakeEl(), { clientWidth: LATE_CW, classList: trackCls }),
+		createElement: fakeEl, head: { appendChild: () => {} }, addEventListener: () => {}, body: { appendChild: () => {} }
+	};
+	doc.getElementById = id => id === 'app'
+		? { querySelectorAll: sel => sel.indexOf('snow-hd') >= 0 ? wags : { length: 0 } } : null;
+	const win = {
+		innerWidth: LATE_CW + 15, innerHeight: LATE_CH, scrollY: 0,
+		addEventListener: () => {}, removeEventListener: () => {},
+		HDRegion: HD, REGIONS: REGIONS,
+		Snowfall: {
+			default: { use: () => {} }, use: () => {}, refresh: () => {}, step: () => {},
+			wagons: { n: 0, els: [], y: [], free: [], pos: [] }, viewport: { width: LATE_CW, height: LATE_CH }
+		}
+	};
+	const shown = i => wags[i].kids[1].style.display !== 'none';
+	const snap = i => wags[i].kids[0].style.transform + '|' + wags[i].kids[1].style.transform;
+	global.window = win;
+	global.document = doc;
+	delete require.cache[require.resolve('../snowfall-region.js')];
+	const A = require('../snowfall-region.js');
+	try {
+		A.measure();
+		eqv(A.count(), 4, label + ': all four late-decoding wagons are managed');
+		A.frame(0, LATE_CH, LATE_CW);
+		ok(!wags[0].kids[0].style.width, label + ': nothing is painted while no image has a size');
+		for (let i = 0; i < 4; i++) decode(wags[i].kids[0]);
+		A.frame(0, LATE_CH, LATE_CW);
+		for (let i = 0; i < 4; i++) {
+			ok(!shown(i), label + ': #' + i + ' crop hidden until its own image decodes');
+			const o = i === 3 ? LATE_WHOLE : lateFit(LATE_RECT[i]);
+			ok(latePaints(wags[i].kids[0], o, 'base'), label + ': #' + i + ' base laid out from its own entry');
+		}
+		const done = [];
+		for (let m = 0; m < order.length; m++) {   /* order holds only the well-formed wagons */
+			decode(hdImg[order[m]]);
+			A.frame(0, LATE_CH, LATE_CW);
+			done.push(order[m]);
+			ok(shown(order[m]), label + ': #' + order[m] + ' crop shown as soon as ITS image decodes');
+			ok(latePaints(wags[order[m]].kids[1], lateFit(LATE_RECT[order[m]]), 'crop'),
+				label + ': #' + order[m] + ' crop over its own rect');
+			for (let i = 0; i < 4; i++) {
+				if (done.indexOf(i) >= 0) continue;
+				ok(!shown(i), label + ': #' + i + ' waits for its own load, not the last one');
+			}
+			for (const k of done) {
+				ok(shown(k), label + ': #' + k + ' stays shown after a later wagon loaded');
+				ok(latePaints(wags[k].kids[1], lateFit(LATE_RECT[k]), 'crop'), label + ': #' + k + ' keeps its own rect');
+			}
+		}
+		ok(!shown(3), label + ': an entry naming a crop the markup does not carry paints no crop');
+		const before = snap(0) + snap(1) + snap(2);
+		A.frame(0, LATE_CH, LATE_CW);
+		ok(snap(0) + snap(1) + snap(2) === before, label + ': a stable page repaints identically');
+		if (!withRebuild) return;
+		/* a rebuild that shifts every index, then the loads arriving around it */
+		const NB = lateImg('img/new.png', LATE_BW, LATE_BH), NH = lateImg('img/new_c.png', LATE_RW, LATE_RH);
+		wags.unshift(fakeWagon([NB, NH]));
+		const NEWR = { x: 200, y: 100 };
+		REGIONS['img/new.png'] = { x: NEWR.x, y: NEWR.y, w: LATE_RW, h: LATE_RH, hd: 'img/new_c.png' };
+		A.measure();
+		A.frame(0, LATE_CH, LATE_CW);
+		eqv(A.count(), 5, label + ': a wagon added at the head is managed');
+		ok(!shown(0), label + ': the new wagon stays hidden until its own image decodes');
+		decode(wags[1].kids[1]);          /* a stale load re-firing, one index over */
+		decode(NB); decode(NH);
+		A.frame(0, LATE_CH, LATE_CW);
+		ok(shown(0), label + ': the head-inserted wagon paints its own crop once it decodes');
+		ok(latePaints(NB, lateFit(NEWR), 'base'), label + ': the new base uses the new rect');
+		ok(latePaints(NH, lateFit(NEWR), 'crop'), label + ': the new crop sits on the new rect');
+		for (let i = 0; i < 3; i++) {
+			ok(shown(i + 1), label + ': #' + i + ' still shown after the index shift');
+			ok(latePaints(wags[i + 1].kids[0], lateFit(LATE_RECT[i]), 'base'), label + ': #' + i + ' base survives the index shift');
+			ok(latePaints(wags[i + 1].kids[1], lateFit(LATE_RECT[i]), 'crop'), label + ': #' + i + ' crop survives the index shift');
+		}
+		ok(!shown(4), label + ': the entry/crop mismatch stays hidden after a rebuild');
+	} finally {
+		delete global.window;
+		delete global.document;
+	}
+}
+lateRun([0, 1, 2], 'loads in document order', true);
+lateRun([2, 1, 0], 'loads out of order', false);
+
 /* ---------------- static source scans ---------------- */
 {
 	const root = path.join(__dirname, '..');
 	const adapter = fs.readFileSync(path.join(root, 'snowfall-region.js'), 'utf8');
 	const math = fs.readFileSync(path.join(root, 'hdregion.js'), 'utf8');
 	const engine = fs.readFileSync(path.join(root, 'snowfall.js'), 'utf8');
+	/* the CSS fight: harness.css keeps the author-side no-JS fallback, which
+	   sizes a region picture by containment; the adapter's injected rules must
+	   neutralise each property, or frame() writes correct numbers into a box the
+	   cascade never applies — the original "does not fit" symptom */
+	const cssFile = fs.readFileSync(path.join(root, 'harness.css'), 'utf8');
+	const adapterCss = /const REGION_CSS =\n([\s\S]*?);\n/.exec(adapter)[1]
+		.replace(/'\s*\+\s*'/g, '').replace(/^'|'$/g, '');
+	function rule(src, at) {
+		const open = src.indexOf('{', at), close = src.indexOf('}', open);
+		return { sel: src.slice(src.lastIndexOf('\n', at) + 1, open), body: src.slice(open + 1, close) };
+	}
+	{
+		const fbAt = cssFile.indexOf('.snow-hd img{');
+		ok(fbAt >= 0, 'harness.css keeps the no-JS containment rule for a region picture');
+		const fb = rule(cssFile, fbAt);
+		ok(/max-height:100vh/.test(fb.body) && /object-fit:contain/.test(fb.body),
+			'the fallback is the containment rule the engine-off page needs');
+		ok(cssFile.split('.snow-hd img{').length - 1 === 1, 'exactly one plain rule sizes .snow-hd img');
+		const jsAt = adapterCss.indexOf('.snow-hd-live>img{');
+		ok(jsAt >= 0, 'the adapter injects a JS rule for the same children');
+		const js = rule(adapterCss, jsAt);
+		ok(/max-height:none/.test(js.body) && /object-fit:fill/.test(js.body),
+			'the JS rule drops the containment it competes with');
+		ok(/html\.snow-ready /.test(adapterCss.slice(adapterCss.lastIndexOf('\n', jsAt) + 1, jsAt)),
+			'the override is gated on snow-ready, so the fallback survives with JS off');
+		const cls = s => (s.match(/\.[\w-]+/g) || []).length;
+		ok(cls(adapterCss.slice(adapterCss.lastIndexOf('\n', jsAt) + 1, jsAt)) > cls(fb.sel),
+			'the JS rule is more specific than the fallback (' + cls(fb.sel) + ' class(es) to beat)');
+		ok(/min-height:0/.test(adapterCss), 'the wagon min-height fallback is neutralised too');
+	}
 	/* brace-match the adapter's frame() body so the scan is scoped to it */
 	const m = adapter.indexOf('function frame(sY, vh, vw)');
 	ok(m >= 0, 'adapter has frame(sY, vh, vw)');

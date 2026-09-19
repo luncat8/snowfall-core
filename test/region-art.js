@@ -37,12 +37,14 @@ function grabLine(prefix) {
 }
 /* the generator runs on the harness's own source, extracted verbatim */
 const code = [grab('hash32'), grab('mulberry32'), grab('artURI'), grab('regionEntryCase'),
-	grab('regionWagonInner'), grabLine('const REGION_BASE_W'), grabLine('const REAL_SCENES'),
+	grab('claimRealScene'), grab('regionWagonInner'), grabLine('const REGION_BASE_W'),
+	grabLine('const REAL_CLAIMED'), grabLine('const REAL_SCENES'),
 	grabLine('const PALETTE =')].join('\n');
 const box = {}, W = {};   /* W is the sandbox's window: the REGIONS table lands here */
 const esc = t => String(t).replace(/&/g, '&amp;').replace(/"/g, '&quot;');
 new Function('escapeHTML', 'window', code
-	+ '\nthis.gen = { inner: regionWagonInner, caseOf: regionEntryCase, pal: PALETTE[1], real: REAL_SCENES };'
+	+ '\nthis.gen = { inner: regionWagonInner, caseOf: regionEntryCase, pal: PALETTE[1], real: REAL_SCENES,'
+	+ '\n	reset: () => { REAL_CLAIMED.length = 0; window.REGIONS = {}; } };'
 	+ '\nthis.PAL_IS_OBJECT = !!PALETTE[1] && !!PALETTE[1].s;').call(box, esc, W);
 if (!box.PAL_IS_OBJECT) throw new Error('PALETTE extraction failed');
 const GEN = box.gen;
@@ -67,6 +69,7 @@ function attrs(html) {
 }
 
 /* ---------------- 1 · generated pairs ---------------- */
+GEN.reset();
 for (let k = 0; k < 24; k++) {
 	for (let j = 0; j < 3; j++) {
 		const html = GEN.inner(k, j, GEN.pal, { src: 'generated' }, false);
@@ -138,7 +141,32 @@ for (let k = 0; k < 24; k++) {
 	}
 }
 
-/* ---------------- 3 · the vendored real scenes agree with their bytes ---------------- */
+/* ---------------- 3 · one base src, one wagon ----------------
+   REGIONS is keyed by the base src, so two wagons on the same file cannot have
+   two crops: the second registration re-rects the first, and the reader sees a
+   crop over the wrong part of the picture. The generator must never do it —
+   and this is the check that catches it, because both markup and table look
+   internally consistent on their own. */
+for (const real of [false, true]) {
+	GEN.reset();
+	const bases = [];
+	for (let k = 1; k <= 12; k++) {
+		for (let j = 0; j < 3; j++) {
+			const html = GEN.inner(k, j, GEN.pal, { src: 'generated' }, real);
+			for (const m of html.matchAll(/<img src="([^"]+)"/g)) { bases.push(m[1]); break; }
+		}
+	}
+	const seen = {};
+	let dupes = 0;
+	for (const b of bases) { if (seen[b]) dupes++; else seen[b] = 1; }
+	eq(dupes, 0, (real ? 'real' : 'generated') + ' mode: every region wagon has its own base src ('
+		+ bases.length + ' wagons, ' + Object.keys(seen).length + ' keys)');
+	ok(Object.keys(table()).length <= bases.length, (real ? 'real' : 'generated') + ' mode: no orphan entries');
+	if (real) ok(Object.keys(seen).filter(k => k.indexOf('data:') !== 0).length <= GEN.real.length,
+		'real files are mounted at most once each');
+}
+
+/* ---------------- 4 · the vendored real scenes agree with their bytes ---------------- */
 const scenes = require(path.join(__dirname, 'vendor/regions-ref.js'));
 for (const key of Object.keys(scenes)) {
 	const e = scenes[key];
@@ -157,19 +185,22 @@ for (const key of Object.keys(scenes)) {
 	ok(e.w === e.hdW && e.h === e.hdH, key + ' real crop is 1:1 with its rect');
 	ok(e.x + e.w <= e.imgW && e.y + e.h <= e.imgH, key + ' rect fits the shipped base image');
 }
-/* and the harness must mount exactly these files */
+/* and the harness must mount each vendored file at most once: a second wagon on
+   the same key would read the first one's rect. The rest fall through to
+   generated art, so no region wagon is left without a picture. */
 {
-	W.REGIONS = undefined;
+	GEN.reset();
 	for (let k = 0; k < 8; k++) GEN.inner(k, 0, GEN.pal, { src: 'generated' }, true);
 	const T = table();
-	const keys = Object.keys(T);
-	ok(keys.length === GEN.real.length, 'real scenes register one entry per file (' + keys.length + ')');
-	for (const key of keys) {
+	const realKeys = Object.keys(T).filter(k => k.indexOf('data:') !== 0);
+	eq(realKeys.length, GEN.real.length, 'each real file is claimed by exactly one wagon (' + realKeys.length + ')');
+	for (const key of realKeys) {
 		const e = T[key];
 		ok(fs.existsSync(path.join(root, key)), 'real base exists: ' + key);
 		ok(!e.hd || fs.existsSync(path.join(root, e.hd)), 'real crop exists: ' + e.hd);
 		ok(scenes[key] && scenes[key].x === e.x && scenes[key].w === e.w, key + ' harness rect = the reference rect');
 	}
+	ok(Object.keys(T).length > realKeys.length, 'unclaimed wagons fall through to generated art');
 }
 
 console.log('region-art: ' + (checks - fails) + '/' + checks + ' checks, ' + fails + ' failed');
