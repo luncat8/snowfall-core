@@ -151,6 +151,18 @@ function measure() {
 		if (!v) { v = { zoom: 1, panX: 0, panY: 0 }; VIEWS.set(el, v); }
 		v.zoom = R.zoom[i]; v.panX = R.px[i]; v.panY = R.py[i];
 	}
+	/* a wagon that drops out of management this measure (its data-mode
+	   switched to fixed/auto, it gained data-static, or it lost .snow-hd)
+	   returns to the author's rules here: snow-hd-live keeps the JS-mode
+	   cascade on it and the children still carry the last frame's pixel
+	   styles, so a clean exclusion would paint as a broken wagon. off()
+	   never sees it — off() only walks the current list. */
+	for (let i = 0; i < R.n; i++) {
+		const el = R.els[i];
+		if (el && els.indexOf(el) >= 0) continue;
+		if (el) el.classList.remove('snow-hd-live');
+		clearImg(R.base[i]); clearImg(R.hd[i]);
+	}
 	const n = els.length;
 	grow(n);
 	const table = global.REGIONS || null;
@@ -168,7 +180,7 @@ function measure() {
 			HD.normKey(hd.getAttribute('src') || '') !== HD.normKey(entry.hd))
 			console.warn('[snowfall-region] wagon ' + i + ': the crop element is not entry.hd');
 		/* the rect exists to place the crop. With no crop to paint the base IS
-		   the picture, so it is framed whole (cover) rather than magnified into
+		   the picture, so it is fitted whole rather than magnified into
 		   a blurry zoom of a rect nobody ever shows */
 		const src = R.hdOK[i] ? entry : null;
 		R.rx[i] = src ? num(src.x) : 0;
@@ -211,6 +223,7 @@ function measure() {
 function ready(on) {
 	if (on === readyOn || !hasDOM) return;
 	readyOn = on;
+	if (on) for (let i = 0; i < R.n; i++) R.els[i].classList.add('snow-hd-live');
 	const root = document.documentElement;
 	if (on) root.classList.add('snow-ready');
 	else root.classList.remove('snow-ready');
@@ -463,6 +476,26 @@ const api = {
 	count: function() { return R.n; },
 	/* live state for the QA probe — read-only by convention */
 	arrays: function() { return { els: R.els, base: R.base, hd: R.hd, wi: R.wi, hdOK: R.hdOK, ready: R.ready, nh: R.nh }; },
+	/* one console call for "why is nothing painted": a line per wagon with the
+	   exact values frame() decides from, plus the page-level state. Layout is
+	   never read here — style.display is what the adapter itself wrote. */
+	debug: function() {
+		const out = [];
+		for (let i = 0; i < R.n; i++) {
+			out.push('#' + i + ' managed=' + R.hdOK[i] + ' decoded=' + R.ready[i]
+				+ ' crop=' + (R.nh[i] | 0) + 'x' + (R.nhh[i] | 0)
+				+ ' base=' + (R.nb[i] | 0) + 'x' + (R.nbh[i] | 0)
+				+ ' display=' + (R.hd[i] ? R.hd[i].style.display || '(shown)' : 'no crop element')
+				+ ' rect=' + R.rx[i] + ',' + R.ry[i] + ' ' + R.rw[i] + 'x' + R.rh[i]
+				+ ' box=' + (R.lwb[i] || 0).toFixed(0) + 'x' + (R.lhb[i] || 0).toFixed(0));
+		}
+		out.push('n=' + R.n + ' of ' + document.querySelectorAll('#app .snow-bg.snow-hd').length
+			+ ' .snow-hd wagons, tableKeys=' + Object.keys(global.REGIONS || {}).length
+			+ ', jsSizing=' + (readyOn ? 1 : 0) + ', inspect=' + (inspectOn ? 1 : 0)
+			+ ', hdMath=' + hdOKmod + ', vp=' + (global.Snowfall && global.Snowfall.viewport
+				? global.Snowfall.viewport.width + 'x' + global.Snowfall.viewport.height : 'none'));
+		return out;
+	},
 	view: function(i) { return { zoom: R.zoom[i], panX: R.px[i], panY: R.py[i] }; },
 	setView: setView,
 	zoomAt: zoomAt,
@@ -476,6 +509,12 @@ const api = {
 };
 
 /* ---------------- subscribe + listener boot ---------------- */
+/* the API is exported FIRST: a classic <script> in <head> runs while
+   document.body is still null, and anything that throws below (the HUD
+   append once did) must not take the API, the gestures or the module
+   export down with it — the engine tolerates head-loading, so the
+   adapter must too */
+global.SnowfallRegion = api;
 if (hasDOM) {
 	injectCSS();
 	const S = global.Snowfall;
@@ -486,7 +525,10 @@ if (hasDOM) {
 		   re-refresh so the subscriber is never left unmeasured */
 		if (document.readyState !== 'loading') S.refresh();
 	}
-	buildHud();
+	/* the HUD appends to <body>: build now when it exists, else at
+	   DOMContentLoaded (a head-loaded page is still parsing) */
+	if (document.body) buildHud();
+	else document.addEventListener('DOMContentLoaded', buildHud);
 	window.addEventListener('wheel', onWheel, { passive: false });
 	window.addEventListener('keydown', onKey);
 	window.addEventListener('dblclick', onDbl);
@@ -497,6 +539,5 @@ if (hasDOM) {
 	window.addEventListener('touchstart', onTouchStart, { passive: true });
 	window.addEventListener('touchend', onTouchEnd, { passive: true });
 }
-global.SnowfallRegion = api;
 if (typeof module !== 'undefined' && module.exports) module.exports = api;
 })(typeof window !== 'undefined' ? window : globalThis);

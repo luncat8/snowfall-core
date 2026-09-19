@@ -10,6 +10,10 @@ const dir = __dirname;
 const gates = fs.readdirSync(dir)
 	.filter(f => /\.js$/.test(f) && f !== 'run.js')
 	.sort();
+/* the rendered-pixel gate lives in test/browser/ and self-skips (exit 0)
+	when puppeteer+Chromium are absent, so it joins the matrix unconditionally */
+if (fs.existsSync(path.join(dir, 'browser', 'check.js')))
+	gates.push(path.join('browser', 'check.js'));
 let failed = 0;
 for (const g of gates) {
 	console.log('=== ' + g + ' ===');

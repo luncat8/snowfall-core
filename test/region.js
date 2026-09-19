@@ -473,6 +473,21 @@ function fakeWagon(children, mode) {
 		A.reset(0);
 		eqv(A.view(0).zoom, 1, 'reset returns to 1');
 		eqv(A.view(0).panX, 0, 'reset drops the pan back to the rest framing');
+		/* a wagon that drops out of management mid-life (the editor flips its
+		   data-mode to fixed) must return to the author rules — class gone and
+		   child styles cleared — or the JS cascade paints a stale frame inside
+		   the engine's explicit box; switching back re-manages and repaints */
+		wags[0].dataset.mode = 'fixed';
+		A.measure();
+		eqv(A.count(), 2, 'a mode switch to fixed drops the wagon from management');
+		ok(!wags[0].classList.contains('snow-hd-live'), 'the excluded wagon loses snow-hd-live');
+		ok(!b0.style.width && !b0.style.transform && !h0.style.transform, 'its children are cleared back to the author CSS');
+		delete wags[0].dataset.mode;
+		A.measure();
+		eqv(A.count(), 3, 'switching back re-manages the wagon');
+		A.frame(0, ih, cw);
+		ok(wags[0].classList.contains('snow-hd-live'), 'the re-managed wagon gets snow-hd-live back');
+		ok(!!b0.style.width && !!b0.style.transform, 'and its children repaint from the invalidated gates');
 		/* paint once at rest so the geometry across the disable cycle below is
 		   IDENTICAL: the cycle must repaint from invalidated gates, and a
 		   cached value that happens to differ would hide a warm-cache bug */
@@ -677,6 +692,7 @@ lateRun([2, 1, 0], 'loads out of order', false);
 	};
 	doc.getElementById = id => id === 'app'
 		? { querySelectorAll: sel => sel.indexOf('snow-hd') >= 0 ? wags : { length: 0 } } : null;
+	doc.querySelectorAll = sel => sel.indexOf('snow-hd') >= 0 ? wags : [];
 	const errs = [];
 	const origErr = console.error;
 	function run(withMath) {
@@ -710,8 +726,65 @@ lateRun([2, 1, 0], 'loads out of order', false);
 	ok(rootCls.indexOf('snow-ready') < 0, 'the JS sizing class stays off');
 	const A2 = run(HD);
 	eqv(A2.count(), 1, 'the real hdregion.js passes the handshake');
+	const dbg = A2.debug();
+	ok(dbg.length === 2 && /managed=1/.test(dbg[0]) && /jsSizing=1/.test(dbg[1]),
+		'debug() reports the state the frame decides from');
 	ok(!!wags[0].kids[1].style.width, 'and the crop is laid out again');
 	ok(rootCls.indexOf('snow-ready') >= 0, 'with JS sizing on');
+}
+
+/* ---------------- boot from <head>: document.body does not exist yet ------
+	A classic <script> in <head> runs while document.body is still null. The
+	engine tolerates that placement; the adapter must too. Its boot must not
+	append to body at load, it must export the API and bind gestures anyway,
+	and mount the HUD when body arrives — a throw at boot once killed all
+	three and left a page whose crops painted but could never be touched. */
+{
+	const wags = [fakeWagon([fakeImg('img/a.png', 800, 600), fakeImg('img/a_c.png', 400, 300)])];
+	const fakeEl = () => ({
+		style: {}, classList: { add: () => {}, remove: () => {}, toggle: () => {} }, appendChild: () => {},
+		setAttribute: () => {}, querySelector: () => ({ checked: false, addEventListener: () => {} }),
+		innerHTML: '', textContent: '', id: '', hidden: false
+	});
+	let dcl = null;
+	const bodyAppends = [];
+	const doc = {
+		readyState: 'loading',
+		documentElement: Object.assign(fakeEl(), { clientWidth: 1000,
+			classList: { add: () => {}, remove: () => {}, toggle: () => {}, contains: () => false } }),
+		createElement: fakeEl, head: { appendChild: () => {} },
+		addEventListener: (t, fn) => { if (t === 'DOMContentLoaded') dcl = fn; },
+		getElementById: () => null, querySelectorAll: () => []
+	};
+	doc.body = null;
+	global.window = {
+		innerWidth: 1000, innerHeight: 700, scrollY: 0,
+		addEventListener: () => {}, removeEventListener: () => {},
+		HDRegion: HD, REGIONS: {},
+		Snowfall: {
+			default: { use: () => {} }, use: () => {}, refresh: () => {}, step: () => {},
+			wagons: { n: 0, els: [], y: [], free: [], pos: [] }, viewport: { width: 1000, height: 700 }
+		}
+	};
+	global.document = doc;
+	delete require.cache[require.resolve('../snowfall-region.js')];
+	let threw = null, A = null;
+	try { A = require('../snowfall-region.js'); } catch (e) { threw = e; }
+	ok(!threw, 'a head-loaded adapter boot does not throw while body=null', threw && String(threw));
+	ok(!!A && typeof A.count === 'function' && global.window.SnowfallRegion === A,
+		'the API and module export survive a body-less boot');
+	ok(typeof dcl === 'function', 'the HUD build defers to DOMContentLoaded');
+	/* body arrives and the document finishes parsing: HUD mounts, then a
+	   normal measure/frame cycle takes the wagon over */
+	doc.body = { appendChild: el => bodyAppends.push(el) };
+	doc.readyState = 'complete';
+	doc.getElementById = id => (id === 'app' ? { querySelectorAll: () => wags } : null);
+	if (dcl) dcl();
+	eqv(bodyAppends.length, 1, 'the HUD appends once body exists');
+	A.measure();
+	eqv(A.count(), 1, 'and the wagon is managed by the first measure after parse');
+	delete global.window;
+	delete global.document;
 }
 
 /* ---------------- static source scans ---------------- */
@@ -788,6 +861,10 @@ lateRun([2, 1, 0], 'loads out of order', false);
 	ok(!/document\.|window\.|getComputedStyle|fetch/.test(mathCode.replace(/typeof window/g, '')),
 		'hdregion is DOM-free');
 	ok(/const cap = W\.pBot\[i\] - sY - e - W\.mb\[i\];/.test(engine), 'engine has the parent-bottom clamp');
+	/* the region base is larger than the window by design; unclipped, an
+	   entering wagon's outpaint paints over the parked wagon's crop before the
+	   chain pushes it. The wagon must clip its art to its own box. */
+	ok(/\.snow-bg\{[^}]*overflow:clip/.test(engine), 'wagons clip their art to the wagon box (no outpaint bleed)');
 	ok(/pos\[i\] > cap \? cap : W\.pos\[i\]/.test(engine), 'clamp lowers pos, never raises');
 	ok(/de\.clientWidth \|\| window\.innerWidth/.test(engine), 'viewport width is clientWidth-first');
 }

@@ -1,0 +1,326 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Region cover test 1 — one HD background</title>
+<!-- Standalone check page for the 0.5.5 region adapter in cover mode.
+     Expected layout per github.com/luncat8/HD-region (hdregion.js @1a89bb7,
+     embedded below verbatim as REF): the HD crop is scaled to the LARGEST
+     size that keeps its region rect inside the window (aspect kept), the
+     outpainted low-res base follows at the SAME scale and covers everything
+     around it; the region is centred, or coverage-pinned to a window edge
+     where centring would uncover the page.
+     The art is generated so misplacement is visible: the base is a BLURRED
+     coordinate grid with a red region outline, the crop is the SHARP version
+     of exactly that rect (same grid, same labels). Correct layout = the sharp
+     grid continues the blurred grid with no offset and the red frames overlap.
+     Works from file:// — no network, no build. -->
+<style>
+	html,body{margin:0;padding:0}
+	body{font:16px/1.5 system-ui,sans-serif;background:#05070d;color:#e2e8f0;overflow-x:clip}
+	#app{position:relative;padding:0 0 0 0}
+	.card{max-width:640px;margin:0 auto;background:#0b1220e6;border:1px solid #334155;border-radius:10px;padding:16px 20px}
+	.card h1{font-size:20px;margin:0 0 8px}
+	.card p{margin:6px 0;font-size:14px;color:#cbd5e1}
+	.card code{color:#7dd3fc}
+	.fill{height:170vh;padding-top:20vh}
+	.tail{height:70vh;padding-top:12vh}
+	/* author-side no-JS fallback (the only CSS a story page must write) */
+	.snow-hd{min-height:60vh}
+	.snow-hd img{display:block;width:100%;max-height:100vh;object-fit:contain}
+	/* QA panel — outside #app so the engine never measures it */
+	#panel{position:fixed;left:8px;bottom:8px;z-index:1000;max-width:520px;max-height:70vh;overflow:auto;
+		background:#0b1220f2;border:1px solid #334155;border-radius:8px;padding:10px 12px;
+		font:11px/1.5 ui-monospace,SFMono-Regular,Menlo,monospace;color:#e2e8f0}
+	#panel h2{font-size:12px;margin:0 0 6px}
+	#panel .row{display:flex;gap:6px;align-items:baseline}
+	#panel .row b{flex:none;width:14px}
+	#panel .pass b{color:#4ade80}
+	#panel .fail b{color:#f87171}
+	#panel .wait b{color:#facc15}
+	#panel small{color:#94a3b8;word-break:break-word}
+	#panel pre{margin:8px 0 0;white-space:pre-wrap;color:#7dd3fc}
+	#panel button{margin-top:8px;font:inherit;padding:4px 10px;background:#1e293b;color:#e2e8f0;border:1px solid #475569;border-radius:6px;cursor:pointer}
+	#panel .verdict{font-weight:700;margin-top:6px}
+	#panel .verdict.pass{color:#4ade80}
+	#panel .verdict.fail{color:#f87171}
+</style>
+</head>
+<body>
+<aside id="panel"><h2>region cover check — page 1 (single background)</h2><div id="rows"><div class="row wait"><b>…</b><small>loading engine…</small></div></div><pre id="nums"></pre><button id="autoCheck" type="button">scroll to park + check</button></aside>
+
+<div id="app">
+	<div style="height:120vh;padding-top:8vh">
+		<div class="card">
+			<h1>Region cover test — 1 background, <code>data-mode="cover"</code></h1>
+			<p>Scroll down: the background parks and must show the <b>HD crop at the
+			largest size that keeps its region inside the window</b> (aspect kept),
+			with the blurred low-res base covering everything around it.</p>
+			<p>How to see correctness: the blurred grid and coordinate labels of the
+			base must continue <b>exactly</b> under the sharp grid of the crop, and
+			the red region outline on the base must sit exactly under the red frame
+			of the crop. Any offset = mispositioned.</p>
+			<p>Panel below compares rendered pixels against <code>HDRegion.finalLayout</code>
+			and, independently, against the reference math copied verbatim from
+			<code>luncat8/HD-region@1a89bb7</code>. Resize the window: it must re-fit
+			(the crop stays maximal, the base keeps covering when it can).</p>
+		</div>
+	</div>
+
+	<div class="snow-bg snow-hd" id="sceneA" data-mode="cover"></div>
+
+	<div class="fill">
+		<div class="card">
+			<p>The wagon is parked now: text scrolls over it. The panel verifies the
+			parked wagon box equals the viewport, the crop touches the window on its
+			limiting axis (max fit), and both images sit where the reference says.</p>
+		</div>
+	</div>
+	<div class="tail">
+		<div class="card"><p>End of page 1. Page 2 adds a second background and
+		re-checks the first one after the second parks.</p></div>
+	</div>
+</div>
+
+<script>
+/* ---------------- scene art: blurred base + sharp crop, one coordinate space ----------------
+   Base 1600×1000, region rect 400,200 900×600. The crop SVG uses the base's
+   coordinate system as its viewBox, so identical grid lines/labels are drawn
+   in both — correct layout means they overlap pixel-exactly. */
+(function () {
+	'use strict';
+	var BW = 1600, BH = 1000;
+	var R = { x: 400, y: 200, w: 900, h: 600 };
+	var PAL = { bg: '#0e1626', q: ['#7f1d1d', '#14532d', '#1e3a8a', '#92400e'], grid: '#e2e8f0', mark: '#ff2d55' };
+
+	function enc(s) { return 'data:image/svg+xml,' + encodeURIComponent(s); }
+	function gridLines(x0, x1, y0, y1) {
+		var s = '', x, y;
+		for (x = Math.ceil(x0 / 100) * 100; x <= x1; x += 100)
+			s += '<line x1="' + x + '" y1="' + y0 + '" x2="' + x + '" y2="' + y1 + '" stroke="' + PAL.grid
+				+ '" stroke-opacity="' + (x % 500 ? 0.28 : 0.65) + '" stroke-width="' + (x % 500 ? 2 : 5) + '"/>';
+		for (y = Math.ceil(y0 / 100) * 100; y <= y1; y += 100)
+			s += '<line x1="' + x0 + '" y1="' + y + '" x2="' + x1 + '" y2="' + y + '" stroke="' + PAL.grid
+				+ '" stroke-opacity="' + (y % 500 ? 0.28 : 0.65) + '" stroke-width="' + (y % 500 ? 2 : 5) + '"/>';
+		return s;
+	}
+	function labels(x0, x1, y0, y1) {
+		var s = '', x, y;
+		for (x = Math.ceil(x0 / 200) * 200; x <= x1; x += 200)
+			s += '<text x="' + (x + 10) + '" y="' + (y0 + 44) + '" font-family="ui-monospace,monospace" font-size="30" fill="' + PAL.grid + '">' + x + '</text>';
+		for (y = Math.max(200, Math.ceil(y0 / 200) * 200); y <= y1; y += 200)
+			s += '<text x="' + (x0 + 10) + '" y="' + (y + 44) + '" font-family="ui-monospace,monospace" font-size="30" fill="' + PAL.grid + '">' + y + '</text>';
+		return s;
+	}
+	function quadrants() {
+		return '<rect x="0" y="0" width="' + BW / 2 + '" height="' + BH / 2 + '" fill="' + PAL.q[0] + '" opacity="0.55"/>'
+			+ '<rect x="' + BW / 2 + '" y="0" width="' + BW / 2 + '" height="' + BH / 2 + '" fill="' + PAL.q[1] + '" opacity="0.55"/>'
+			+ '<rect x="0" y="' + BH / 2 + '" width="' + BW / 2 + '" height="' + BH / 2 + '" fill="' + PAL.q[2] + '" opacity="0.55"/>'
+			+ '<rect x="' + BW / 2 + '" y="' + BH / 2 + '" width="' + BW / 2 + '" height="' + BH / 2 + '" fill="' + PAL.q[3] + '" opacity="0.55"/>';
+	}
+	function crosshair() {
+		var cx = R.x + R.w / 2, cy = R.y + R.h / 2;
+		return '<line x1="' + (cx - 40) + '" y1="' + cy + '" x2="' + (cx + 40) + '" y2="' + cy + '" stroke="' + PAL.mark + '" stroke-width="6"/>'
+			+ '<line x1="' + cx + '" y1="' + (cy - 40) + '" x2="' + cx + '" y2="' + (cy + 40) + '" stroke="' + PAL.mark + '" stroke-width="6"/>';
+	}
+	var baseInner = quadrants() + gridLines(0, BW, 0, BH) + labels(0, BW, 0, BH)
+		+ '<text x="' + BW / 2 + '" y="' + (BH - 60) + '" text-anchor="middle" font-family="ui-monospace,monospace" font-size="90" fill="' + PAL.grid + '" opacity="0.3">LOW-RES BASE ' + BW + '\u00d7' + BH + '</text>';
+	var baseSVG = '<svg xmlns="http://www.w3.org/2000/svg" width="' + BW + '" height="' + BH + '" viewBox="0 0 ' + BW + ' ' + BH + '">'
+		+ '<defs><filter id="lz"><feGaussianBlur stdDeviation="7"/></filter></defs>'
+		+ '<rect width="' + BW + '" height="' + BH + '" fill="' + PAL.bg + '"/>'
+		+ '<g filter="url(#lz)">' + baseInner + '</g>'
+		/* sharp region marking so the eye knows where the crop belongs */
+		+ '<rect x="' + R.x + '" y="' + R.y + '" width="' + R.w + '" height="' + R.h + '" fill="none" stroke="' + PAL.mark + '" stroke-width="6" stroke-dasharray="22 12"/>'
+		+ '<text x="' + (R.x + 14) + '" y="' + (R.y + 46) + '" font-family="ui-monospace,monospace" font-size="32" fill="' + PAL.mark + '">REGION ' + R.x + ',' + R.y + ' ' + R.w + '\u00d7' + R.h + '</text>'
+		+ crosshair() + '</svg>';
+	/* crop = the same picture, sharp, at 2× density; viewBox IS the region rect
+	   in base coordinates, so its grid/labels continue the base's exactly */
+	var cropSVG = '<svg xmlns="http://www.w3.org/2000/svg" width="' + (R.w * 2) + '" height="' + (R.h * 2) + '" viewBox="' + R.x + ' ' + R.y + ' ' + R.w + ' ' + R.h + '">'
+		+ '<rect x="' + R.x + '" y="' + R.y + '" width="' + R.w + '" height="' + R.h + '" fill="' + PAL.bg + '"/>'
+		+ quadrants() + gridLines(R.x, R.x + R.w, R.y, R.y + R.h) + labels(R.x, R.x + R.w, R.y, R.y + R.h) + crosshair()
+		+ '<rect x="' + (R.x + 4) + '" y="' + (R.y + 4) + '" width="' + (R.w - 8) + '" height="' + (R.h - 8) + '" fill="none" stroke="' + PAL.mark + '" stroke-width="8"/>'
+		+ '<text x="' + (R.x + R.w - 14) + '" y="' + (R.y + R.h - 20) + '" text-anchor="end" font-family="ui-monospace,monospace" font-size="34" fill="#4ade80">HD CROP ' + R.w + '\u00d7' + R.h + ' @2x</text>'
+		+ '</svg>';
+	var baseSrc = enc(baseSVG), cropSrc = enc(cropSVG);
+
+	var host = document.getElementById('sceneA');
+	var i1 = document.createElement('img'); i1.src = baseSrc; i1.alt = 'Scene: blurred outpainted base ' + BW + '\u00d7' + BH;
+	var i2 = document.createElement('img'); i2.src = cropSrc; i2.alt = ''; i2.setAttribute('aria-hidden', 'true');
+	host.appendChild(i1); host.appendChild(i2);
+
+	/* regions.js role: one table keyed by base src (classic script, before the engine) */
+	window.REGIONS = {};
+	window.REGIONS[baseSrc] = { x: R.x, y: R.y, w: R.w, h: R.h, hd: cropSrc, bw: BW, bh: BH, maxZoom: 4 };
+	window.SCENE_META = { bw: BW, bh: BH, r: R };
+})();
+</script>
+<script src="hdregion.js?v=12"></script>
+<script src="snowfall.js?v=12"></script>
+<script src="snowfall-region.js?v=12"></script>
+<script>
+/* ---------------- checker: rendered page vs HDRegion vs HD-region reference ---------------- */
+(function () {
+	'use strict';
+	/* VERBATIM copy of hdregion.js from github.com/luncat8/HD-region @1a89bb7
+	   (the oracle this repo pins in test/vendor/hdregion-ref.js). It is embedded
+	   so this page proves parity live, without trusting the local file alone. */
+	var REF = (function () {
+		function clamp(v, lo, hi) { return v < lo ? lo : (v > hi ? hi : v); }
+		function baseLayout(vw, vh, bw, bh, r, zoom, out) {
+			out.s = Math.min(vw / r.w, vh / r.h) * zoom;
+			out.w = bw * out.s;
+			out.h = bh * out.s;
+			out.tx = vw / 2 - (r.x + r.w / 2) * out.s;
+			out.ty = vh / 2 - (r.y + r.h / 2) * out.s;
+			return out;
+		}
+		function finalLayout(vw, vh, bw, bh, r, view, out) {
+			baseLayout(vw, vh, bw, bh, r, view.zoom, out);
+			var x = out.tx + view.x, y = out.ty + view.y;
+			if (out.w > vw) x = clamp(x, vw - out.w, 0); else x = (vw - out.w) / 2;
+			if (out.h > vh) y = clamp(y, vh - out.h, 0); else y = (vh - out.h) / 2;
+			out.x = x;
+			out.y = y;
+			return out;
+		}
+		return { finalLayout: finalLayout };
+	})();
+
+	var raf2 = function () { return new Promise(function (res) { requestAnimationFrame(function () { requestAnimationFrame(res); }); }); };
+	var fmt = function (n) { return (Math.round(n * 100) / 100).toString(); };
+	var near = function (a, b, t) { return Math.abs(a - b) <= t; };
+	var rowsEl = document.getElementById('rows'), numsEl = document.getElementById('nums');
+
+	function parkedIndex() {
+		var wgs = window.Snowfall && Snowfall.wagons, A = SnowfallRegion.arrays();
+		if (!wgs) return -1;
+		for (var i = 0; i < A.els.length; i++) {
+			var wi = A.wi[i];
+			if (wi >= 0 && wgs.pos[wi] === 0 && wgs.free[wi] <= 0) return i;
+		}
+		return -1;
+	}
+	/* expected layout for wagon i from the SAME inputs the adapter uses */
+	function expectedOf(i) {
+		var A = SnowfallRegion.arrays(), vp = Snowfall.viewport, b = A.base[i];
+		var e = window.REGIONS[HDRegion.normKey(b.getAttribute('src') || '')];
+		var v = SnowfallRegion.view(i);
+		var exp = HDRegion.finalLayout(vp.width, vp.height, b.naturalWidth, b.naturalHeight,
+			{ x: e.x, y: e.y, w: e.w, h: e.h, maxZoom: e.maxZoom || 4 },
+			{ zoom: v.zoom, panX: v.panX, panY: v.panY }, {});
+		var ref = REF.finalLayout(vp.width, vp.height, b.naturalWidth, b.naturalHeight,
+			{ x: e.x, y: e.y, w: e.w, h: e.h }, { zoom: v.zoom, x: v.panX, y: v.panY }, {});
+		return { e: e, v: v, exp: exp, ref: ref, b: b, hd: A.hd[i], el: A.els[i] };
+	}
+	function checkParked(i) {
+		var rows = [], d = expectedOf(i), vp = Snowfall.viewport;
+		var e = d.e, exp = d.exp, ref = d.ref, b = d.b, h = d.hd, el = d.el;
+		function add(name, pass, detail) { rows.push({ name: name, pass: pass, detail: detail || '' }); }
+		var wr = el.getBoundingClientRect();
+		add('parked wagon box = viewport',
+			near(wr.left, 0, 2) && near(wr.top, 0, 2) && near(wr.width, vp.width, 2) && near(wr.height, vp.height, 2),
+			fmt(wr.left) + ',' + fmt(wr.top) + ' ' + fmt(wr.width) + '\u00d7' + fmt(wr.height) + ' vs ' + vp.width + '\u00d7' + vp.height);
+		var sw = parseFloat(b.style.width) || 0, sh = parseFloat(b.style.height) || 0;
+		var tr = /translate\(\s*(-?[\d.]+)px,\s*(-?[\d.]+)px/.exec(b.style.transform || '');
+		add('base style = HDRegion box (\u00b10.05px)',
+			!!tr && near(sw, exp.w, 0.05) && near(sh, exp.h, 0.05) && near(+tr[1], exp.x, 0.05) && near(+tr[2], exp.y, 0.05),
+			fmt(sw) + '\u00d7' + fmt(sh) + ' @ ' + (tr ? fmt(+tr[1]) + ',' + fmt(+tr[2]) : 'no transform') + ' vs ' + fmt(exp.w) + '\u00d7' + fmt(exp.h) + ' @ ' + fmt(exp.x) + ',' + fmt(exp.y));
+		var br = b.getBoundingClientRect();
+		add('base painted = HDRegion box (\u00b11.5px)',
+			near(br.left, exp.x, 1.5) && near(br.top, exp.y, 1.5) && near(br.width, exp.w, 1.5) && near(br.height, exp.h, 1.5),
+			fmt(br.left) + ',' + fmt(br.top) + ' ' + fmt(br.width) + '\u00d7' + fmt(br.height));
+		var hw = parseFloat(h.style.width) || 0, hh = parseFloat(h.style.height) || 0;
+		var trh = /translate\(\s*(-?[\d.]+)px,\s*(-?[\d.]+)px/.exec(h.style.transform || '');
+		add('crop style = region box (\u00b10.05px)',
+			!!trh && near(hw, exp.hw, 0.05) && near(hh, exp.hh, 0.05) && near(+trh[1], exp.hx, 0.05) && near(+trh[2], exp.hy, 0.05),
+			fmt(hw) + '\u00d7' + fmt(hh) + ' @ ' + (trh ? fmt(+trh[1]) + ',' + fmt(+trh[2]) : 'no transform') + ' vs ' + fmt(exp.hw) + '\u00d7' + fmt(exp.hh) + ' @ ' + fmt(exp.hx) + ',' + fmt(exp.hy));
+		var hr = h.getBoundingClientRect();
+		add('crop painted = region box (\u00b11.5px)',
+			h.style.display !== 'none' && near(hr.left, exp.hx, 1.5) && near(hr.top, exp.hy, 1.5) && near(hr.width, exp.hw, 1.5) && near(hr.height, exp.hh, 1.5),
+			fmt(hr.left) + ',' + fmt(hr.top) + ' ' + fmt(hr.width) + '\u00d7' + fmt(hr.height));
+		/* the HD-region contract itself */
+		var ra = e.w / e.h, ca = exp.hw / exp.hh;
+		add('HD crop keeps region aspect ' + fmt(ra), near(ca, ra, ra * 0.002), 'crop aspect ' + fmt(ca));
+		add('HD crop is MAXIMAL (touches window on limiting axis)',
+			exp.hw >= vp.width - 1 || exp.hh >= vp.height - 1,
+			fmt(exp.hw) + '\u00d7' + fmt(exp.hh) + ' in ' + vp.width + '\u00d7' + vp.height);
+		add('HD crop stays inside the window (fit, not cover-crop)',
+			exp.hw <= vp.width + 1 && exp.hh <= vp.height + 1,
+			fmt(exp.hw) + '\u00d7' + fmt(exp.hh));
+		if (exp.w >= vp.width - 1)
+			add('low-res base covers the window width', exp.x <= 0.5 && exp.x + exp.w >= vp.width - 0.5,
+				'base ' + fmt(exp.x) + '..' + fmt(exp.x + exp.w));
+		else add('base narrower than window \u2192 centred (reference rule)', near(exp.x, (vp.width - exp.w) / 2, 0.5), 'base x ' + fmt(exp.x));
+		if (exp.h >= vp.height - 1)
+			add('low-res base covers the window height', exp.y <= 0.5 && exp.y + exp.h >= vp.height - 0.5,
+				'base ' + fmt(exp.y) + '..' + fmt(exp.y + exp.h));
+		else add('base shorter than window \u2192 centred (reference rule)', near(exp.y, (vp.height - exp.h) / 2, 0.5), 'base y ' + fmt(exp.y));
+		/* independent residual: crop rect from the PAINTED base rect + entry fractions */
+		var fx = br.width / b.naturalWidth, fy = br.height / b.naturalHeight;
+		add('crop sits exactly on its region of the base (\u00b12px)',
+			near(hr.left, br.left + e.x * fx, 2) && near(hr.top, br.top + e.y * fy, 2)
+			&& near(hr.width, e.w * fx, 2) && near(hr.height, e.h * fy, 2),
+			'crop ' + fmt(hr.left) + ',' + fmt(hr.top) + ' vs base+' + fmt(e.x * fx) + ',' + fmt(e.y * fy));
+		add('matches luncat8/HD-region@1a89bb7 reference (1e-9)',
+			near(ref.s, exp.s, 1e-9) && near(ref.x, exp.x, 1e-9) && near(ref.y, exp.y, 1e-9)
+			&& near(ref.w, exp.w, 1e-9) && near(ref.h, exp.h, 1e-9),
+			'ref base ' + fmt(ref.x) + ',' + fmt(ref.y) + ' ' + fmt(ref.w) + '\u00d7' + fmt(ref.h) + ' s=' + fmt(ref.s));
+		return { rows: rows, d: d };
+	}
+	function render(state) {
+		rowsEl.innerHTML = '';
+		var all = true;
+		state.rows.forEach(function (r) {
+			var div = document.createElement('div');
+			div.className = 'row ' + (r.pass ? 'pass' : 'fail');
+			div.innerHTML = '<b>' + (r.pass ? '\u2713' : '\u2717') + '</b><span>' + r.name + (r.detail ? ' <small>' + r.detail + '</small>' : '') + '</span>';
+			rowsEl.appendChild(div);
+			if (!r.pass) all = false;
+		});
+		var v = document.createElement('div');
+		v.className = 'verdict ' + (all ? 'pass' : 'fail');
+		v.textContent = all ? 'PASS — cover-mode layout is the HD-region reference layout' : 'FAIL — see the red rows';
+		rowsEl.appendChild(v);
+		var d = state.d, vp = Snowfall.viewport;
+		numsEl.textContent = 'window ' + vp.width + '\u00d7' + vp.height
+			+ '  view zoom=' + fmt(d.v.zoom) + ' pan=' + fmt(d.v.panX) + ',' + fmt(d.v.panY)
+			+ '\nentry rect ' + d.e.x + ',' + d.e.y + ' ' + d.e.w + '\u00d7' + d.e.h + ' (base ' + bSize(d) + ')'
+			+ '\nbase   expected ' + box(d.exp.x, d.exp.y, d.exp.w, d.exp.h) + '  scale s=' + fmt(d.exp.s)
+			+ '\ncrop   expected ' + box(d.exp.hx, d.exp.hy, d.exp.hw, d.exp.hh);
+	}
+	function box(x, y, w, h) { return fmt(x) + ',' + fmt(y) + ' ' + fmt(w) + '\u00d7' + fmt(h); }
+	function bSize(d) { return d.b.naturalWidth + '\u00d7' + d.b.naturalHeight; }
+	function waiting(msg) {
+		rowsEl.innerHTML = '<div class="row wait"><b>\u2026</b><span>' + msg + '</span></div>';
+		numsEl.textContent = '';
+	}
+	function update(force) {
+		if (!window.Snowfall || !window.SnowfallRegion || !window.HDRegion) { waiting('engine not loaded'); return; }
+		var A = SnowfallRegion.arrays();
+		if (!A.els.length) { waiting('adapter manages no .snow-hd wagon'); return; }
+		var b = A.base[0];
+		if (!(b.naturalWidth > 0) || !(A.hd[0] && A.hd[0].naturalWidth > 0)) { waiting('images still decoding\u2026'); return; }
+		var i = parkedIndex();
+		if (i < 0) {
+			if (force) waiting('not parked \u2014 scroll the background to the top first');
+			else waiting('scroll down until the background parks (or press the check button)');
+			return;
+		}
+		render(checkParked(i));
+	}
+	document.getElementById('autoCheck').addEventListener('click', function () {
+		var wgs = Snowfall.wagons, A = SnowfallRegion.arrays();
+		window.scrollTo(0, Math.round(wgs.y[A.wi[0]]) + 1);
+		raf2().then(function () { return raf2(); }).then(function () { update(true); });
+	});
+	var queued = false;
+	function soon() { if (queued) return; queued = true; requestAnimationFrame(function () { queued = false; update(false); }); }
+	window.addEventListener('scroll', soon, { passive: true });
+	window.addEventListener('resize', soon);
+	if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', soon);
+	else soon();
+})();
+</script>
+</body>
+</html>

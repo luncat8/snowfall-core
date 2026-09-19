@@ -167,7 +167,13 @@ function ease01(t) {
 	return t < 0.5 ? 2 * t * t : 1 - Math.pow(-2 * t + 2, 2) / 2;
 }
 
-var CSS = '.snow-bg{position:sticky;top:0;z-index:-1;pointer-events:none;background-repeat:no-repeat;background-position:center}'
+	/* overflow:clip keeps a wagon's art inside its own box: the region base is
+	   deliberately larger than the window while parked, and unclipped it paints
+	   past the wagon edge — an entering wagon's outpaint then covers the
+	   parked wagon's HD crop before the chain starts pushing it. Clipping the
+	   sticky element itself never touches its stickiness (only an ANCESTOR's
+	   overflow could), and a plain background-image was always inside the box. */
+	var CSS = '.snow-bg{position:sticky;top:0;z-index:-1;pointer-events:none;overflow:clip;background-repeat:no-repeat;background-position:center}'
 	+ '.snow-bg[data-mode=tiled]{background-repeat:repeat}'
 	+ '.snow-bg[data-mode=cover]{background-size:cover}'
 	+ '.snow-bg[data-mode=contain]{background-size:contain}'

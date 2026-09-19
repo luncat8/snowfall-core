@@ -35,7 +35,7 @@ function hex3(rgb) {
 	return '#' + h(rgb[0]) + h(rgb[1]) + h(rgb[2]);
 }
 function rootCls() {
-	return (document.documentElement.className || '').split(/\s+/).filter(c => c && c !== 'snow-off').join(' ');
+	return (document.documentElement.className || '').split(/\s+/).filter(c => c && c !== 'snow-off').sort().join(' ');
 }
 /* tolerant transform parse: engines normalize translate3d spacing differently */
 function parseT(el) {
@@ -48,7 +48,7 @@ function parseT(el) {
 
 /* ---------------- config in location.hash ---------------- */
 const IDS = ['preset', 'n', 'bgs', 'len', 'gap', 'flow', 'mode', 'size', 'dir', 'nest', 'stick'];
-const CHECKS = ['style', 'events', 'exampleGradient', 'gutter', 'hudOn', 'regions', 'realScenes'];
+const CHECKS = ['style', 'events', 'exampleGradient', 'gutter', 'hudOn', 'regions', 'realScenes', 'regionCases'];
 let SEED = 20260917;
 function getCfg() {
 	const c = { seed: SEED };
@@ -59,6 +59,7 @@ function getCfg() {
 function setControls(c) {
 	for (const id of IDS) if (c[id] !== undefined && $(id)) $(id).value = c[id];
 	for (const id of CHECKS) if (c[id] !== undefined && $(id)) $(id).checked = !!+c[id];
+	if (+c.realScenes) $('regions').checked = true;
 	if (c.seed !== undefined) SEED = c.seed >>> 0;
 	$('nO').textContent = $('n').value;
 	if ($('bgsO')) $('bgsO').textContent = $('bgs').value;
@@ -182,12 +183,14 @@ function scriptsHTML(k, cfg) {
 		+ '<script type="txt" event="end">Snowlog("ch' + k + ' end")<\/script>'
 		+ '<script type="txt" event="skip">Snowlog("ch' + k + ' skip")<\/script>';
 	if (k === 1) s += '<script type="txt" event="center,parked">Snowlog("ch1 center+parked")<\/script>';
-	if (k === 1) s += '<script type="txt" event="view">let =<\/script>';
 	return s;
 }
 function applyPreset(name) {
 	const set = (id, v) => { $(id).value = v; };
-	if (name === 'mono') {
+	if (name === 'mixed') {
+		set('len', 'mono'); set('gap', 'mixed'); set('flow', 'mixed');
+		set('mode', 'mixed'); set('size', 'mixed'); set('dir', 'none'); set('nest', 'both');
+	} else if (name === 'mono') {
 		set('len', 'mono'); set('gap', 'same'); set('flow', 'screen');
 		set('mode', 'cover'); set('size', '512'); set('dir', 'none'); set('nest', 'section');
 	} else if (name === 'tight') {
@@ -243,6 +246,11 @@ function cleanClone(node) {
 		for (const key of Object.keys(DROP_STYLES)) probe.style.removeProperty(key);
 		if (probe.getAttribute('style')) out.setAttribute('style', probe.getAttribute('style'));
 	}
+	if (node.classList.contains('snow-hd-live')) out.classList.remove('snow-hd-live');
+	if (node.tagName === 'IMG' && node.parentElement && node.parentElement.classList.contains('snow-hd')) {
+		out.style.removeProperty('display');
+		if (!out.getAttribute('style')) out.removeAttribute('style');
+	}
 	for (const child of Array.from(node.childNodes)) { const copy = cleanClone(child); if (copy) out.appendChild(copy); }
 	return out;
 }
@@ -260,6 +268,7 @@ function serializeNode(node, depth) {
 	let open = '<' + tag;
 	for (const a of Array.from(node.attributes)) open += ' ' + a.name + '="' + escapeHTML(a.value) + '"';
 	open += '>';
+	if (VOID_TAGS[tag]) return pad + open;
 	if (!node.children.length) return pad + open + serializeText(tag, node.textContent) + '</' + tag + '>';
 	let text = pad + open;
 	for (const child of Array.from(node.childNodes)) {
@@ -329,65 +338,39 @@ function sourceVisual(source, fallback, pal, mode, size, tag) {
 	const raw = wagonVisual(pal, mode, size, tag);
 	return { src:raw, image:"url('"+raw+"')", source:'' };
 }
-/* region wagons (0.5.5): two data-URI <img> children + an in-memory REGIONS
-   entry — no files, no network, so QA runs from a double-clicked index.html.
-   Base and crop are ONE draw: the crop is the base's own rect at 2×, the base
-   is that same picture blurred, so the quality step and any misalignment are
-   both visible to the eye and not only in numbers. The rect comes from a
-   private rng keyed by the tag, so turning `regions` on changes no wagon's
-   geometry and the on/off slow pass still compares draw for draw.
-   Chapter parity picks the data case, so one story shows all three: ch 2, 5, 8
-   get NO entry (the whole-base fallback), ch 3, 6 an entry WITHOUT hd (the crop
-   <img> is there and loaded, yet must stay hidden), the rest a full entry.
-   A pasted example URL becomes the base with NO entry on purpose too: its
-   pixel size is unknown in markup space, so it is the same fallback path.
-   `real scenes` swaps the generated pair for the reference book's own files in
-   img/ (HD-region's scenes 1 and 3, filler with a smeared hole plus the 1:1
-   crop, rects transcribed), so the page can be judged against the thing it is
-   meant to reproduce — and `save regions.js` then writes a regions.js that is
-   valid for a real book, because the keys are the shipped paths. */
+/* Region demos use complete base/crop pairs. Missing-entry fixtures are opt-in
+   QA cases, never a surprise in the normal story. Real files may be reused:
+   a REGIONS key must have one consistent rect/crop, not one exclusive wagon. */
 const REGION_BASE_W = 1600, REGION_BASE_H = 1000;
 const REAL_SCENES = [
 	{ base: 'img/1.avif', hd: 'img/1_c.avif', x: 477, y: 239, w: 804, h: 1056, bw: 1920, bh: 1536 },
 	{ base: 'img/3.avif', hd: 'img/3_c.avif', x: 476, y: 101, w: 1016, h: 900, bw: 1984, bh: 1152 }
 ];
-/* REAL_SCENES[i] mounted twice would be TWO wagons on ONE key: the table is
-   indexed by base src, so the second write would re-rect the first wagon's crop
-   (and a `nohd` rotation would delete the other wagon's hd). One scene per
-   wagon, claimed here and released only when build() resets the table. */
-const REAL_CLAIMED = [];
-function claimRealScene() {
-	for (let i = 0; i < REAL_SCENES.length; i++) {
-		if (REAL_CLAIMED.indexOf(i) < 0) { REAL_CLAIMED.push(i); return REAL_SCENES[i]; }
-	}
-	return null;
+let realSceneCursor = 0;
+function nextRealScene() {
+	return REAL_SCENES[realSceneCursor++ % REAL_SCENES.length];
 }
 function regionEntryCase(k) { return k % 3 === 2 ? 'none' : k % 3 === 0 ? 'nohd' : 'full'; }
-function regionWagonInner(k, j, pal, visual, real) {
-	if (!visual.src) return '';
+function regionWagonInner(k, j, pal, visual, real, cases, seed) {
+	if (!visual.src && !real) return '';
 	if (visual.source) return '<img src="' + escapeHTML(visual.src) + '" alt="Scene ' + k + '.' + j + '">';
-	const ec = regionEntryCase(k);
+	const ec = cases ? regionEntryCase(k) : 'full';
 	const alt = 'Scene ' + k + '.' + j;
-	if (real) {
-		const s = claimRealScene();
-		/* no unclaimed file left: fall through to generated art, so the wagon
-		   still gets a picture and a key of its own instead of an empty box */
-		if (s) {
-			if (ec === 'none') return '<img src="' + s.base + '" alt="' + alt + '">';
-			const entry = { x: s.x, y: s.y, w: s.w, h: s.h, hd: s.hd, bw: s.bw, bh: s.bh };
-			if (ec === 'nohd') delete entry.hd;
-			(window.REGIONS = window.REGIONS || {})[s.base] = entry;
-			return '<img src="' + s.base + '" alt="' + alt + ' outpainted base">'
-				+ '<img src="' + s.hd + '" alt="" aria-hidden="true">';
-		}
+	if (real && ec === 'full') {
+		const s = nextRealScene();
+		(window.REGIONS = window.REGIONS || {})[s.base] = {
+			x: s.x, y: s.y, w: s.w, h: s.h, hd: s.hd, bw: s.bw, bh: s.bh
+		};
+		return '<img src="' + s.base + '" alt="' + alt + ' outpainted base">'
+			+ '<img src="' + s.hd + '" alt="" aria-hidden="true">';
 	}
-	const tag = 'ch' + k + '·bg' + j;
+	const tag = 'ch' + k + '·bg' + j + (seed ? '·seed' + seed : '');
 	const rng = mulberry32(hash32(tag + '·rect'));
 	const bw = REGION_BASE_W, bh = REGION_BASE_H;
 	const rw = 480 + Math.floor(rng() * 6) * 120, rh = 320 + Math.floor(rng() * 4) * 120;
 	const rx = Math.round(rng() * (bw - rw)), ry = Math.round(rng() * (bh - rh));
 	const rect = { x: rx, y: ry, w: rw, h: rh, bw: bw, bh: bh };
-	const raw = artURI(bw, bh, pal, tag, false, rect, ec === 'none' ? '' : 'hole');
+	const raw = artURI(bw, bh, pal, tag, false, rect, ec === 'full' ? 'hole' : '');
 	const base = '<img src="' + escapeHTML(raw) + '" alt="' + alt + ' outpainted base">';
 	if (ec === 'none') return base;
 	const hd = artURI(rw, rh, pal, tag, false, rect, 'crop');
@@ -404,12 +387,13 @@ function templateWagonHTML(k, j, cfg, rng, source, pal) {
 	const visual = sourceVisual(source, !!cfg.exampleGradient, pal, cfg.regions ? 'cover' : mode, size, 'ch'+k+'·bg'+j);
 	/* a region wagon needs an actual picture — without one it would be a
 	   managed nothing, so the class stays off and it remains a plain wagon */
-	const isHd = !!(cfg.regions && visual.src);
+	const isHd = !!(cfg.regions && (visual.src || cfg.realScenes));
 	let at = ' class="snow-bg'+(isHd ? ' snow-hd' : '')+'" data-mode="'+mode+'" data-gap="'+templateGap(cfg,rng)+'"';
+	at += ' data-demo-bg="' + j + '"';
 	if (mode === 'fixed' || mode === 'auto') at += ' data-size="'+size+'"';
 	if (dir !== 'top') at += ' data-dir="'+dir+'"';
 	if (visual.source) at += ' data-source="'+escapeHTML(visual.source)+'"';
-	if (isHd) return '<div'+at+'>' + regionWagonInner(k, j, pal, visual, cfg.realScenes ? 'real' : '') + '</div>';
+	if (isHd) return '<div'+at+'>' + regionWagonInner(k, j, pal, visual, cfg.realScenes, cfg.regionCases, cfg.seed) + '</div>';
 	if (visual.image) at += ' style="background-image:'+escapeHTML(visual.image)+';"';
 	return '<div'+at+'></div>';
 }
@@ -430,6 +414,10 @@ function lineBlock(count, rng) {
 	for (let j = 0; j < count; j++) s += '<p class="ln">' + mockText(rng) + '</p>';
 	return s;
 }
+function sceneCopy(count, cfg, rng) {
+	const text = lineBlock(count, rng);
+	return cfg.preset === 'tight' ? text : '<div class="scene-copy">' + text + '</div>';
+}
 function chapterHeadHTML(k) {
 	return '<div class="chapter-head"><span class="kicker">chapter</span><h4 class="n">' + k + '</h4>'
 		+ '<span class="name">' + CHAPTER_NAMES[(k - 1) % CHAPTER_NAMES.length] + '</span></div>';
@@ -446,7 +434,7 @@ function templateChapterHTML(k, cfg, rng, sources, cursor) {
 	let body = chapterHeadHTML(k) + lineBlock(before, rng);
 	if (cfg.stick === 'top' || cfg.stick === 'both') body += stickHTML(k, 'top', rng);
 	for (let j = 1; j <= +cfg.bgs; j++) {
-		body += templateWagonHTML(k, j, cfg, rng, sources[cursor.i++] || '', pal) + lineBlock(per, rng);
+		body += templateWagonHTML(k, j, cfg, rng, sources[cursor.i++] || '', pal) + sceneCopy(per, cfg, rng);
 	}
 	if (!+cfg.bgs) body += lineBlock(per, rng);
 	if (cfg.stick === 'bottom' || cfg.stick === 'both') body += stickHTML(k, 'bottom', rng);
@@ -459,8 +447,8 @@ function templateChapterHTML(k, cfg, rng, sources, cursor) {
 	return '<section' + (cfg.style ? styleAttrs(k, pal) : '') + '>' + body + '</section>';
 }
 function build() {
-	flushSource(); const cfg=getCfg(), rng=mulberry32(SEED), sources=parseExampleImages($('exampleImages').value), cursor={i:0}, parts=[];
-	window.REGIONS = {}; REAL_CLAIMED.length = 0;
+	stopAuto(); flushSource(); const cfg=getCfg(), rng=mulberry32(SEED), sources=parseExampleImages($('exampleImages').value), cursor={i:0}, parts=[];
+	window.REGIONS = {}; realSceneCursor = 0;
 	for (let k=1;k<=clamp(+cfg.n||1,1,12);k++) parts.push(templateChapterHTML(k,cfg,rng,sources,cursor));
 	$('app').innerHTML=parts.join('')+'<div class="tail"></div>'; LOG.length=0; $('qa').innerHTML=''; $('jump').max=chapters().length||1;
 	window.scrollTo(0,0); writeHash(); engRefresh(); writeSource(false);
@@ -498,10 +486,12 @@ function addBackground() {
 		const pal = PALETTE[(chapters().indexOf(h)) % PALETTE.length];
 		const rng = mulberry32(SEED + wagons().length);
 		const box = document.createElement('div');
-		box.innerHTML = templateWagonHTML(+h.textContent||1, wagons().length+1, cfg, rng, '', pal) + lineBlock(1, rng);
+		const all = wagons(), j = Math.max(all.length, ...all.map(el => +el.dataset.demoBg || 0)) + 1;
+		box.innerHTML = templateWagonHTML(+h.textContent||1, j, cfg, rng, '', pal) + sceneCopy(1, cfg, rng);
+		const added = box.querySelector('.snow-bg');
 		const end = chapterEndNode(section, h);
 		while (box.firstChild) section.insertBefore(box.firstChild, end);
-		selectedBg = Array.from(section.querySelectorAll('.snow-bg')).slice(-1)[0];
+		selectedBg = added;
 	});
 }
 const BG_FIELDS = [
@@ -519,13 +509,44 @@ const SCENE_FIELDS = [
 	{ key:'stickTop', label:'top label', type:'text' },
 	{ key:'stickBottom', label:'bottom label', type:'text' }
 ];
+/* Scene target for the inspector: a chapter's settings live on its
+   <section> — or, for flat chapters, on the zero-size <i class="snow-fg">
+   carrier that precedes the chapter head (0.5.0 plan: morph anchors bind to
+   the carrier for flat chapters). Null when the chapter has neither. */
+function sceneTarget(heading) {
+	const sec = heading.closest('section');
+	if (sec) return sec;
+	const head = heading.closest('.chapter-head') || heading.parentElement;
+	const prev = head ? head.previousElementSibling : null;
+	return prev && prev.classList.contains('snow-fg') ? prev : null;
+}
+/* flat chapters have no container: their sticks live among the loose
+   siblings after the carrier, up to the next chapter's start */
+function flatRun(carrier) {
+	const els = [];
+	let n = carrier.nextElementSibling;
+	if (n && n.classList.contains('chapter-head')) n = n.nextElementSibling;
+	for (; n; n = n.nextElementSibling) {
+		if (n.classList.contains('snow-fg') || n.tagName === 'SECTION'
+			|| n.classList.contains('chapter-head') || n.classList.contains('tail')) break;
+		els.push(n);
+	}
+	return els;
+}
+function chapterStick(el, side) {
+	if (el.tagName === 'I' && el.classList.contains('snow-fg')) {
+		const run = flatRun(el);
+		for (const n of run) if (n.classList.contains('snow-stick') && (n.dataset.park || '').indexOf(side) === 0) return n;
+		return null;
+	}
+	return el.querySelector('.snow-stick[data-park^="' + side + '"]');
+}
 function fieldValue(el, key) {
 	if (key === 'source') return el.classList.contains('snow-hd')
 		? (el.querySelector('img') ? el.querySelector('img').getAttribute('src') : '')
 		: (el.dataset.source || '');
 	if (key === 'stickTop' || key === 'stickBottom') {
-		const side = key === 'stickTop' ? 'top' : 'bottom';
-		const stick = el.querySelector('.snow-stick[data-park^="' + side + '"]');
+		const stick = chapterStick(el, key === 'stickTop' ? 'top' : 'bottom');
 		return stick ? stick.textContent : '';
 	}
 	return el.getAttribute('data-' + key) || '';
@@ -614,7 +635,7 @@ function updateInspector() {
 		: 'No scene at reading line';
 	$('backgroundTitle').textContent = bg ? 'background ' + (wagons().indexOf(bg) + 1) : 'No background at reading line';
 	$('sceneFields').replaceChildren(); $('backgroundFields').replaceChildren();
-	const scene = heading ? heading.closest('section') : null;
+	const scene = heading ? sceneTarget(heading) : null;
 	if (scene) for (const field of SCENE_FIELDS) $('sceneFields').appendChild(makeEditorField(scene, field));
 	if (bg) for (const field of BG_FIELDS) $('backgroundFields').appendChild(makeEditorField(bg, field));
 }
@@ -635,9 +656,17 @@ function applyInspector(e) {
 		}
 		if (key === 'stickTop' || key === 'stickBottom') {
 			const side = key === 'stickTop' ? 'top' : 'bottom';
-			let stick = el.querySelector('.snow-stick[data-park^="' + side + '"]');
+			let stick = chapterStick(el, side);
 			if (!value && stick) { stick.remove(); return; }
-			if (!stick) { stick = document.createElement('div'); stick.className = 'snow-stick'; stick.dataset.park = side; el.insertBefore(stick, side === 'top' ? el.children[1] : null); }
+			if (!stick) {
+				stick = document.createElement('div'); stick.className = 'snow-stick'; stick.dataset.park = side;
+				if (el.tagName === 'I' && el.classList.contains('snow-fg')) {
+					const run = flatRun(el);
+					if (side === 'top' && el.nextElementSibling && el.nextElementSibling.classList.contains('chapter-head')) el.nextElementSibling.after(stick);
+					else if (run.length) run[run.length - 1].after(stick);
+					else el.after(stick);
+				} else el.insertBefore(stick, side === 'top' ? el.children[1] : null);
+			}
 			stick.textContent = value; return;
 		}
 		if (value) el.setAttribute('data-' + key, value); else el.removeAttribute('data-' + key);
@@ -654,7 +683,7 @@ function applyLayout() {
 	engRefresh();
 }
 function headLines(){if(headLineCache)return headLineCache;headLineCache=[];$('src').value.split('\n').forEach((line,i)=>{if(/<h4\b[^>]*class="[^"]*\bn\b/.test(line))headLineCache.push(i);});return headLineCache;}
-function syncPreviewToSource(){if(!$('syncScroll').checked||qaBusy||document.activeElement===$('src')||scrollDriver==='source'&&Date.now()<driverUntil)return;const hs=chapters();if(!selectedHeading||!hs.length)return;const i=hs.indexOf(selectedHeading),lines=headLines();if(i<0||!lines[i])return;paneQuietUntil=Date.now()+300;$('src').scrollTop=Math.max(0,lines[i]*18-$('src').clientHeight/4);}
+function syncPreviewToSource(){if(!$('syncScroll').checked||qaBusy||document.activeElement===$('src')||scrollDriver==='source'&&Date.now()<driverUntil)return;const hs=chapters();if(!selectedHeading||!hs.length)return;const i=hs.indexOf(selectedHeading),lines=headLines();if(i<0||lines[i]===undefined)return;paneQuietUntil=Date.now()+300;$('src').scrollTop=Math.max(0,lines[i]*18-$('src').clientHeight/4);}
 function copyTemplate(){flushSource();writeSource(true);const text=$('src').value,done=ok=>sourceStatus(ok?'copied template HTML':'copy blocked · select source manually',!ok);if(navigator.clipboard&&navigator.clipboard.writeText)navigator.clipboard.writeText(text).then(()=>done(true),()=>done(fallbackCopy(text)));else done(fallbackCopy(text));}
 /* the harness's in-memory REGIONS in the real regions.js format — GENERATED
    block rewritten, MANUAL block preserved: what the asset pipeline writes. */
@@ -680,7 +709,7 @@ function saveRegionsFile(){
 }
 
 /* ---------------- diagnostics @10Hz ---------------- */
-let frames = 0, worstMs = 0, lastT = 0;
+let frames = 0, worstMs = 0, lastT = 0, lastFpsSample = performance.now();
 function fpsLoop(t) {
 	if (lastT) { frames++; if (t - lastT > worstMs) worstMs = t - lastT; }
 	lastT = t;
@@ -709,7 +738,9 @@ function diagTick() {
 			+ ' pushed:' + (d.pushed === undefined ? '—' : d.pushed)
 			+ ' writes:' + (d.writes === undefined ? '—' : d.writes);
 	}
-	const fps = (frames * 10 / 10).toFixed(0);
+	const now = performance.now(), elapsed = now - lastFpsSample;
+	const fps = elapsed > 0 ? (frames * 1000 / elapsed).toFixed(0) : '—';
+	lastFpsSample = now;
 	let theme = 'theme —';
 	if (hasEng() && Snowfall.morph && Snowfall.morph.n) {
 		const dd = Snowfall.debug || {};
@@ -721,7 +752,7 @@ function diagTick() {
 	}
 	$('dstats').textContent = 'scrollY ' + y + ' · vh ' + vh + ' · doc ' + docH
 		+ '\n#bg ' + n + ' · ' + eng + ' · ' + act
-		+ '\nfps ' + fps + ' · worst ' + worstMs.toFixed(1) + 'ms'
+		+ '\nfps ' + fps + ' · max frame gap ' + worstMs.toFixed(1) + 'ms'
 		+ '\nevents ' + logCounts() + ' · total ' + LOG.length
 		+ '\n' + theme
 		+ '\n#' + location.hash.replace(/^#/, '');
@@ -847,6 +878,12 @@ async function qReversibility() {
 	if (tdiffer) return row('reversibility', 0, tdiffer + ' theme snapshot(s) differ for equal scrollY');
 	return row('reversibility', 1, N + '/' + N + ' identical (transforms + theme)' + (hasEng() ? '' : ' (no engine — static)'));
 }
+/* Only intersecting pixels inside the viewport matter, not offscreen order. */
+function visibleOverlap(a, b, vw, vh) {
+	const width = Math.min(a.right, b.right, vw) - Math.max(a.left, b.left, 0);
+	if (width <= 1) return 0;
+	return Math.max(0, Math.min(a.bottom, b.bottom, vh) - Math.max(a.top, b.top, 0));
+}
 async function qOverlap() {
 	const els = wagons();
 	if (els.length < 2) return row('overlap', -1, 'need 2+ wagons');
@@ -857,13 +894,18 @@ async function qOverlap() {
 		setY(Math.round(mx * k / (N - 1))); await raf2();
 		for (let i = 0; i < els.length - 1; i++) {
 			if ((els[i].dataset.dir || 'top') !== 'top') continue;
-			const a = els[i].getBoundingClientRect(), b = els[i + 1].getBoundingClientRect();
-			const ov = a.bottom - b.top;
-			if (ov > worst) { worst = ov; at = Math.round(window.scrollY); }
+			const a = els[i].getBoundingClientRect();
+			for (let j = i + 1; j < els.length; j++) {
+				/* Lateral/bottom exits may overlap intentionally. */
+				if ((els[j].dataset.dir || 'top') !== 'top') continue;
+				const b = els[j].getBoundingClientRect();
+				const ov = visibleOverlap(a, b, document.documentElement.clientWidth, window.innerHeight);
+				if (ov > worst) { worst = ov; at = Math.round(window.scrollY); }
+			}
 		}
 	}
-	if (worst > 1) return row('overlap', 0, 'overlap ' + worst.toFixed(1) + 'px at scrollY ' + at);
-	return row('overlap', 1, 'no overlap at ' + N + ' positions' + (hasEng() ? '' : ' (no engine — static)'));
+	if (worst > 1) return row('overlap', 0, 'visible overlap ' + worst.toFixed(1) + 'px at scrollY ' + at);
+	return row('overlap', 1, 'no visible overlap between top exits at ' + N + ' positions' + (hasEng() ? '' : ' (no engine — static)'));
 }
 async function qAnchorAlign() {
 	let g = geom();
@@ -930,6 +972,11 @@ function parkOffset(el) {
 	}
 	return { side, off };
 }
+function storyHitAt(x, y) {
+	const app = $('app');
+	/* Editor chrome is intentionally above the story; keep its drawers open. */
+	return document.elementsFromPoint(x, y).find(el => app.contains(el));
+}
 async function qStickSlots() {
 	const sticks = Array.from(document.querySelectorAll('#app .snow-stick[data-park]'));
 	if (!sticks.length) return row('stickSlots', -1, 'no sticks (stick=off?)');
@@ -958,7 +1005,7 @@ async function qStickSlots() {
 			checked++;
 			const wantT = Math.max(eTop - window.scrollY, off, scope.getBoundingClientRect().top + padT + mT);
 			if (Math.abs(r.top - wantT) > 2) { bad.push('top holds at ' + r.top.toFixed(1) + ', want ' + wantT.toFixed(1)); continue; }
-			const hit = document.elementFromPoint(clamp(r.left + r.width / 2, 0, window.innerWidth - 1), clamp(r.top + r.height / 2, 0, vh - 1));
+			const hit = storyHitAt(clamp(r.left + r.width / 2, 0, window.innerWidth - 1), clamp(r.top + r.height / 2, 0, vh - 1));
 			if (!hit || !hit.closest || !hit.closest('.snow-stick')) bad.push('top covered by ' + (hit ? hit.className || hit.tagName : 'nothing'));
 		} else {
 			if (eTop - sTop < 160) continue;
@@ -967,13 +1014,13 @@ async function qStickSlots() {
 			checked++;
 			const want = Math.min(eTop + eH - window.scrollY, vh - off, scope.getBoundingClientRect().bottom - padB - mB);
 			if (Math.abs(r.bottom - want) > 2) { bad.push('bottom holds at ' + r.bottom.toFixed(1) + ', want ' + want.toFixed(1)); continue; }
-			const hit = document.elementFromPoint(clamp(r.left + r.width / 2, 0, window.innerWidth - 1), clamp(r.top + r.height / 2, 0, vh - 1));
+			const hit = storyHitAt(clamp(r.left + r.width / 2, 0, window.innerWidth - 1), clamp(r.top + r.height / 2, 0, vh - 1));
 			if (!hit || !hit.closest || !hit.closest('.snow-stick')) bad.push('bottom covered by ' + (hit ? hit.className || hit.tagName : 'nothing'));
 		}
 	}
 	if (!checked) return row('stickSlots', -1, 'chapters too short to engage sticks');
 	if (bad.length) return row('stickSlots', 0, bad.slice(0, 4).join('; '));
-	return row('stickSlots', 1, checked + ' stick(s) hold their slots above wagons');
+	return row('stickSlots', 1, checked + ' stick(s) hold their slots in the story (editor overlays excluded)');
 }
 function logTable() {
 	const t = {};
@@ -1021,16 +1068,23 @@ async function qEvents() {
 	const everParkedAt = (aY, w, Wy, Ex) => {
 		if (w < 0) return false;
 		const n = Wy.length, free = new Array(n), pos = new Array(n);
+		const el = Snowfall.wagons.els[w], par = el.parentElement, css = getComputedStyle(par);
+		const cap = par.getBoundingClientRect().bottom + window.scrollY
+			- (parseFloat(css.paddingBottom) || 0) - (parseFloat(css.borderBottomWidth) || 0)
+			- Ex[w] - (parseFloat(el.style.marginBottom) || 0);
 		for (const sY of slowSamples()) {
 			const d = aY - sY;
 			if (d >= vh || d < 0) continue;
 			for (let i = 0; i < n; i++) free[i] = Wy[i] - sY;
 			Snowfall.chain(n, free, Ex, pos);
-			if (pos[w] === 0 && free[w] <= 0) return true;
+			if (pos[w] === 0 && free[w] <= 0 && cap >= sY) return true;
 		}
 		return false;
 	};
 	let thChecked = 0, thSkipped = 0;
+	const broken = document.createElement('script');
+	broken.type = 'txt'; broken.setAttribute('event', 'view'); broken.textContent = 'let =';
+	$('app').appendChild(broken);
 	try {
 		setY(Math.round(mx / 2)); await raf2();
 		LOG.length = 0;
@@ -1070,13 +1124,12 @@ async function qEvents() {
 			}
 		}
 		if (expSet['1']) {
-			if ((slow[1] || {})['center+parked'] !== 2) bad.push('ch1 center+parked×' + ((slow[1] || {})['center+parked'] || 0) + ', want 2');
-			const ic = slowLog.indexOf('ch1 center'), ip = slowLog.indexOf('ch1 parked');
-			if (ic < 0 || ip < 0) bad.push('ch1 center/parked missing for order check');
-			else {
-				if (slowLog[ic + 1] !== 'ch1 center+parked') bad.push('ch1 center order: want center+parked right after center');
-				if (slowLog[ip + 1] !== 'ch1 center+parked') bad.push('ch1 parked order: want center+parked right after parked');
-				if (ic + 1 === ip + 1) bad.push('ch1 center/parked share one center+parked slot');
+			const c = slow[1] || {}, want = (c.center || 0) + (c.parked || 0);
+			if ((c['center+parked'] || 0) !== want) bad.push('ch1 center+parked count differs from its two events');
+			for (const event of ['center', 'parked']) {
+				const i = slowLog.indexOf('ch1 ' + event);
+				if (i >= 0 && slowLog[i + 1] !== 'ch1 center+parked')
+					bad.push('ch1 ' + event + ' order: want center+parked immediately after it');
 			}
 		}
 		if (w0 && w1) {
@@ -1112,8 +1165,10 @@ async function qEvents() {
 			if (fl & 4) { if (pc2) bad.push('ch' + k + ' parked×' + pc2 + ' (slow, already seen)'); }
 			else if (pc2 !== 1 && (pc2 !== 0 || everParkedAt(Ay0[j], Aw0[j], Wy0, Ex0))) bad.push('ch' + k + ' parked×' + pc2 + ' (slow, re-armed)');
 		}
-		if (expSet['1'] && Ay0.length && Ay0[0] > vh + hyst && (slow2[1] || {})['center+parked'] !== 2)
-			bad.push('ch1 center+parked×' + ((slow2[1] || {})['center+parked'] || 0) + ' (re-arm, want 2)');
+		if (expSet['1']) {
+			const c = slow2[1] || {}, want = (c.center || 0) + (c.parked || 0);
+			if ((c['center+parked'] || 0) !== want) bad.push('ch1 center+parked count differs after re-arm');
+		}
 		setY(0); await raf2();
 		LOG.length = 0;
 		doRefresh(true);
@@ -1244,6 +1299,8 @@ async function qEvents() {
 		}
 		if (errCount !== refreshes) bad.push('broken snippet errors ' + errCount + '× for ' + refreshes + ' refreshes (want 1 per refresh)');
 	} finally {
+		if (broken.__snowA) broken.__snowA.remove();
+		broken.remove();
 		if (hasEng() && Snowfall.options) { Snowfall.options.wagons = origW; Snowfall.options.parkedAsView = origA; }
 		try { engRefresh(); } catch (_e) {}
 		console.error = origErr;
@@ -1398,7 +1455,7 @@ async function qMorph() {
    base child must land on the layout box, and the crop must cover the base's
    own region sub-rect — that last residual taken from the base rect and the
    entry alone, with no second opinion from the math. Plus the fit policy (the
-   art, not the filler, fills the window; a wagon with no crop to paint covers),
+   crop fits the window; a wagon with no crop to paint fits the whole base),
    the JS-mode rules really applying to the children, and a disable/enable round
    trip that must repaint them from nothing. Simulated viewport shapes belong to
    the node gate: a GUI probe cannot resize the window. */
@@ -1411,7 +1468,6 @@ async function qRegion() {
 	if (!vp || vp.width !== document.documentElement.clientWidth)
 		return row('region', 0, 'engine predates the 0.5.5 viewport contract');
 	const bad = [];
-	const keys = {};
 	const subs = (Snowfall.default && Snowfall.default.subs) || [];
 	const asub = subs.filter(s => s.frame === api.frame)[0];
 	if (!asub) bad.push('adapter subscriber not registered via Snowfall.use');
@@ -1462,22 +1518,15 @@ async function qRegion() {
 	console.error = function() { const a = String(arguments[0]); if (/region|HD/i.test(a)) errs.push(a); return origErr.apply(console, arguments); };
 	console.warn = function() { const a = String(arguments[0]); if (/region|HD/i.test(a)) warns.push(a); };
 	let checked = 0, fitted = 0, centred = 0;
-	/* a crop is positioned only while the adapter takes gestures, so a passive
-	   probe would skip the painted-box checks on a page that is fine: turn
-	   inspect on for the measurement and put the toggle back afterwards */
-	const wasInspect = api.getInspect();
+	/* Exercise gesture layout too, then restore the reader's view. */
+	const wasInspect = api.getInspect(), savedY = window.scrollY;
+	const savedViews = A.els.map((el, i) => api.view(i));
 	if (!wasInspect) api.setInspect(true);
 	try {
+		await Promise.all(hdEls.flatMap(el => Array.from(el.querySelectorAll('img'), img => img.decode().catch(() => {}))));
 		for (let i = 0; i < A.els.length; i++) {
 			const el = A.els[i], b = A.base[i], h = A.hd[i], wi = A.wi[i];
 			if (wi < 0 || !b) { bad.push('#' + i + ' unmapped wagon'); continue; }
-			/* one file, one crop: the table is keyed by the base src, so a second
-			   wagon on the same picture gets the FIRST wagon's rect and its crop
-			   floats over the wrong part of the art */
-			const key = HDM.normKey(b.getAttribute('src') || '');
-			if (keys[key] !== undefined) bad.push('#' + i + ' shares its base src with #' + keys[key]
-				+ ' — REGIONS is keyed by src, so one file cannot carry two crops');
-			else keys[key] = i;
 			const rawSrc = rawOf(b);
 			if (h && rawSrc && rawSrc.hd && HDM.normKey(h.getAttribute('src') || '') !== HDM.normKey(rawSrc.hd))
 				bad.push('#' + i + ' crop element is not the entry\'s hd (stale table or a swapped <img>)');
@@ -1490,17 +1539,19 @@ async function qRegion() {
 				if (rawOf(b) && rawOf(b).hd && !h) bad.push('#' + i + ' entry declares hd with no crop child');
 			const out = layoutOf(b, { zoom: v0.zoom, panX: v0.panX, panY: v0.panY }, h);
 			if (!out.ok) { bad.push('#' + i + ' layout not ok'); continue; }
-			/* 1 · origin: the wagon box IS the viewport at park — the only
-			      thing that turns a child translate into window placement */
+			/* Short authored scenes can be pushed before they park. The region
+			   always uses the same viewport-sized LOCAL frame, even offscreen. */
 			const wr = el.getBoundingClientRect();
-			if (!box(wr, 0, 0, vp.width, vp.height, 2))
+			const parked = wgs.pos[wi] === 0 && wgs.free[wi] <= 0;
+			if (!near(wr.width, vp.width, 2) || !near(wr.height, vp.height, 2)
+				|| parked && (!near(wr.left, 0, 2) || !near(wr.top, 0, 2)))
 				bad.push('#' + i + ' parked wagon is not the viewport rect ('
 					+ Math.round(wr.left) + ',' + Math.round(wr.top) + ' ' + Math.round(wr.width) + '×' + Math.round(wr.height)
 					+ ' vs ' + vp.width + '×' + vp.height + ')');
 			/* 2 · the written style and the painted box must be the same box, so
 			      no leftover no-JS rule can contain the picture in another one */
 			const br = b.getBoundingClientRect();
-			if (!box(br, out.x, out.y, out.w, out.h)) bad.push('#' + i + ' base rect ≠ HDRegion box');
+			if (!box(br, wr.left + out.x, wr.top + out.y, out.w, out.h)) bad.push('#' + i + ' base rect ≠ HDRegion box');
 			const t = px(b.style.transform);
 			if (!t || !near(t[0], out.x, 0.05) || !near(t[1], out.y, 0.05)
 				|| !near(num(b.style.width), out.w, 0.05) || !near(num(b.style.height), out.h, 0.05))
@@ -1560,7 +1611,7 @@ async function qRegion() {
 				}
 				if (shown) {
 					const hr = h.getBoundingClientRect();
-					if (!box(hr, out.hx, out.hy, out.hw, out.hh)) bad.push('#' + i + ' crop rect ≠ region box');
+					if (!box(hr, wr.left + out.hx, wr.top + out.hy, out.hw, out.hh)) bad.push('#' + i + ' crop rect ≠ region box');
 					const fx = br.width / b.naturalWidth, fy = br.height / b.naturalHeight;
 					if (!near(hr.left, br.left + num(e && e.x) * fx, 2) || !near(hr.top, br.top + num(e && e.y) * fy, 2)
 						|| !near(hr.width, num(e && e.w) * fx, 2) || !near(hr.height, num(e && e.h) * fy, 2))
@@ -1625,19 +1676,26 @@ async function qRegion() {
 				bad.push('off() left child styles or the snow-ready class behind');
 			Snowfall.setEnabled(true);
 			await raf2();
+			if (!A2.els[0].classList.contains('snow-hd-live') || getComputedStyle(b0).position !== 'absolute')
+				bad.push('re-enabled children still under no-JS rules');
 			if (paint !== b0.style.width + '/' + b0.style.height + '/' + b0.style.transform)
 				bad.push('re-enabled children were not repainted identically');
 		}
 	} finally {
+		for (let i = 0; i < savedViews.length; i++) {
+			const v = savedViews[i];
+			api.setView(i, v.zoom, v.panX, v.panY);
+		}
+		setY(savedY);
 		if (!wasInspect) api.setInspect(false);
 		console.error = origErr; console.warn = origWarn;
 	}
 	if (errs.length) bad.push(errs.length + ' console error(s): ' + errs[0]);
 	if (!A.els.length) return row('region', 0, 'adapter manages 0 of ' + hdEls.length
 		+ ' .snow-hd wagons — stale script (every local file carries ?v=) or a failed measure; see console');
-	if (!checked) return row('region', 0, 'no managed wagons were parked for alignment');
+	if (!checked) return row('region', 0, 'no managed wagons checked for alignment');
 	if (bad.length) return row('region', 0, bad.slice(0, 5).join('; '));
-	return row('region', 1, checked + ' wagon(s): rendered rects = HDRegion box ±1.5px, crop covers its region on the base'
+	return row('region', 1, checked + ' wagon(s): rendered rects = wagon-local HDRegion box ±1.5px, crop covers its region on the base'
 		+ (fitted ? ', art-first fit in ' + fitted : '')
 		+ (centred ? ', centred-or-pinned in ' + centred : '')
 		+ ', zoom grows, re-enable repaints, static scan clean'
@@ -1672,7 +1730,7 @@ function boot() {
 	readHash(); build(); applyLayout();
 	bind('reg','click',build); bind('seed','click',()=>{SEED=(Math.random()*0xFFFFFFFF)>>>0;build();});
 	bind('addChapter','click',addChapter); bind('addBackground','click',addBackground); bind('templateCopy','click',copyTemplate);
-	bind('sourceToggle','click',()=>toggleSource()); bind('applySource','click',applySource); bind('exampleImages','change',build); bind('exampleGradient','change',build); bind('regions','change',build); bind('realScenes','change',build);
+	bind('sourceToggle','click',()=>toggleSource()); bind('applySource','click',applySource); bind('exampleImages','change',build); bind('exampleGradient','change',build); bind('regions','change',()=>{if(!$('regions').checked)$('realScenes').checked=false;build();}); bind('realScenes','change',()=>{if($('realScenes').checked)$('regions').checked=true;build();}); bind('regionCases','change',build);
 	bind('inspectBg','change',()=>{if(window.SnowfallRegion)SnowfallRegion.setInspect($('inspectBg').checked);});
 	bind('saveRegions','click',saveRegionsFile);
 	if(window.SnowfallRegion){SnowfallRegion.onInspect=on=>{$('inspectBg').checked=!!on;};$('inspectBg').checked=SnowfallRegion.getInspect();}

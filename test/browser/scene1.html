@@ -1,0 +1,47 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>QA scene 1 — one cover background with an HD region</title>
+<style>
+	/* authoring contract (0.5.5): the no-JS fallback is all a story page writes */
+	html,body{margin:0;padding:0;background:#0c0f16;color:#dbeafe}
+	#app{position:relative;padding:0 20vw;font:18px/1.6 system-ui,sans-serif}
+	section{position:relative;z-index:1}
+	.snow-hd{min-height:60vh}
+	.snow-hd img{display:block;width:100%;max-height:100vh;object-fit:contain}
+	p{margin:0 0 1em;max-width:42rem}
+</style>
+</head>
+<body>
+<div id="app">
+	<section>
+		<div class="chapter-head"><h4 class="n">1</h4></div>
+		<p>Opening text before the single background.</p>
+		<p>Another line so the chapter has some height.</p>
+		<div class="snow-bg snow-hd" data-mode="cover" data-gap="0">
+			<img src="../../img/1.avif" alt="Scene base">
+			<img src="../../img/1_c.avif" alt="" aria-hidden="true">
+		</div>
+		<p>Text after the background.</p>
+		<p>More text to give the wagon a park range.</p>
+		<p>More text.</p>
+		<p>More text.</p>
+		<p>More text.</p>
+		<p>More text.</p>
+		<p>More text.</p>
+		<p>More text.</p>
+	</section>
+	<div style="height:110vh"></div>
+</div>
+<!-- region table outside #app; classic scripts in reference load order -->
+<script>
+	var REGIONS = {};
+	REGIONS['../../img/1.avif'] = { x: 477, y: 239, w: 804, h: 1056, hd: '../../img/1_c.avif', bw: 1920, bh: 1536 };
+</script>
+<script src="../../hdregion.js?v=12"></script>
+<script src="../../snowfall.js?v=12"></script>
+<script src="../../snowfall-region.js?v=12"></script>
+</body>
+</html>

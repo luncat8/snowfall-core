@@ -378,3 +378,66 @@ implementation, on the reference's own images and rects.
   author CSS, rather than writing `display:none` on everything.
   (Skill: probe a collaborator's return contract once at boot, name the file in
   the error, and degrade to the no-JS appearance.)
+- **A subscriber that manages elements must also unmanage them.** The region
+  adapter's `measure()` built its managed list fresh every run but only ever
+  *added* `snow-hd-live` and child styles; a wagon that left the list (its
+  `data-mode` flipped to `fixed`/`auto` in the editor) kept the JS cascade and
+  the last frame's pixel styles inside the engine's explicit box, and `off()`
+  never reached it because `off()` walks the current list. The fix is one loop
+  in `measure()`: every previously managed element absent from the new list
+  loses the class and its children's inline styles. Gated in `test/region.js`
+  as an exclude → re-manage round trip that must repaint identically.
+  (Skill: for every "adopt an element" path, write the matching "release"
+  path and test the transition, not just the two steady states.)
+- **Editor selection must follow every markup variant the generator emits.**
+  The scene editor resolved its target with `heading.closest('section')` while
+  the generator's default (`nest = both`) emits every even chapter flat, with
+  the morph anchors on an `<i class="snow-fg">` carrier — half the story had a
+  scene editor that showed a title and zero fields. The 0.5.0 plan had named
+  the carrier as the flat-chapter target; the implementation only covered one
+  of the two shapes. Flat chapters also keep their sticks as loose siblings,
+  outside any `querySelector` scope of the carrier, so reading and writing
+  them walks the sibling run up to the next chapter's start.
+  (Skill: when a generator has N markup variants, grep the editor for the
+  selector that picks the target and prove it resolves on all N.)
+- **Export the API before any DOM append, and never assume `<body>`.** A story
+  page may load the classic scripts from `<head>` — the engine supports that
+  placement, so the adapter must too. The region adapter's boot appended its
+  HUD to `document.body` (null while `<head>` parses) *before* assigning
+  `window.SnowfallRegion` and binding gestures; one throw left a page whose
+  crops painted but that exposed no API, no HUD and no zoom/pan, with only a
+  single console line as evidence. Fix order: assign the API first, defer the
+  HUD to `DOMContentLoaded` when body is absent. Gated by a fake-DOM block
+  that boots with `body=null` and by a head-loaded browser scene.
+  (Skill: in any script that may run during parse, everything that touches
+  `document.body` goes behind a readiness check or DCL; the public surface is
+  assigned before anything that can throw.)
+- **Node gates certify math; only rendered pixels certify wiring.** The region
+  sizing passed 2.8M fake-DOM checks while a real-browser hole (the head-load
+  crash) went unseen, because the fakes never run the parse lifecycle or the
+  CSS cascade. `test/browser/check.js` renders the actual scenes in Chromium
+  (puppeteer + a bundled binary; self-served repo; SKIP when no toolchain) and
+  compares painted `getBoundingClientRect`s with `HDRegion.finalLayout` plus
+  math-free invariants (max-size fit, aspect, coverage, parked-box ==
+  viewport). It runs inside `node test/run.js`.
+  (Skill: keep one rendered gate in the matrix even when it has to self-skip
+  on thin environments — the skip must be an explicit SKIP line, never a
+  silent absence.)
+
+## Harness demos and region integration
+
+- Keep malformed scripts and missing-crop fixtures opt-in or local to QA. A
+  normal demo should show complete pairs; otherwise whole-image fallback looks
+  like a fit-math regression even when the math is correct.
+- A shared base URL is valid when every use has the same rect and crop. Never
+  overwrite its metadata with a missing-HD test case; use separate fixture art.
+- A short wagon stack may never park. Compare child boxes in wagon-local space
+  while moving, and reserve a viewport plus dwell time in normal generated
+  scenes. Event QA must include the parent-bottom cap, not only chain position.
+- Re-enable checks must inspect computed CSS and painted boxes, not just inline
+  widths. Restoring image styles without `snow-hd-live` leaves fallback sizing
+  active. Compare root classes as a set, since class insertion order can change.
+- QA overlap must intersect both rectangles with the viewport; subtracting
+  adjacent edges mistakes reordered, fully offscreen wagons for visible overlap.
+  Story hit tests should ignore editor chrome but still catch story blockers.
+  FPS is frame count divided by measured elapsed seconds, not timer ticks.

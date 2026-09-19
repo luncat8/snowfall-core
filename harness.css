@@ -24,6 +24,9 @@ button,input,select,textarea{font:inherit}button{cursor:pointer}
 .ln{position:relative;margin:0;padding-left:var(--gut);max-width:var(--measure);counter-increment:line}
 .ln::before{content:counter(line);position:absolute;left:0;width:calc(var(--gut) - .9rem);text-align:right;opacity:.34;
 	font:500 .74em/1.75 ui-monospace,monospace}
+/* Reserve a park interval without adding prose; screen flow already spends 100vh. */
+.scene-copy{min-height:120vh}
+.snow-bg[data-gap="100vh"] + .scene-copy{min-height:20vh}
 .snow-wip{opacity:.55;font-style:italic}
 #app p,#app h2,#app h3,#app h4{margin:0;max-width:var(--measure)}
 .snow-fg{position:absolute;width:0;height:0;overflow:hidden;visibility:hidden}
@@ -58,7 +61,7 @@ body.panels #gen{transform:none;box-shadow:0 0 44px #000b}body.qapanel #diag{tra
 #panelTab{left:0;border-left:0;border-radius:0 8px 8px 0;transform:translateY(-50%)}
 #qaTab{right:0;border-right:0;border-radius:8px 0 0 8px;transform:translateY(-50%)}
 #panelTab:hover,#qaTab:hover{color:var(--ink)}
-.controls{display:block}.panel-title{display:flex;flex-direction:column;margin:3px 2px 12px}.panel-title small{color:var(--dim);margin-top:3px;font-size:11px}
+#controls{display:block}.panel-title{display:flex;flex-direction:column;margin:3px 2px 12px}.panel-title small{color:var(--dim);margin-top:3px;font-size:11px}
 #srcbar{position:sticky;top:-10px;z-index:5;display:flex;align-items:center;gap:9px;background:var(--panel);padding:8px 0;border-bottom:1px solid var(--line);margin-bottom:10px;font-size:11px}
 #srcbar button{background:var(--panel2);color:var(--ink);border:1px solid var(--line);border-radius:6px;padding:5px 8px}
 #srcbar output{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--ok)}#srcbar output.warn{color:var(--fail)}#srcbar label{white-space:nowrap}
@@ -79,7 +82,7 @@ body.panels #gen{transform:none;box-shadow:0 0 44px #000b}body.qapanel #diag{tra
 #src{display:none;width:100%;min-height:260px;background:#090e18;color:#dbeafe;border:1px solid var(--line);border-radius:7px;padding:10px;resize:vertical;
 	font:12px/18px ui-monospace,SFMono-Regular,Menlo,monospace;tab-size:4;white-space:pre;overflow:auto}
 body.src #gen{width:min(680px,96vw);display:flex;flex-direction:column;overflow:hidden}
-body.src .controls{display:none}body.src #src{display:block;flex:1;min-height:0;resize:none}body.src #srcbar{position:static;flex:none}
+body.src #controls{display:none}body.src #src{display:block;flex:1;min-height:0;resize:none}body.src #srcbar{position:static;flex:none}
 #diag pre{margin:0 0 8px;white-space:pre-wrap;font:11px/1.5 ui-monospace,monospace}
 .qrow{border:1px solid var(--line);border-radius:6px;padding:4px 8px;font:11px/1.4 ui-monospace,monospace}
 .qrow.ok b{color:var(--ok)}.qrow.fail b{color:var(--fail)}.qrow.skip b{color:var(--skip)}.qrow small{display:block;color:var(--dim)}
