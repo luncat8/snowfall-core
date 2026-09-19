@@ -4,7 +4,10 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Snowfall — story editor</title>
-<link rel="stylesheet" href="harness.css">
+<!-- every local asset carries ?v=: the preview is served over http, and a stale
+     harness.js or hdregion.js next to a new snowfall-region.js is a page of hidden
+     crops with no error line. Bump the token with every change to these files. -->
+<link rel="stylesheet" href="harness.css?v=9">
 </head>
 <body>
 <button id="panelTab" type="button" title="Story controls (p)">controls</button>
@@ -79,6 +82,6 @@
 </form>
 <div id="diag"><pre id="dstats">…</pre><div id="qa"></div><pre id="estatePre"></pre></div>
 <div id="app"></div><div id="rail" aria-hidden="true"></div><div id="mark" aria-hidden="true"></div><div id="wires" aria-hidden="true"></div>
-<script src="hdregion.js"></script><script src="snowfall.js"></script><script src="snowfall-region.js"></script><script src="harness.js"></script>
+<script src="hdregion.js?v=9"></script><script src="snowfall.js?v=9"></script><script src="snowfall-region.js?v=9"></script><script src="harness.js?v=9"></script>
 </body>
 </html>

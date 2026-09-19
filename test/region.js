@@ -574,6 +574,9 @@ function lateRun(order, label, withRebuild) {
 		}
 	};
 	const shown = i => wags[i].kids[1].style.display !== 'none';
+	const warns = [];
+	const origWarn = console.warn;
+	console.warn = msg => { warns.push(String(msg)); };
 	const snap = i => wags[i].kids[0].style.transform + '|' + wags[i].kids[1].style.transform;
 	global.window = win;
 	global.document = doc;
@@ -588,8 +591,7 @@ function lateRun(order, label, withRebuild) {
 		A.frame(0, LATE_CH, LATE_CW);
 		for (let i = 0; i < 4; i++) {
 			ok(!shown(i), label + ': #' + i + ' crop hidden until its own image decodes');
-			const o = i === 3 ? LATE_WHOLE : lateFit(LATE_RECT[i]);
-			ok(latePaints(wags[i].kids[0], o, 'base'), label + ': #' + i + ' base laid out from its own entry');
+			ok(latePaints(wags[i].kids[0], lateFit(LATE_RECT[i]), 'base'), label + ': #' + i + ' base laid out from its own entry');
 		}
 		const done = [];
 		for (let m = 0; m < order.length; m++) {   /* order holds only the well-formed wagons */
@@ -608,7 +610,14 @@ function lateRun(order, label, withRebuild) {
 				ok(latePaints(wags[k].kids[1], lateFit(LATE_RECT[k]), 'crop'), label + ': #' + k + ' keeps its own rect');
 			}
 		}
-		ok(!shown(3), label + ': an entry naming a crop the markup does not carry paints no crop');
+		/* a crop whose src is not the entry's hd is a build mistake, and the
+		   adapter reports it instead of hiding the picture: never blank art */
+		ok(warns.join('\n').indexOf('crop element is not entry.hd') >= 0,
+			label + ': the src/entry mismatch is reported by name');
+		decode(hdImg[3]);
+		A.frame(0, LATE_CH, LATE_CW);
+		ok(shown(3), label + ': the mismatched wagon still paints — a warning never hides art');
+		ok(latePaints(wags[3].kids[1], lateFit(LATE_RECT[3]), 'crop'), label + ': and at its own rect');
 		const before = snap(0) + snap(1) + snap(2);
 		A.frame(0, LATE_CH, LATE_CW);
 		ok(snap(0) + snap(1) + snap(2) === before, label + ': a stable page repaints identically');
@@ -628,19 +637,82 @@ function lateRun(order, label, withRebuild) {
 		ok(shown(0), label + ': the head-inserted wagon paints its own crop once it decodes');
 		ok(latePaints(NB, lateFit(NEWR), 'base'), label + ': the new base uses the new rect');
 		ok(latePaints(NH, lateFit(NEWR), 'crop'), label + ': the new crop sits on the new rect');
-		for (let i = 0; i < 3; i++) {
+		for (let i = 0; i < 4; i++) {
 			ok(shown(i + 1), label + ': #' + i + ' still shown after the index shift');
 			ok(latePaints(wags[i + 1].kids[0], lateFit(LATE_RECT[i]), 'base'), label + ': #' + i + ' base survives the index shift');
 			ok(latePaints(wags[i + 1].kids[1], lateFit(LATE_RECT[i]), 'crop'), label + ': #' + i + ' crop survives the index shift');
 		}
-		ok(!shown(4), label + ': the entry/crop mismatch stays hidden after a rebuild');
+		ok(shown(4), label + ': the src-mismatch wagon is painted after a rebuild too');
 	} finally {
+		console.warn = origWarn;
 		delete global.window;
 		delete global.document;
 	}
 }
 lateRun([0, 1, 2], 'loads in document order', true);
 lateRun([2, 1, 0], 'loads out of order', false);
+
+/* ---------------- the hdregion.js handshake ----------------
+   frame() writes only what finalLayout returns, so a stale or foreign copy of
+   hdregion.js (an old file served from cache next to a new adapter) must be
+   named once at measure and must leave the page as plain backgrounds. Hiding
+   every crop is exactly the "nothing shows" state, and it must never be the
+   fallback answer to a contract break. */
+{
+	const wags = [fakeWagon([fakeImg('img/a.png', 800, 600), fakeImg('img/a_c.png', 400, 300)])];
+	const rootCls = [];
+	const cls = {
+		add: c => { if (rootCls.indexOf(c) < 0) rootCls.push(c); },
+		remove: c => { const i = rootCls.indexOf(c); if (i >= 0) rootCls.splice(i, 1); },
+		toggle: () => {}, contains: c => rootCls.indexOf(c) >= 0
+	};
+	const fakeEl = () => ({
+		style: {}, classList: { add: () => {}, remove: () => {}, toggle: () => {} }, appendChild: () => {},
+		setAttribute: () => {}, querySelector: () => ({ checked: false, addEventListener: () => {} }),
+		innerHTML: '', textContent: '', id: '', hidden: false
+	});
+	const doc = {
+		readyState: 'complete', documentElement: Object.assign(fakeEl(), { clientWidth: 1000, classList: cls }),
+		createElement: fakeEl, head: { appendChild: () => {} }, addEventListener: () => {}, body: { appendChild: () => {} }
+	};
+	doc.getElementById = id => id === 'app'
+		? { querySelectorAll: sel => sel.indexOf('snow-hd') >= 0 ? wags : { length: 0 } } : null;
+	const errs = [];
+	const origErr = console.error;
+	function run(withMath) {
+		global.window = {
+			innerWidth: 1000, innerHeight: 700, scrollY: 0,
+			addEventListener: () => {}, removeEventListener: () => {},
+			HDRegion: withMath, REGIONS: { 'img/a.png': { x: 100, y: 50, w: 400, h: 300, hd: 'img/a_c.png' } },
+			Snowfall: {
+				default: { use: () => {} }, use: () => {}, refresh: () => {}, step: () => {},
+				wagons: { n: 0, els: [], y: [], free: [], pos: [] }, viewport: { width: 1000, height: 700 }
+			}
+		};
+		global.document = doc;
+		errs.length = 0;
+		console.error = m => { errs.push(String(m)); };
+		delete require.cache[require.resolve('../snowfall-region.js')];
+		const A = require('../snowfall-region.js');
+		try { A.measure(); A.frame(0, 700, 1000); } finally { console.error = origErr; }
+		return A;
+	}
+	/* an old-shape finalLayout: it returns numbers, but no ok and no region box */
+	const stale = {
+		finalLayout: (vw, vh, bw, bh, r, v, out) => { out.w = vw; out.h = vh; return out; },
+		normKey: s => String(s || ''), zoomAround: () => {}
+	};
+	const A1 = run(stale);
+	eqv(A1.count(), 0, 'a finalLayout without the ok/region-box contract manages nothing');
+	ok(errs.join('\n').indexOf('hdregion.js') >= 0, 'and names the mismatched file in the console');
+	ok(wags[0].kids[1].style.display !== 'none', 'the crop is NOT hidden — a mismatch degrades to a plain background');
+	ok(!wags[0].kids[0].style.width, 'and the base is left to the author CSS');
+	ok(rootCls.indexOf('snow-ready') < 0, 'the JS sizing class stays off');
+	const A2 = run(HD);
+	eqv(A2.count(), 1, 'the real hdregion.js passes the handshake');
+	ok(!!wags[0].kids[1].style.width, 'and the crop is laid out again');
+	ok(rootCls.indexOf('snow-ready') >= 0, 'with JS sizing on');
+}
 
 /* ---------------- static source scans ---------------- */
 {
@@ -677,6 +749,20 @@ lateRun([2, 1, 0], 'loads out of order', false);
 		ok(cls(adapterCss.slice(adapterCss.lastIndexOf('\n', jsAt) + 1, jsAt)) > cls(fb.sel),
 			'the JS rule is more specific than the fallback (' + cls(fb.sel) + ' class(es) to beat)');
 		ok(/min-height:0/.test(adapterCss), 'the wagon min-height fallback is neutralised too');
+	}
+	/* every local asset in index.html must carry a version token: the preview is
+	   served over http, and one stale file next to a new one is a page of hidden
+	   crops with no error line — the failure mode that ate a whole round here */
+	{
+		const page = fs.readFileSync(path.join(root, 'index.html'), 'utf8');
+		const tags = page.match(/<(?:script[^>]*src|link[^>]*href)="([^"]+)"/g) || [];
+		const local = tags.filter(t => t.indexOf('http') < 0);
+		ok(local.length >= 5, 'index.html loads its local files (' + local.length + ')');
+		const bare = local.filter(t => t.indexOf('?v=') < 0);
+		eqv(bare.length, 0, 'every local asset carries ?v= — stale: ' + bare.join(' '));
+		const vers = local.map(t => /(\d+)"/.exec(t)).filter(Boolean).map(m => +m[1]);
+		ok(vers.length === local.length && vers.every(v => v === vers[0]),
+			'one shared ?v= token, so nothing can half-update');
 	}
 	/* brace-match the adapter's frame() body so the scan is scoped to it */
 	const m = adapter.indexOf('function frame(sY, vh, vw)');

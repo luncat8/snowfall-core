@@ -101,8 +101,31 @@ function onHdLoad(ev) {
 	if (global.Snowfall) global.Snowfall.step();
 }
 
+/* One handshake with hdregion.js. Its `finalLayout` contract (ok + the base
+   box + the region box) is what frame() writes from; a stale or foreign copy —
+   a cached file, a partial deploy — would otherwise send every wagon down the
+   `!L.ok` exit and leave the whole chapter with hidden crops and one silent
+   console line. So the mismatch is named, and the page is left to the plain
+   background rules instead of being blanked. */
+let hdOKmod = -1;
+function hdUsable() {
+	if (hdOKmod >= 0) return hdOKmod === 1;
+	hdOKmod = 0;
+	if (!HD || typeof HD.finalLayout !== 'function' || typeof HD.normKey !== 'function') return false;
+	const probe = HD.finalLayout(100, 100, 200, 100, { x: 0, y: 0, w: 100, h: 100, maxZoom: 0 },
+		{ zoom: 1, panX: 0, panY: 0 }, {});
+	if (!probe || probe.ok !== 1 || !(probe.w > 0) || !(probe.hw > 0) || !(probe.hh > 0)) return false;
+	if (typeof HD.zoomAround !== 'function') return false;
+	hdOKmod = 1;
+	return true;
+}
+
 function measure() {
-	if (!hasDOM || !HD) { R.n = 0; return; }
+	if (!hasDOM || !hdUsable()) {
+		if (hasDOM && !HD) { R.n = 0; return; }
+		if (HD) console.error('[snowfall-region] hdregion.js does not satisfy finalLayout(){ok,w,h,x,y,hw,hh,hx,hy} — regions stay plain backgrounds');
+		off(); R.n = 0; return;
+	}
 	const scope = document.getElementById('app') || document;
 	const found = scope.querySelectorAll('.snow-bg.snow-hd');
 	const els = [], bases = [], hds = [];
@@ -136,11 +159,14 @@ function measure() {
 		const el = els[i], b = bases[i], hd = hds[i];
 		el.classList.add('snow-hd-live');
 		const entry = table ? table[HD.normKey(b.getAttribute('src') || '')] : null;
-		/* the crop element must be the file the entry names: a table from another
-		   build, or a swapped second <img>, would otherwise paint a different
-		   picture over this base and look like a region placed at the wrong spot */
-		R.hdOK[i] = entry && entry.hd && hd &&
-			HD.normKey(hd.getAttribute('src') || '') === HD.normKey(entry.hd) ? 1 : 0;
+		R.hdOK[i] = entry && entry.hd && hd ? 1 : 0;
+		/* A table that names a different crop than this wagon's second <img>, or
+		   one key claimed by two wagons (the src IS the key, so the last writer
+		   re-rects the others), is a build mistake. It is reported and never used
+		   to hide: a metadata disagreement must not blank a page. */
+		if (entry && entry.hd && hd &&
+			HD.normKey(hd.getAttribute('src') || '') !== HD.normKey(entry.hd))
+			console.warn('[snowfall-region] wagon ' + i + ': the crop element is not entry.hd');
 		/* the rect exists to place the crop. With no crop to paint the base IS
 		   the picture, so it is framed whole (cover) rather than magnified into
 		   a blurry zoom of a rect nobody ever shows */
@@ -436,7 +462,7 @@ function buildHud() {
 const api = {
 	count: function() { return R.n; },
 	/* live state for the QA probe — read-only by convention */
-	arrays: function() { return { els: R.els, base: R.base, hd: R.hd, wi: R.wi }; },
+	arrays: function() { return { els: R.els, base: R.base, hd: R.hd, wi: R.wi, hdOK: R.hdOK, ready: R.ready, nh: R.nh }; },
 	view: function(i) { return { zoom: R.zoom[i], panX: R.px[i], panY: R.py[i] }; },
 	setView: setView,
 	zoomAt: zoomAt,

@@ -1434,11 +1434,12 @@ async function qRegion() {
 	};
 	/* the adapter frames by a rect only when it has a crop to paint over it,
 	   so a declared hd whose <img> is missing degrades exactly like no entry */
+	/* mirrors the adapter's rule exactly: an entry with an hd and a crop element
+	   in the markup means "frame this base by this rect" — the src agreement is
+	   a separate check below, because a mismatch is reported, never hidden */
 	const entryOf = (img, cropEl) => {
 		const e = rawOf(img);
-		if (!e || !e.hd || !cropEl) return null;
-		if (HDM.normKey(cropEl.getAttribute('src') || '') !== HDM.normKey(e.hd)) return null;
-		return e;
+		return e && e.hd && cropEl ? e : null;
 	};
 	const layoutOf = (b, v, cropEl) => {
 		const e = entryOf(b, cropEl);
@@ -1477,6 +1478,9 @@ async function qRegion() {
 			if (keys[key] !== undefined) bad.push('#' + i + ' shares its base src with #' + keys[key]
 				+ ' — REGIONS is keyed by src, so one file cannot carry two crops');
 			else keys[key] = i;
+			const rawSrc = rawOf(b);
+			if (h && rawSrc && rawSrc.hd && HDM.normKey(h.getAttribute('src') || '') !== HDM.normKey(rawSrc.hd))
+				bad.push('#' + i + ' crop element is not the entry\'s hd (stale table or a swapped <img>)');
 			setY(Math.round(wgs.y[wi]) + 1);
 			await raf2();
 			api.setView(i, 1, 0, 0);
@@ -1541,6 +1545,19 @@ async function qRegion() {
 					bad.push('#' + i + ' crop is ' + h.naturalWidth + '×' + h.naturalHeight
 						+ ' for a ' + num(e.w) + '×' + num(e.h) + ' rect (not 1:1)');
 				const shown = h.style.display !== 'none';
+				if (!shown) {
+					/* a hidden crop is correct only for a wagon the adapter has no crop
+					   to drive; in every other case name the reason — this is the one
+					   state that blanks a chapter without an error line */
+					const raw0 = rawOf(b);
+					const why = !A.hdOK[i]
+						? (raw0 ? (raw0.hd ? 'crop element missing' : 'entry declares no crop') : 'no entry for this base src')
+						: !A.ready[i]
+							? 'crop never decoded (naturalWidth ' + ((h.naturalWidth || 0) | 0) + ')'
+							: 'hidden although ready';
+					if (e) bad.push('#' + i + ' crop hidden: ' + why);
+					else warns.push('#' + i + ' crop hidden: ' + why);
+				}
 				if (shown) {
 					const hr = h.getBoundingClientRect();
 					if (!box(hr, out.hx, out.hy, out.hw, out.hh)) bad.push('#' + i + ' crop rect ≠ region box');
@@ -1616,6 +1633,8 @@ async function qRegion() {
 		console.error = origErr; console.warn = origWarn;
 	}
 	if (errs.length) bad.push(errs.length + ' console error(s): ' + errs[0]);
+	if (!A.els.length) return row('region', 0, 'adapter manages 0 of ' + hdEls.length
+		+ ' .snow-hd wagons — stale script (every local file carries ?v=) or a failed measure; see console');
 	if (!checked) return row('region', 0, 'no managed wagons were parked for alignment');
 	if (bad.length) return row('region', 0, bad.slice(0, 5).join('; '));
 	return row('region', 1, checked + ' wagon(s): rendered rects = HDRegion box ±1.5px, crop covers its region on the base'

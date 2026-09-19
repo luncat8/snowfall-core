@@ -358,3 +358,23 @@ implementation, on the reference's own images and rects.
   override wins on specificity, not on order, and `test/region.js` scans both
   texts so neither side regresses silently. (Skill: pin such pairs with a static
   scan of every selector that sets a property the JS writes.)
+- **A dev page that is served over http must version every local asset.** Five
+  unversioned `<script src>` tags are enough for one stale file to sit next to a
+  new one, and the result is a page where every region crop is hidden with no
+  error line — the "my fix did not arrive" loop. `index.html` now carries one
+  shared `?v=N` token on `harness.css`, `hdregion.js`, `snowfall.js`,
+  `snowfall-region.js`, `harness.js`, bumped with every change, and
+  `test/region.js` fails the build if any local tag loses it.
+  (Skill: grep the page for `<(script|link)` tags without `?v=` in CI; the
+  token must be identical everywhere, or a half-update is possible again.)
+- Never hide content over a metadata disagreement. An adapter-side check that
+  the crop element's `src` equals `entry.hd` looked like a good guard and took
+  the whole chapter's art away whenever the two strings differed for any reason
+  (an escaped attribute, a stale table). A mismatch is a `console.warn` plus a
+  QA row; a *missing image* is the only thing that may hide a crop. The same
+  reasoning made `measure()` handshake with `hdregion.js` once (`hdUsable()`)
+  instead of trusting it: a `finalLayout` that does not return the documented
+  `{ok,w,h,x,y,hw,hh,hx,hy}` box now manages nothing and leaves the page to the
+  author CSS, rather than writing `display:none` on everything.
+  (Skill: probe a collaborator's return contract once at boot, name the file in
+  the error, and degrade to the no-JS appearance.)
