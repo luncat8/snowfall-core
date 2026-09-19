@@ -109,33 +109,46 @@ function hash32(s) {
    In repeat mode the bands run vertically with a period that divides the tile
    width, so neighbouring tiles continue the same rhythm. */
 /* returns the BARE data: URI — CSS call sites wrap it in url('…'), the
-   region <img> children use it as src verbatim */
-function artURI(w, h, pal, tag, tile) {
+   region <img> children use it src verbatim.
+   crop = {x, y, bw, bh} draws the SAME art as the bw×bh base (same tag ⇒ same
+   stripes, motif and label, since everything is generated in the base's user
+   space) and shows only its (x, y, w, h) rect: a harness crop is a real crop,
+   so the reader — and QA — can judge alignment by eye, not just by numbers.
+   blur is a stdDeviation in base units, the fiction of the compressed filler
+   under the sharp crop. */
+function artURI(w, h, pal, tag, tile, crop, blur) {
 	const rng = mulberry32(hash32(tag));
-	const short = Math.min(w, h);
+	const cw = crop ? crop.bw : w, ch = crop ? crop.bh : h;
+	const short = Math.min(cw, ch);
 	const period = Math.max(12, Math.round(short / 6));
 	const stripe = Math.max(3, Math.round(period * 0.55));
-	const pw = tile ? Math.max(8, Math.round(w / Math.max(2, Math.round(w / Math.max(12, short / 5))))) : period;
-	const ph = tile ? h : Math.ceil((Math.sqrt(w * w + h * h) + period) / period) * period;
+	const pw = tile ? Math.max(8, Math.round(cw / Math.max(2, Math.round(cw / Math.max(12, short / 5))))) : period;
+	const ph = tile ? ch : Math.ceil((Math.sqrt(cw * cw + ch * ch) + period) / period) * period;
 	const sw = tile ? stripe : pw, sh = tile ? ph : stripe;
 	const ox = tile ? Math.round(pw / 2) : 0, oy = tile ? 0 : Math.round(ph / 2);
 	const fs = Math.max(9, Math.round(short / 34));
-	const cx = Math.round(tile ? w / 2 : w * (0.22 + rng() * 0.56));
-	const cy = Math.round(tile ? h / 2 : h * (0.24 + rng() * 0.5));
+	const cx = Math.round(tile ? cw / 2 : cw * (0.22 + rng() * 0.56));
+	const cy = Math.round(tile ? ch / 2 : ch * (0.24 + rng() * 0.5));
 	/* a repeated circle would wall the page in, so the tiling copy keeps the
 	   motif faint and drops the label — it repeats once per tile */
 	const r = Math.max(8, Math.round(short * (tile ? 0.16 : 0.22)));
-	const svg = '<svg xmlns="http://www.w3.org/2000/svg" width="' + w + '" height="' + h + '" viewBox="0 0 ' + w + ' ' + h + '">'
+	const art = '<rect width="' + cw + '" height="' + ch + '" fill="url(#b)"/>'
+		+ '<circle cx="' + cx + '" cy="' + cy + '" r="' + r + '" fill="' + pal.dot + '" opacity="' + (tile ? 0.3 : 0.85) + '"/>'
+		+ '<circle cx="' + cx + '" cy="' + cy + '" r="' + Math.round(r * 1.4) + '" fill="none" stroke="' + pal.dot
+		+ '" stroke-width="' + Math.max(1, Math.round(r / 20)) + '" opacity="' + (tile ? 0.22 : 0.45) + '"/>'
+		+ (tile ? '' : '<text x="' + (fs + 2) + '" y="' + (fs * 2) + '" font-family="monospace" font-size="' + fs + '" fill="#ffffff" opacity="0.55">' + tag + '</text>');
+	const svg = '<svg xmlns="http://www.w3.org/2000/svg" width="' + w + '" height="' + h + '" viewBox="' +
+		(crop ? crop.x + ' ' + crop.y + ' ' + w + ' ' + h : '0 0 ' + w + ' ' + h) + '">'
 		+ '<defs><pattern id="b" width="' + pw + '" height="' + ph + '" patternUnits="userSpaceOnUse" patternTransform="rotate(' + (tile ? 0 : pal.ang) + ')">'
 		+ '<rect width="100%" height="100%" fill="' + pal.s[1] + '"/>'
 		+ '<rect width="' + sw + '" height="' + sh + '" fill="' + pal.s[0] + '"/>'
 		+ '<rect x="' + ox + '" y="' + oy + '" width="' + sw + '" height="' + sh + '" fill="' + pal.s[0] + '" opacity="0.55"/>'
-		+ '</pattern></defs>'
-		+ '<rect width="' + w + '" height="' + h + '" fill="url(#b)"/>'
-		+ '<circle cx="' + cx + '" cy="' + cy + '" r="' + r + '" fill="' + pal.dot + '" opacity="' + (tile ? 0.3 : 0.85) + '"/>'
-		+ '<circle cx="' + cx + '" cy="' + cy + '" r="' + Math.round(r * 1.4) + '" fill="none" stroke="' + pal.dot
-		+ '" stroke-width="' + Math.max(1, Math.round(r / 20)) + '" opacity="' + (tile ? 0.22 : 0.45) + '"/>'
-		+ (tile ? '' : '<text x="' + (fs + 2) + '" y="' + (fs * 2) + '" font-family="monospace" font-size="' + fs + '" fill="#ffffff" opacity="0.55">' + tag + '</text>')
+		+ '</pattern>'
+		+ (blur > 0 ? '<filter id="q"><feGaussianBlur stdDeviation="' + blur + '"/></filter>' : '')
+		+ '</defs>'
+		/* the unfiltered backdrop keeps a blur from fading the canvas edges */
+		+ '<rect width="100%" height="100%" fill="' + pal.s[1] + '"/>'
+		+ (blur > 0 ? '<g filter="url(#q)">' + art + '</g>' : art)
 		+ '</svg>';
 	return 'data:image/svg+xml,' + encodeURIComponent(svg);
 }
@@ -309,19 +322,35 @@ function sourceVisual(source, fallback, pal, mode, size, tag) {
 }
 /* region wagons (0.5.5): two data-URI <img> children + an in-memory REGIONS
    entry — no files, no network, so QA runs from a double-clicked index.html.
-   A pasted example URL becomes the base with NO entry on purpose: its pixel
-   size is unknown in markup space, so it exercises the "whole base is the
-   region, HD hidden" fallback path. */
-function regionWagonInner(k, j, rng, visual) {
+   Base and crop are ONE draw: the crop is the base's own rect at 2×, the base
+   is that same picture blurred, so the quality step and any misalignment are
+   both visible to the eye and not only in numbers. The rect comes from a
+   private rng keyed by the tag, so turning `regions` on changes no wagon's
+   geometry and the on/off slow pass still compares draw for draw.
+   Chapter parity picks the data case, so one story shows all three: ch 2, 5, 8
+   get NO entry (the whole-base fallback), ch 3, 6 an entry WITHOUT hd (the crop
+   <img> is there and loaded, yet must stay hidden), the rest a full entry.
+   A pasted example URL becomes the base with NO entry on purpose too: its
+   pixel size is unknown in markup space, so it is the same fallback path. */
+const REGION_BASE_W = 1600, REGION_BASE_H = 1000, REGION_CROP = 2, REGION_FILLER_BLUR = 6;
+function regionEntryCase(k) { return k % 3 === 2 ? 'none' : k % 3 === 0 ? 'nohd' : 'full'; }
+function regionWagonInner(k, j, pal, visual) {
 	if (!visual.src) return '';
 	if (visual.source) return '<img src="' + escapeHTML(visual.src) + '" alt="Scene ' + k + '.' + j + '">';
-	const bw = 1600, bh = 1000;
+	const tag = 'ch' + k + '·bg' + j;
+	const rng = mulberry32(hash32(tag + '·rect'));
+	const bw = REGION_BASE_W, bh = REGION_BASE_H;
 	const rw = 480 + Math.floor(rng() * 6) * 120, rh = 320 + Math.floor(rng() * 4) * 120;
 	const rx = Math.round(rng() * (bw - rw)), ry = Math.round(rng() * (bh - rh));
-	const hd = artURI(rw * 2, rh * 2, PALETTE[(k + 2) % PALETTE.length], 'ch'+k+'·bg'+j+' crop', false);
-	(window.REGIONS = window.REGIONS || {})[visual.src] = { x:rx, y:ry, w:rw, h:rh, hd:hd, bw:bw, bh:bh };
-	return '<img src="' + escapeHTML(visual.src) + '" alt="Scene ' + k + '.' + j + ' outpainted base">'
-		+ '<img src="' + escapeHTML(hd) + '" alt="" aria-hidden="true">';
+	const ec = regionEntryCase(k);
+	const raw = artURI(bw, bh, pal, tag, false, null, ec === 'none' ? 0 : REGION_FILLER_BLUR);
+	const base = '<img src="' + escapeHTML(raw) + '" alt="Scene ' + k + '.' + j + ' outpainted base">';
+	if (ec === 'none') return base;
+	const hd = artURI(rw * REGION_CROP, rh * REGION_CROP, pal, tag, false, { x: rx, y: ry, bw: bw, bh: bh });
+	const entry = { x: rx, y: ry, w: rw, h: rh, bw: bw, bh: bh };
+	if (ec === 'full') entry.hd = hd;
+	(window.REGIONS = window.REGIONS || {})[raw] = entry;
+	return base + '<img src="' + escapeHTML(hd) + '" alt="" aria-hidden="true">';
 }
 function templateWagonHTML(k, j, cfg, rng, source, pal) {
 	let mode = templateMode(cfg, rng);
@@ -336,7 +365,7 @@ function templateWagonHTML(k, j, cfg, rng, source, pal) {
 	if (mode === 'fixed' || mode === 'auto') at += ' data-size="'+size+'"';
 	if (dir !== 'top') at += ' data-dir="'+dir+'"';
 	if (visual.source) at += ' data-source="'+escapeHTML(visual.source)+'"';
-	if (isHd) return '<div'+at+'>' + regionWagonInner(k, j, rng, visual) + '</div>';
+	if (isHd) return '<div'+at+'>' + regionWagonInner(k, j, pal, visual) + '</div>';
 	if (visual.image) at += ' style="background-image:'+escapeHTML(visual.image)+';"';
 	return '<div'+at+'></div>';
 }
@@ -1316,10 +1345,19 @@ async function qMorph() {
 	return row('morph', 1, arrivals + ' arrival(s), ' + snaps + ' snap(s), ' + swaps + ' swap(s), idle 0 writes, regen ok'
 		+ (skipped ? ', ' + skipped + ' skipped (zone/clamp)' : ''));
 }
-/* qRegion (0.5.5): live alignment of the adapter's written child styles with
-   HDRegion.finalLayout at the engine viewport, I1/I2 on the recomputed box,
-   growth under zoom, degradation cases, and static source checks run via
-   Function#toString (no fetch — file:// would block it). */
+/* qRegion (0.5.5): the placement oracle. Comparing the numbers the adapter
+   wrote against HDRegion alone cannot prove placement — the two would agree
+   with each other and both be wrong about the page — so every check here reads
+   the RENDERED rects (getBoundingClientRect is a probe privilege, never frame()
+   code) and compares them with the box HDRegion.finalLayout computes in window
+   space at the live viewport: the parked wagon's box must BE the viewport, the
+   base child must land on the layout box, and the crop must cover the base's
+   own region sub-rect — that last residual taken from the base rect and the
+   entry alone, with no second opinion from the math. Plus the fit policy (the
+   art, not the filler, fills the window; a wagon with no crop to paint covers),
+   the JS-mode rules really applying to the children, and a disable/enable round
+   trip that must repaint them from nothing. Simulated viewport shapes belong to
+   the node gate: a GUI probe cannot resize the window. */
 async function qRegion() {
 	const hdEls = Array.from(document.querySelectorAll('#app .snow-bg.snow-hd'));
 	if (!hdEls.length) return row('region', -1, 'no .snow-hd wagons (regions off?)');
@@ -1329,7 +1367,6 @@ async function qRegion() {
 	if (!vp || vp.width !== document.documentElement.clientWidth)
 		return row('region', 0, 'engine predates the 0.5.5 viewport contract');
 	const bad = [];
-	let checked = 0;
 	const subs = (Snowfall.default && Snowfall.default.subs) || [];
 	const asub = subs.filter(s => s.frame === api.frame)[0];
 	if (!asub) bad.push('adapter subscriber not registered via Snowfall.use');
@@ -1343,21 +1380,40 @@ async function qRegion() {
 	const wgs = Snowfall.wagons;
 	const px = t => { const m = /translate\(\s*(-?[\d.]+)px,\s*(-?[\d.]+)px/.exec(t || ''); return m ? [+m[1], +m[2]] : null; };
 	const num = v => parseFloat(v) || 0;
-	const entryFor = img => {
+	const near = (a, b, tol) => Math.abs(a - b) <= (tol === undefined ? 1.5 : tol);
+	const box = (r, x, y, w, h, tol) => near(r.left, x, tol) && near(r.top, y, tol)
+		&& near(r.width, w, tol) && near(r.height, h, tol);
+	const rawOf = img => {
 		const T = window.REGIONS || {};
 		return T[HDM.normKey(img.getAttribute('src') || '')] || null;
 	};
-	const layoutOf = (b, v) => {
-		const e = entryFor(b), bw = b.naturalWidth, bh = b.naturalHeight;
-		const region = { x: e ? +e.x || 0 : 0, y: e ? +e.y || 0 : 0, w: e ? +e.w || 0 : 0, h: e ? +e.h || 0 : 0 };
+	/* the adapter frames by a rect only when it has a crop to paint over it,
+	   so a declared hd whose <img> is missing degrades exactly like no entry */
+	const entryOf = (img, cropEl) => {
+		const e = rawOf(img);
+		return e && e.hd && cropEl ? e : null;
+	};
+	const layoutOf = (b, v, cropEl) => {
+		const e = entryOf(b, cropEl);
+		const region = { x: e ? num(e.x) : 0, y: e ? num(e.y) : 0, w: e ? num(e.w) : 0, h: e ? num(e.h) : 0 };
 		const mz = e ? +e.maxZoom : 0;
 		region.maxZoom = mz >= 1 && isFinite(mz) ? mz : 0;
-		return HDM.finalLayout(vp.width, vp.height, bw, bh, region, v, {});
+		return HDM.finalLayout(vp.width, vp.height, b.naturalWidth, b.naturalHeight, region, v, {});
 	};
+	/* a region narrower than the window is centred in it; when the base cannot
+	   cover AND stay centred, coverage wins and pins a base edge to the window
+	   edge — that is the whole contract, and any other answer is a bug */
+	function framed(boxPos, boxLen, regPos, regLen, win) {
+		if (regLen >= win - 1) return true;
+		if (near(regPos, (win - regLen) / 2)) return true;
+		if (boxLen < win + 1) return near(boxPos, (win - boxLen) / 2);
+		return near(boxPos, 0, 0.05) || near(boxPos + boxLen, win, 0.05);
+	}
 	const errs = [], warns = [];
 	const origErr = console.error, origWarn = console.warn;
 	console.error = function() { const a = String(arguments[0]); if (/region|HD/i.test(a)) errs.push(a); return origErr.apply(console, arguments); };
 	console.warn = function() { const a = String(arguments[0]); if (/region|HD/i.test(a)) warns.push(a); };
+	let checked = 0, fitted = 0, centred = 0;
 	try {
 		for (let i = 0; i < A.els.length; i++) {
 			const el = A.els[i], b = A.base[i], h = A.hd[i], wi = A.wi[i];
@@ -1368,40 +1424,74 @@ async function qRegion() {
 			await raf2();
 			if (!(b.naturalWidth > 0)) { bad.push('#' + i + ' base never sized after park'); continue; }
 			const v0 = api.view(i);
-			const out = layoutOf(b, { zoom: v0.zoom, vx: v0.vx, vy: v0.vy });
+				if (rawOf(b) && rawOf(b).hd && !h) bad.push('#' + i + ' entry declares hd with no crop child');
+			const out = layoutOf(b, { zoom: v0.zoom, panX: v0.panX, panY: v0.panY }, h);
 			if (!out.ok) { bad.push('#' + i + ' layout not ok'); continue; }
-			const t = px(b.style.transform), drift = [];
-			if (!t || Math.abs(t[0] - out.x) > 1 || Math.abs(t[1] - out.y) > 1) drift.push('base translate');
-			if (Math.abs(num(b.style.width) - out.w) > 1 || Math.abs(num(b.style.height) - out.h) > 1) drift.push('base size');
-			/* I2/I1 on the recomputed live box */
-			if (out.w >= vp.width - 1 && !(out.x <= 1 && out.x + out.w >= vp.width - 1)) drift.push('I2 x');
-			if (out.h >= vp.height - 1 && !(out.y <= 1 && out.y + out.h >= vp.height - 1)) drift.push('I2 y');
-			if (out.hw <= vp.width && !(out.hx >= -1 && out.hx + out.hw <= vp.width + 1)) drift.push('I1 x');
-			if (out.hh <= vp.height && !(out.hy >= -1 && out.hy + out.hh <= vp.height + 1)) drift.push('I1 y');
+			/* 1 · origin: the wagon box IS the viewport at park — the only
+			      thing that turns a child translate into window placement */
+			const wr = el.getBoundingClientRect();
+			if (!box(wr, 0, 0, vp.width, vp.height, 2))
+				bad.push('#' + i + ' parked wagon is not the viewport rect ('
+					+ Math.round(wr.left) + ',' + Math.round(wr.top) + ' ' + Math.round(wr.width) + '×' + Math.round(wr.height)
+					+ ' vs ' + vp.width + '×' + vp.height + ')');
+			/* 2 · the written style and the painted box must be the same box, so
+			      no leftover no-JS rule can contain the picture in another one */
+			const br = b.getBoundingClientRect();
+			if (!box(br, out.x, out.y, out.w, out.h)) bad.push('#' + i + ' base rect ≠ HDRegion box');
+			const t = px(b.style.transform);
+			if (!t || !near(t[0], out.x, 0.05) || !near(t[1], out.y, 0.05)
+				|| !near(num(b.style.width), out.w, 0.05) || !near(num(b.style.height), out.h, 0.05))
+				bad.push('#' + i + ' base style ≠ HDRegion box');
+			const cs = getComputedStyle(b);
+			if (cs.position !== 'absolute' || cs.maxHeight !== 'none' || cs.objectFit !== 'fill')
+				bad.push('#' + i + ' base still under the no-JS rules (position ' + cs.position
+					+ ', max-height ' + cs.maxHeight + ', object-fit ' + cs.objectFit + ')');
+			/* 3 · the fit: the crop, not the filler, decides the scale */
+			const e = entryOf(b, h);
+			if (e) {
+				if (out.hw < vp.width - 1 && out.hh < vp.height - 1)
+					bad.push('#' + i + ' region is ' + Math.round(out.hw) + '×' + Math.round(out.hh)
+						+ ' in a ' + vp.width + '×' + vp.height + ' window — the base set the scale');
+				else fitted++;
+				if (!framed(out.x, out.w, out.hx, out.hw, vp.width) || !framed(out.y, out.h, out.hy, out.hh, vp.height))
+					bad.push('#' + i + ' region neither centred nor coverage-pinned');
+				else centred++;
+			} else if (out.w < vp.width - 1 || out.h < vp.height - 1)
+				bad.push('#' + i + ' whole-base wagon letterboxed instead of covering');
+			/* 4 · the crop must cover the base's own region sub-rect */
 			if (h) {
 				const shown = h.style.display !== 'none';
 				if (shown) {
-					const ht = px(h.style.transform);
-					if (!ht || Math.abs(ht[0] - out.hx) > 1 || Math.abs(ht[1] - out.hy) > 1 ||
-						Math.abs(num(h.style.width) - out.hw) > 1 || Math.abs(num(h.style.height) - out.hh) > 1)
-						drift.push('hd box');
+					const hr = h.getBoundingClientRect();
+					if (!box(hr, out.hx, out.hy, out.hw, out.hh)) bad.push('#' + i + ' crop rect ≠ region box');
+					const fx = br.width / b.naturalWidth, fy = br.height / b.naturalHeight;
+					if (!near(hr.left, br.left + num(e && e.x) * fx, 2) || !near(hr.top, br.top + num(e && e.y) * fy, 2)
+						|| !near(hr.width, num(e && e.w) * fx, 2) || !near(hr.height, num(e && e.h) * fy, 2))
+						bad.push('#' + i + ' crop does not cover its region on the base');
 				}
-				if (!entryFor(b) && shown) drift.push('hd shown without entry');
+				const raw = rawOf(b);
+				if (!raw && shown) bad.push('#' + i + ' hd shown with no entry at all');
+				if (raw && !raw.hd && shown) bad.push('#' + i + ' hd shown although the entry declares no crop');
 			}
-			if (drift.length) bad.push('#' + i + ': ' + drift.join(', '));
 			checked++;
-			/* zoom ×2 at a corner: wagon transform must not change, HD must grow
-			   or stay (clamped), and the written box must equal the recomputation */
+			/* 5 · zoom ×2 at a corner: the wagon itself must not move, the crop
+			      must still cover its region, and the box must be the layout */
 			const wagonT = el.style.transform;
 			api.zoomAt(i, vp.width * 0.25, vp.height * 0.3, 2);
 			await raf2();
 			if (el.style.transform !== wagonT) bad.push('#' + i + ' wagon transform written by adapter');
-			const v2 = api.view(i);
-			const out2 = layoutOf(b, v2);
+			const out2 = layoutOf(b, api.view(i), h);
 			const t2 = px(b.style.transform);
-			if (!t2 || Math.abs(t2[0] - out2.x) > 1 || Math.abs(t2[1] - out2.y) > 1) bad.push('#' + i + ' base drift after zoom');
+			if (!t2 || !near(t2[0], out2.x, 0.05) || !near(t2[1], out2.y, 0.05)) bad.push('#' + i + ' base drift after zoom');
 			if (out2.s < out.s - 1e-9) bad.push('#' + i + ' zoom did not grow scale');
 			if (out2.w >= vp.width - 1 && !(out2.x <= 1 && out2.x + out2.w >= vp.width - 1)) bad.push('#' + i + ' I2 lost under zoom');
+			if (h && h.style.display !== 'none' && e) {
+				const br2 = b.getBoundingClientRect(), hr2 = h.getBoundingClientRect();
+				const fx2 = br2.width / b.naturalWidth, fy2 = br2.height / b.naturalHeight;
+				if (!near(hr2.left, br2.left + num(e.x) * fx2, 2) || !near(hr2.top, br2.top + num(e.y) * fy2, 2)
+					|| !near(hr2.width, num(e.w) * fx2, 2) || !near(hr2.height, num(e.h) * fy2, 2))
+					bad.push('#' + i + ' crop left its region under zoom');
+			}
 			api.setView(i, 1, 0, 0);
 			await raf2();
 		}
@@ -1414,22 +1504,43 @@ async function qRegion() {
 			+ '<img src="' + escapeHTML(artURI(120, 80, PALETTE[3], 'probe crop', false)) + '" alt="" aria-hidden="true">';
 		const appEl = $('app'), tail = appEl.querySelector('.tail');
 		const warnBefore = warns.length;
+		if (!tail || !appEl) return row('region', 0, 'harness #app/tail not mounted');
 		appEl.insertBefore(probe, tail);
 		engRefresh();
 		await raf2(); await raf2();
 		if (probe.classList.contains('snow-hd-live')) bad.push('fixed-mode .snow-hd was managed');
 		if (probe.children[0].style.width) bad.push('fixed-mode .snow-hd child restyled');
 		if (warns.length - warnBefore > 1) bad.push('more than one exclusion warning');
-		probe.remove();
+		try { probe.remove(); } catch (e) { /* already gone */ }
 		engRefresh();
 		await raf2();
+		const A2 = api.arrays();          /* measure() may have reallocated */
+		/* 6 · off() must leave NOTHING behind and the next frame must repaint
+		      from zero: setEnabled(true) only steps, so a write gate left warm
+		      would come back with children that have no size at all */
+		if (checked && A2.base[0]) {
+			const b0 = A2.base[0];
+			api.setView(0, 1, 0, 0);
+			await raf2();
+			const paint = b0.style.width + '/' + b0.style.height + '/' + b0.style.transform;
+			Snowfall.setEnabled(false);
+			if (b0.style.width || b0.style.transform || document.documentElement.classList.contains('snow-ready'))
+				bad.push('off() left child styles or the snow-ready class behind');
+			Snowfall.setEnabled(true);
+			await raf2();
+			if (paint !== b0.style.width + '/' + b0.style.height + '/' + b0.style.transform)
+				bad.push('re-enabled children were not repainted identically');
+		}
 	} finally {
 		console.error = origErr; console.warn = origWarn;
 	}
 	if (errs.length) bad.push(errs.length + ' console error(s): ' + errs[0]);
 	if (!checked) return row('region', 0, 'no managed wagons were parked for alignment');
 	if (bad.length) return row('region', 0, bad.slice(0, 5).join('; '));
-	return row('region', 1, checked + ' region wagon(s) aligned with HDRegion ±1px, I1/I2 ok, zoom grows, static scan clean'
+	return row('region', 1, checked + ' wagon(s): rendered rects = HDRegion box ±1.5px, crop covers its region on the base'
+		+ (fitted ? ', art-first fit in ' + fitted : '')
+		+ (centred ? ', centred-or-pinned in ' + centred : '')
+		+ ', zoom grows, re-enable repaints, static scan clean'
 		+ (warns.length ? ' (' + warns.length + ' exclusion warn)' : ''));
 }
 async function qaAll() {

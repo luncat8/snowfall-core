@@ -214,3 +214,70 @@ matrix.
   executes on each gate run. Then the negative control: deleting the declaration
   must fail the gate (it does). Any integration fixture whose main path is
   guarded by `if (!n) return` with n forced 0 is a hole, not a test.
+
+## 0.5.5 region fit & framing — one feature, two independent defects
+
+Two branches shipped "HD regions" and both looked wrong the same way: the sharp
+crop was a small patch on a blurry field, off-centre. Comparing them against the
+standalone `HD-region` reference separated two causes that had been fused into
+one symptom, and both were real in main.
+
+- **The filler must not set the scale.** `s0 = min(cover, room)` — "cover the
+  window with the base, but not so much that the region leaves it" — reads like
+  a safety belt and is a shrink ray: whenever the base is large relative to the
+  window, `cover` wins and the crop lands at a fraction of the frame (measured:
+  a 600×400 rect of a 1600×1000 base in a 1440×900 window came out 540×360,
+  15% of the frame; the reference gives 1350×900, 94%). The region *is* the
+  picture; the outpainted base is what follows it, at the same scale: `s0 =
+  min(vw/rw, vh/rh)`. Only when the "region" is the whole base (no entry, or a
+  rect covering the art) does the plain-background rule apply, `s0 =
+  max(vw/bw, vh/bh)` — a picture with nothing to protect covers, never
+  letterboxes. Consequence worth knowing: one shared scale means a portrait
+  phone with a wide crop can show page background above and below the base
+  (the base simply cannot reach both edges); centring the crop instead would
+  put the *picture* off-centre to place a sub-rect in the middle, which is
+  worse. The gaps are what outpaint is for, not what the fit is for.
+- **`min(a,b)`-style "safety" caps are invisible to gates that only test
+  containment.** I1 (region visible) and I2 (base covers) both held while the
+  art was 15% of the screen, because they bound the *placement*, not the size.
+  The missing invariant is the scale identity: `s/zoom` must equal the region
+  fit (or cover, for a whole base) *exactly* — an equality gate, not an
+  inequality. It is now I4 in the fuzz and a size check in the GUI probe.
+- **A raw box position must not double as "untouched".** The other branch kept
+  `view = {zoom, vx, vy}` with `vx/vy` the base top-left in window space, so
+  `0, 0` meant "base corner in the window corner" and every reset landed there:
+  for the harness data the only positions that keep the crop visible *and* the
+  base covering were x ∈ [−562.5, −472.5], and a 0-default put it flush right,
+  45px off-centre — a composition decided by an unassigned field. It also makes
+  a resize un-reframable (an absolute position from a 1440px window is nonsense
+  at 390px). Store `panX/panY` as an *offset from the derived rest framing*
+  (region centred, coverage pinning it when centring would uncover): `0, 0`
+  then genuinely means nobody touched it, it is comparable across window sizes,
+  and every state is relative to a quantity the layout already computes.
+  `finalLayout` re-persists the clamped pan (`x − restX`) so the clamp has one
+  authority; `rest + (x − rest)` costs a few ulps per frame, which is why the
+  write gates compare with a 1/100px tolerance (`same()`) instead of `!==` —
+  and NaN fails that comparison *by construction*, so the same helper serves as
+  the "force a repaint" sentinel after `off()` without a parallel flag.
+- **Verifying written numbers cannot verify placement.** Both branches agreed
+  with `HDRegion` to the last decimal and still painted the crop in the wrong
+  place, because the check was "style string == math". A GUI probe must read
+  `getBoundingClientRect` (a probe privilege, never frame() code) against the
+  window-space box, and start from the premise that makes a child translate mean
+  window placement at all: the *parked* wagon box equals the viewport. It also
+  needs one residual that ignores the math entirely — the crop rect compared
+  with `base.rect + entry·(base.rect/base.natural)` — so a mistake both sides
+  share cannot cancel out inside the comparison.
+- **Degrade coherently, per input.** An entry with a rect but no `hd` has
+  nothing to paint from the rect, so the rect must stop being a layout input:
+  compute `hdOK` first and read the fit rect from `entry && hdOK ? entry :
+  null`. Magnifying the base to fit a hidden rectangle draws a blurry zoom of
+  nothing, and it is invisible to every geometry check (the crop stays hidden,
+  so nobody compares it).
+- **`off()` must invalidate, not just unwrite.** `Snowfall.setEnabled(true)`
+  only steps — no measure, no re-walk — so caches left warm come back with
+  children that have no size at all. Same reason `ready(snow-ready)` is
+  re-asserted from `frame()`, not only from `measure()`. The GUI probe's
+  disable/enable round trip (styles cleared, then repainted byte-identically) is
+  the only thing that catches this class; it runs last in `qaAll` for exactly
+  that reason.

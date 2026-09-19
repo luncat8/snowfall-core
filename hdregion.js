@@ -1,14 +1,24 @@
 /* hdregion.js — region layout/zoom math for .snow-hd wagons (0.5.5).
 	DOM-free, allocation-free, the same file is node-testable: it is the ONE
-	authority for the fit scale, the edge clamp and the zoom pivot — a
-	consumer that re-derives any of them is a bug.
+	authority for the fit scale, the rest framing, the edge clamp and the zoom
+	pivot — a consumer that re-derives any of them is a bug.
 
 	Coordinates are window space. At park the wagon's local frame IS the
 	viewport (0,0 at top-left, vp.width × vp.height), so the base scaled by
 	s and drawn at (x, y) covers the window on every axis it can and the
-	region rect stays fully inside whenever it fits. Region visibility
-	outranks coverage on purpose: outpainted filler is never worth framing
-	at the price of the art. */
+	region rect stays fully inside whenever it fits.
+
+	Two decisions carry the feature, and both come from the art, not the
+	filler. SCALE: the region is fitted into the window, so it touches the
+	window on its limiting axis and the cheap outpainted base only follows at
+	the same scale. Fitting the BASE to the window instead (a cover scale)
+	keeps the region a small patch on a blurry field — the sharp crop, which
+	is the only reason the wagon exists, never gets bigger than the filler.
+	Position: the unpanned wagon shows the region CENTRED, coverage being a
+	preference under it, so a region narrower than the window never ends up
+	pinned to an edge by a pan state that nobody set.
+	Region visibility outranks coverage on purpose: outpainted filler is never
+	worth framing at the price of the art. */
 (function(global) {
 'use strict';
 
@@ -35,17 +45,19 @@ function maxZoomOf(region) {
 	return m >= 1 && isFinite(m) ? m : DEFAULT_MAX_ZOOM;
 }
 
-/* zoom-1 scale: smallest that covers the window, but never so large that
-   the region stops fitting in it. */
+/* zoom-1 scale: the largest that keeps the region inside the window, i.e. the
+   crop fills the window on its limiting axis. A region that IS the whole base
+   (no entry, or a rect covering the picture) has no art left to protect, so it
+   takes the plain background fit: cover, never letterboxed. */
 function fitScale(vw, vh, bw, bh, rw, rh) {
-	const cover = vw / bw > vh / bh ? vw / bw : vh / bh;
-	const room = vw / rw < vh / rh ? vw / rw : vh / rh;
-	return room < cover ? room : cover;
+	if (rw >= bw && rh >= bh) return vw / bw > vh / bh ? vw / bw : vh / bh;
+	return vw / rw < vh / rh ? vw / rw : vh / rh;
 }
 
-/* one axis. The intersection of [vw − W, 0] (cover) and [−p0, vw − p0 − pl]
-   (region visible) is never empty: pl ≤ win is the caller's condition and
-   p0 + pl ≤ W holds because the rect is inside the base. */
+/* one axis, given the requested base position `want`. The intersection of
+   [win − boxLen, 0] (cover) and [−p0, win − p0 − pl] (region visible) is
+   never empty: pl ≤ win is the caller's condition and p0 + pl ≤ boxLen holds
+   because the rect is inside the base. */
 function clampAxis(want, win, boxLen, p0, pLen) {
 	if (boxLen < win) return (win - boxLen) / 2;
 	let lo = win - boxLen, hi = 0;
@@ -57,15 +69,23 @@ function clampAxis(want, win, boxLen, p0, pLen) {
 	return clamp(want, lo, hi);
 }
 
+/* the unpanned base position on one axis: the region centred in the frame. */
+function restAxis(win, s, r0, rLen) { return (win - rLen * s) / 2 - r0 * s; }
+
+/* a host that hands us NaN gets the rest framing, not a NaN'd style string */
+function panOf(v) { return isFinite(v) ? v : 0; }
+
 /* finalLayout(vw, vh, bw, bh, region, view, out)
 	region: {x, y, w, h} base pixels (optional maxZoom); bad numbers read as
 	          "the whole base".
-	view:   {zoom, vx, vy} — vx/vy are the base top-left in window space at
-	          raw zoom. MUTATED to the canonical clamped state, so re-running
-	          a frame is idempotent and no other code may clamp anything.
+	view:   {zoom, panX, panY}. panX/panY are the reader's pan in WINDOW
+	          pixels away from the rest framing (region centred), so 0,0 is
+	          "nobody has touched this wagon" and it means the same thing on a
+	          phone and on an ultrawide. MUTATED to the canonical clamped pan,
+	          so re-running a frame is a no-op and no other code may clamp.
 	out:    {ok, s, x, y, w, h, hx, hy, hw, hh, clx, cly} — base box, region
 	          box (= the HD child's box), and clamped-axis flags: 1 means the
-	          edge clamp moved the requested pivot, by design at the edges. */
+	          edge clamp moved the requested pan, by design at the edges. */
 var R = { x: 0, y: 0, w: 0, h: 0 };
 function finalLayout(vw, vh, bw, bh, region, view, out) {
 	out.ok = 0;
@@ -75,29 +95,39 @@ function finalLayout(vw, vh, bw, bh, region, view, out) {
 	const s = fitScale(vw, vh, bw, bh, R.w, R.h) * z;
 	const boxW = bw * s, boxH = bh * s;
 	const rx = R.x * s, ry = R.y * s, rw = R.w * s, rh = R.h * s;
-	const x = clampAxis(view.vx, vw, boxW, rx, rw);
-	const y = clampAxis(view.vy, vh, boxH, ry, rh);
+	const restX = restAxis(vw, s, R.x, R.w), restY = restAxis(vh, s, R.y, R.h);
+	const wantX = restX + panOf(view.panX), wantY = restY + panOf(view.panY);
+	const x = clampAxis(wantX, vw, boxW, rx, rw);
+	const y = clampAxis(wantY, vh, boxH, ry, rh);
 	out.ok = 1;
 	out.s = s;
 	out.x = x; out.y = y; out.w = boxW; out.h = boxH;
 	out.hx = x + rx; out.hy = y + ry; out.hw = rw; out.hh = rh;
-	out.clx = x === view.vx ? 0 : 1;
-	out.cly = y === view.vy ? 0 : 1;
-	view.zoom = z; view.vx = x; view.vy = y;
+	out.clx = x === wantX ? 0 : 1;
+	out.cly = y === wantY ? 0 : 1;
+	view.zoom = z; view.panX = x - restX; view.panY = y - restY;
 	return out;
 }
 
-/* zoomAround(view, px, py, k, region) pivots RAW state around the window
-   point (px, py): the content point under it stays fixed exactly — only a
-   later finalLayout may clamp. k is a multiplicative factor. */
-function zoomAround(view, px, py, k, region) {
+/* zoomAround(vw, vh, bw, bh, region, view, px, py, k) pivots RAW state around
+   the window point (px, py): the content point under it stays fixed exactly —
+   only a later finalLayout may clamp. k is a multiplicative factor. It needs
+   the layout inputs because a pan is measured from the rest framing, which
+   moves with the scale: deriving that here is what keeps it out of callers. */
+function zoomAround(vw, vh, bw, bh, region, view, px, py, k) {
 	const mz = maxZoomOf(region);
 	const z0 = clamp(view.zoom >= 1 ? view.zoom : 1, 1, mz);
 	const z1 = clamp(z0 * (k > 0 && isFinite(k) ? k : 1), 1, mz);
-	const r = z1 / z0;
 	view.zoom = z1;
-	view.vx = px - (px - view.vx) * r;
-	view.vy = py - (py - view.vy) * r;
+	if (!(vw > 0 && vh > 0 && bw > 0 && bh > 0)) return view;
+	if (!readRegion(region, bw, bh, R)) return view;
+	const fit = fitScale(vw, vh, bw, bh, R.w, R.h);
+	const s0 = fit * z0, s1 = fit * z1;
+	const x0 = restAxis(vw, s0, R.x, R.w) + panOf(view.panX);
+	const y0 = restAxis(vh, s0, R.y, R.h) + panOf(view.panY);
+	const r = s1 / s0;
+	view.panX = px - (px - x0) * r - restAxis(vw, s1, R.x, R.w);
+	view.panY = py - (py - y0) * r - restAxis(vh, s1, R.y, R.h);
 	return view;
 }
 

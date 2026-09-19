@@ -5,8 +5,10 @@
 
 	Pure fourth subscriber: one measure, one frame, one off. No scroll
 	listener, no rAF, no wagon-element write, no layout read in frame()
-	(beyond decode metadata). All fit/pivot/clamp math is HDRegion's — this
-	file never re-derives a layout.
+	(beyond decode metadata). All fit/rest/clamp/pivot math is HDRegion's —
+	this file never re-derives a layout. Its own state is only
+	`{zoom, panX, panY}` per wagon, the pan being measured away from the rest
+	framing, so a wagon nobody has touched is the region centred at zoom 1.
 
 	Load order in a story page (all classic <script>):
 	regions.js → hdregion.js → snowfall.js → snowfall-region.js */
@@ -24,7 +26,7 @@ const R = {
 	rw: new Float64Array(0), rh: new Float64Array(0), mz: new Float64Array(0),
 	nb: new Float64Array(0), nbh: new Float64Array(0),
 	nh: new Float64Array(0), nhh: new Float64Array(0),
-	zoom: new Float64Array(0), vx: new Float64Array(0), vy: new Float64Array(0),
+	zoom: new Float64Array(0), px: new Float64Array(0), py: new Float64Array(0),
 	lwb: new Float64Array(0), lhb: new Float64Array(0),
 	lxb: new Float64Array(0), lyb: new Float64Array(0),
 	lwh: new Float64Array(0), lhh: new Float64Array(0),
@@ -32,11 +34,11 @@ const R = {
 	ready: new Uint8Array(0), hdOK: new Uint8Array(0), disp: new Int8Array(0)
 };
 const region = { x: 0, y: 0, w: 0, h: 0, maxZoom: 0 };
-const view = { zoom: 1, vx: 0, vy: 0 };
+const view = { zoom: 1, panX: 0, panY: 0 };
 const L = {};
 /* zoom/pan survives refreshes per element: a resize re-fits, it never resets */
 const VIEWS = typeof WeakMap !== 'undefined' ? new WeakMap() : null;
-let warned = false, inspectOn = false, hudEl = null, hudCb = null;
+let warned = false, inspectOn = false, hudEl = null, hudCb = null, readyOn = false;
 
 const REGION_CSS =
 	'html.snow-ready .snow-hd-live{min-height:0}' +
@@ -70,14 +72,19 @@ function grow(n) {
 	R.rw = new Float64Array(n); R.rh = new Float64Array(n); R.mz = new Float64Array(n);
 	R.nb = new Float64Array(n); R.nbh = new Float64Array(n);
 	R.nh = new Float64Array(n); R.nhh = new Float64Array(n);
-	R.zoom = new Float64Array(n); R.vx = new Float64Array(n); R.vy = new Float64Array(n);
+	R.zoom = new Float64Array(n); R.px = new Float64Array(n); R.py = new Float64Array(n);
 	R.lwb = new Float64Array(n); R.lhb = new Float64Array(n);
 	R.lxb = new Float64Array(n); R.lyb = new Float64Array(n);
 	R.lwh = new Float64Array(n); R.lhh = new Float64Array(n);
 	R.lhx = new Float64Array(n); R.lhy = new Float64Array(n);
 	R.ready = new Uint8Array(n); R.hdOK = new Uint8Array(n); R.disp = new Int8Array(n);
 }
-function num(v) { return v > 0 && isFinite(v) ? v : 0; }
+function num(v) { v = +v; return v > 0 && isFinite(v) ? v : 0; }
+/* the write gates are a paint-skip, not the contract: a persisted pan comes
+   back through a subtract/add, so demanding bit-equality would re-write both
+   children every single frame. 1/100px is under any device's rounding.
+   NaN (an invalidated gate) never passes, so a forced repaint still happens. */
+function same(a, b) { return a - b < 0.01 && b - a < 0.01; }
 
 function onBaseLoad(ev) {
 	/* sizes are re-read in frame() from decode metadata; the load event only
@@ -118,8 +125,8 @@ function measure() {
 		const el = R.els[i];
 		if (!el || els.indexOf(el) < 0) continue;
 		let v = VIEWS.get(el);
-		if (!v) { v = { zoom: 1, vx: 0, vy: 0 }; VIEWS.set(el, v); }
-		v.zoom = R.zoom[i]; v.vx = R.vx[i]; v.vy = R.vy[i];
+		if (!v) { v = { zoom: 1, panX: 0, panY: 0 }; VIEWS.set(el, v); }
+		v.zoom = R.zoom[i]; v.panX = R.px[i]; v.panY = R.py[i];
 	}
 	const n = els.length;
 	grow(n);
@@ -129,13 +136,17 @@ function measure() {
 		const el = els[i], b = bases[i], hd = hds[i];
 		el.classList.add('snow-hd-live');
 		const entry = table ? table[HD.normKey(b.getAttribute('src') || '')] : null;
-		R.rx[i] = entry ? num(entry.x) : 0;
-		R.ry[i] = entry ? num(entry.y) : 0;
-		R.rw[i] = entry ? num(entry.w) : 0;
-		R.rh[i] = entry ? num(entry.h) : 0;
+		R.hdOK[i] = entry && entry.hd && hd ? 1 : 0;
+		/* the rect exists to place the crop. With no crop to paint the base IS
+		   the picture, so it is framed whole (cover) rather than magnified into
+		   a blurry zoom of a rect nobody ever shows */
+		const src = R.hdOK[i] ? entry : null;
+		R.rx[i] = src ? num(src.x) : 0;
+		R.ry[i] = src ? num(src.y) : 0;
+		R.rw[i] = src ? num(src.w) : 0;
+		R.rh[i] = src ? num(src.h) : 0;
 		const mz = entry ? +entry.maxZoom : 0;
 		R.mz[i] = mz >= 1 && isFinite(mz) ? mz : 0;
-		R.hdOK[i] = entry && entry.hd && hd ? 1 : 0;
 		R.wi[i] = wgs ? wgs.els.indexOf(el) : -1;
 		/* seed from `complete && naturalWidth` so a cached image is sized on
 		   the first frame — it never fires load again */
@@ -147,8 +158,10 @@ function measure() {
 		if (!b.__snowHdBound) { b.addEventListener('load', onBaseLoad); b.__snowHdBound = 1; }
 		if (hd && !hd.__snowHdBound) { hd.addEventListener('load', onHdLoad); hd.__snowHdBound = 1; }
 		const v = VIEWS && VIEWS.get(el);
-		if (v) { R.zoom[i] = v.zoom; R.vx[i] = v.vx; R.vy[i] = v.vy; }
-		else { R.zoom[i] = 1; R.vx[i] = 0; R.vy[i] = 0; }
+		if (v) { R.zoom[i] = v.zoom; R.px[i] = v.panX; R.py[i] = v.panY; }
+		/* a fresh wagon is an untouched one: pan 0,0 IS the rest framing (the
+		   region centred), so first paint needs no position of its own */
+		else { R.zoom[i] = 1; R.px[i] = 0; R.py[i] = 0; }
 		/* force the next frame to write everything: the element may be new or
 		   the fallback CSS may still constrain it */
 		R.lwb[i] = NaN; R.lhb[i] = NaN; R.lxb[i] = NaN; R.lyb[i] = NaN;
@@ -156,10 +169,21 @@ function measure() {
 		R.disp[i] = -1;
 	}
 	R.els = els; R.base = bases; R.hd = hds; R.n = n;
-	const root = document.documentElement;
-	if (n) root.classList.add('snow-ready');
-	else root.classList.remove('snow-ready');
+	ready(n > 0);
 	if (hudEl) hudEl.hidden = !n;
+}
+
+/* One writer for the class that switches the host page from the no-JS
+   fallback to JS sizing. It must be re-asserted from frame(), because
+   Snowfall.setEnabled(true) only steps: a disable/enable cycle that left the
+   class off would put max-height/object-fit back on children whose pixel
+   sizes are already written, and correct math would paint in the wrong place. */
+function ready(on) {
+	if (on === readyOn || !hasDOM) return;
+	readyOn = on;
+	const root = document.documentElement;
+	if (on) root.classList.add('snow-ready');
+	else root.classList.remove('snow-ready');
 }
 
 /* frame(sY, vh, vw) — children only, in wagon-local space: at park that IS
@@ -168,6 +192,7 @@ function measure() {
 function frame(sY, vh, vw) {
 	const n = R.n;
 	if (!n || !HD) return;
+	ready(true);
 	for (let i = 0; i < n; i++) {
 		const b = R.base[i], hd = R.hd[i];
 		/* the one legal DOM read here: naturalWidth/Height are decode
@@ -178,13 +203,14 @@ function frame(sY, vh, vw) {
 		if (!(bw > 0 && bh > 0)) continue;
 		region.x = R.rx[i]; region.y = R.ry[i];
 		region.w = R.rw[i]; region.h = R.rh[i]; region.maxZoom = R.mz[i];
-		view.zoom = R.zoom[i]; view.vx = R.vx[i]; view.vy = R.vy[i];
+		view.zoom = R.zoom[i]; view.panX = R.px[i]; view.panY = R.py[i];
 		HD.finalLayout(vw, vh, bw, bh, region, view, L);
 		if (!L.ok) continue;
 		/* finalLayout canonicalized `view` in place — persist it, so the
 		   clamp has one authority and re-running the frame is a no-op */
-		R.zoom[i] = view.zoom; R.vx[i] = view.vx; R.vy[i] = view.vy;
-		if (L.w !== R.lwb[i] || L.h !== R.lhb[i] || L.x !== R.lxb[i] || L.y !== R.lyb[i]) {
+		R.zoom[i] = view.zoom; R.px[i] = view.panX; R.py[i] = view.panY;
+		if (!same(L.w, R.lwb[i]) || !same(L.h, R.lhb[i]) ||
+			!same(L.x, R.lxb[i]) || !same(L.y, R.lyb[i])) {
 			const st = b.style;
 			st.width = L.w + 'px';
 			st.height = L.h + 'px';
@@ -196,7 +222,8 @@ function frame(sY, vh, vw) {
 			if (R.disp[i] !== 0) { hd.style.display = 'none'; R.disp[i] = 0; }
 			continue;
 		}
-		if (L.hw !== R.lwh[i] || L.hh !== R.lhh[i] || L.hx !== R.lhx[i] || L.hy !== R.lhy[i]) {
+		if (!same(L.hw, R.lwh[i]) || !same(L.hh, R.lhh[i]) ||
+			!same(L.hx, R.lhx[i]) || !same(L.hy, R.lhy[i])) {
 			const st = hd.style;
 			st.width = L.hw + 'px';
 			st.height = L.hh + 'px';
@@ -217,9 +244,14 @@ function off() {
 	for (let i = 0; i < R.n; i++) {
 		R.els[i].classList.remove('snow-hd-live');
 		clearImg(R.base[i]); clearImg(R.hd[i]);
+		/* every write gate must go stale with the style it describes, or the
+		   next frame compares against a value the element no longer holds and
+		   a re-enabled engine paints nothing */
+		R.lwb[i] = NaN; R.lhb[i] = NaN; R.lxb[i] = NaN; R.lyb[i] = NaN;
+		R.lwh[i] = NaN; R.lhh[i] = NaN; R.lhx[i] = NaN; R.lhy[i] = NaN;
 		R.disp[i] = -1;
 	}
-	document.documentElement.classList.remove('snow-ready');
+	ready(false);
 }
 
 /* ---------------- gestures ----------------
@@ -230,7 +262,7 @@ function off() {
 	pinch = zoom around the midpoint; touchmove is preventDefault'ed so the
 	page never scrolls under the pan — never an ancestor `overflow` trick: any
 	non-visible overflow on a wagon ancestor traps sticky and kills parking.
-	Handlers mutate raw zoom/vx/vy and call Snowfall.step(); zero layout
+	Handlers mutate raw zoom/panX/panY and call Snowfall.step(); zero layout
 	reads, zero second rAF, the wagon itself keeps moving 1:1 with its text. */
 function overForm(t) { return !!(t && t.closest && t.closest('input,textarea,select,button,label')); }
 function step() { if (global.Snowfall && global.Snowfall.step) global.Snowfall.step(); }
@@ -255,21 +287,26 @@ function pickTarget() {
 function remember(i) {
 	if (!VIEWS || !R.els[i]) return;
 	let v = VIEWS.get(R.els[i]);
-	if (!v) { v = { zoom: 1, vx: 0, vy: 0 }; VIEWS.set(R.els[i], v); }
-	v.zoom = R.zoom[i]; v.vx = R.vx[i]; v.vy = R.vy[i];
+	if (!v) { v = { zoom: 1, panX: 0, panY: 0 }; VIEWS.set(R.els[i], v); }
+	v.zoom = R.zoom[i]; v.panX = R.px[i]; v.panY = R.py[i];
 }
+/* zoomAround needs the same window the frame was laid out in: the engine's
+   cached viewport is the one source, never a fresh measure. */
 function zoomAt(i, px, py, k) {
 	if (i < 0 || i >= R.n || !HD || !(k > 0) || !isFinite(k)) return;
-	region.maxZoom = R.mz[i];
-	view.zoom = R.zoom[i]; view.vx = R.vx[i]; view.vy = R.vy[i];
-	HD.zoomAround(view, px, py, k, region);
-	R.zoom[i] = view.zoom; R.vx[i] = view.vx; R.vy[i] = view.vy;
+	const S = global.Snowfall, vp = S && S.viewport;
+	if (!vp) return;
+	region.x = R.rx[i]; region.y = R.ry[i];
+	region.w = R.rw[i]; region.h = R.rh[i]; region.maxZoom = R.mz[i];
+	view.zoom = R.zoom[i]; view.panX = R.px[i]; view.panY = R.py[i];
+	HD.zoomAround(vp.width, vp.height, R.nb[i], R.nbh[i], region, view, px, py, k);
+	R.zoom[i] = view.zoom; R.px[i] = view.panX; R.py[i] = view.panY;
 	remember(i);
 	step();
 }
-function setView(i, zoom, vx, vy) {
+function setView(i, zoom, panX, panY) {
 	if (i < 0 || i >= R.n) return;
-	R.zoom[i] = zoom; R.vx[i] = vx; R.vy[i] = vy;
+	R.zoom[i] = zoom; R.px[i] = panX; R.py[i] = panY;
 	remember(i);
 	step();
 }
@@ -300,17 +337,17 @@ function onPointerMove(e) {
 	if (!dx && !dy) return;
 	dragX = e.clientX; dragY = e.clientY;
 	e.preventDefault();
-	if (dragI < R.n) setView(dragI, R.zoom[dragI], R.vx[dragI] + dx, R.vy[dragI] + dy);
+	if (dragI < R.n) setView(dragI, R.zoom[dragI], R.px[dragI] + dx, R.py[dragI] + dy);
 }
 function onPointerUp() { dragI = -1; }
 
 function onDbl(e) {
 	if (!inspectOn || overForm(e.target)) return;
 	const i = pickTarget();
-	if (i >= 0) setView(i, 1, R.vx[i], R.vy[i]);
+	if (i >= 0) setView(i, 1, R.px[i], R.py[i]);
 }
 
-let tMode = 0, tI = -1, tX = 0, tY = 0, tVx = 0, tVy = 0, tD0 = 0, tZ0 = 1, tMX = 0, tMY = 0;
+let tMode = 0, tI = -1, tX = 0, tY = 0, tPx = 0, tPy = 0, tD0 = 0, tZ0 = 1, tMX = 0, tMY = 0;
 function onTouchStart(e) {
 	if (!inspectOn || !R.n) return;
 	const i = pickTarget();
@@ -318,7 +355,7 @@ function onTouchStart(e) {
 	tI = i;
 	if (e.touches.length === 1) {
 		tMode = 1; tX = e.touches[0].clientX; tY = e.touches[0].clientY;
-		tVx = R.vx[i]; tVy = R.vy[i];
+		tPx = R.px[i]; tPy = R.py[i];
 	} else {
 		const dx = e.touches[1].clientX - e.touches[0].clientX;
 		const dy = e.touches[1].clientY - e.touches[0].clientY;
@@ -326,7 +363,7 @@ function onTouchStart(e) {
 		tD0 = Math.sqrt(dx * dx + dy * dy) || 1;
 		tMX = (e.touches[0].clientX + e.touches[1].clientX) / 2;
 		tMY = (e.touches[0].clientY + e.touches[1].clientY) / 2;
-		tZ0 = R.zoom[i]; tVx = R.vx[i]; tVy = R.vy[i];
+		tZ0 = R.zoom[i]; tPx = R.px[i]; tPy = R.py[i];
 	}
 }
 function onTouchMove(e) {
@@ -334,14 +371,14 @@ function onTouchMove(e) {
 	e.preventDefault();
 	const t = e.touches;
 	if (tMode === 1 && t.length === 1) {
-		setView(tI, R.zoom[tI], tVx + t[0].clientX - tX, tVy + t[0].clientY - tY);
+		setView(tI, R.zoom[tI], tPx + t[0].clientX - tX, tPy + t[0].clientY - tY);
 		return;
 	}
 	if (t.length < 2) return;
 	const dx = t[1].clientX - t[0].clientX, dy = t[1].clientY - t[0].clientY;
 	const d = Math.sqrt(dx * dx + dy * dy);
 	const mx = (t[0].clientX + t[1].clientX) / 2, my = (t[0].clientY + t[1].clientY) / 2;
-	setView(tI, tZ0, tVx + mx - tMX, tVy + my - tMY);
+	setView(tI, tZ0, tPx + mx - tMX, tPy + my - tMY);
 	if (d > 1) zoomAt(tI, mx, my, d / tD0);
 }
 function onTouchEnd(e) {
@@ -388,7 +425,7 @@ const api = {
 	count: function() { return R.n; },
 	/* live state for the QA probe — read-only by convention */
 	arrays: function() { return { els: R.els, base: R.base, hd: R.hd, wi: R.wi }; },
-	view: function(i) { return { zoom: R.zoom[i], vx: R.vx[i], vy: R.vy[i] }; },
+	view: function(i) { return { zoom: R.zoom[i], panX: R.px[i], panY: R.py[i] }; },
 	setView: setView,
 	zoomAt: zoomAt,
 	reset: function(i) { setView(i, 1, 0, 0); },
