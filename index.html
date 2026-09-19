@@ -42,6 +42,7 @@
 			<label class="rowf">sticky labels <select id="stick"><option>off</option><option>top</option><option>bottom</option><option selected>both</option></select></label>
 			<label class="rowf"><input id="style" type="checkbox" checked> chapter colors/styles</label>
 			<label class="rowf"><input id="events" type="checkbox" checked> script events</label>
+			<label class="rowf"><input id="regions" type="checkbox"> region backgrounds (.snow-hd crops)</label>
 			<label class="rowf"><input id="gutter" type="checkbox" checked> line numbers</label>
 			<label class="rowf"><input id="hudOn" type="checkbox" checked> reading-line hud</label>
 		</fieldset>
@@ -69,12 +70,14 @@
 			<label>speed <output id="spd">6</output><input id="speed" type="range" min="1" max="60" value="6"></label>
 			<label class="rowf"><input id="wire" type="checkbox"> wireframes</label><label class="rowf"><input id="estate" type="checkbox"> engine state</label>
 			<div class="btns"><button id="top" type="button">top</button><button id="bot" type="button">bottom</button><button id="prev" type="button">◂</button><button id="next" type="button">▸</button><button id="auto" type="button" data-on="0">autoscroll</button><button id="qaBtn" type="button">QA all (q)</button></div>
+			<label class="rowf"><input id="inspectBg" type="checkbox"> inspect bg (mirror of adapter `i`)</label>
+			<div class="btns"><button id="saveRegions" type="button">save regions.js</button></div>
 		</details>
 	</div>
 	<textarea id="src" spellcheck="false" wrap="off" aria-label="Template HTML source"></textarea>
 </form>
 <div id="diag"><pre id="dstats">…</pre><div id="qa"></div><pre id="estatePre"></pre></div>
 <div id="app"></div><div id="rail" aria-hidden="true"></div><div id="mark" aria-hidden="true"></div><div id="wires" aria-hidden="true"></div>
-<script src="snowfall.js"></script><script src="harness.js"></script>
+<script src="hdregion.js"></script><script src="snowfall.js"></script><script src="snowfall-region.js"></script><script src="harness.js"></script>
 </body>
 </html>

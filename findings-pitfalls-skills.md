@@ -156,3 +156,61 @@ matrix.
   errors — the page just silently loses a feature.
 - An engine-side fix that a downstream adapter needed is still an engine fix.
   Upstream it and re-sync; patching the copy is how the fork above happened.
+
+## 0.5.5 region gates — techniques and pitfalls (node-testable)
+
+- **Simulate the frame loop headless.** The sticky/park clamp's promises (finite
+  scroll range, monotone entry, per-frame motion ≤ step) are statements about
+  iterated engine frames, which no static unit test can see. `test/math.js`
+  reimplements the chain + clamp in ~15 lines (`simFrame`) and scans thousands
+  of synthetic frames per layout — including a deliberately **unclamped control
+  run** that the same assertions must reject. An invariant gate that does not
+  first demonstrate failure on the buggy variant proves nothing; the control run
+  is what makes "bounded by the parent, never re-enters" a real gate. (The
+  control also caught a plan overclaim: `pos` converges to 0 at top-exit but
+  plateaus at −2·cap while the parent itself drifts — assert the validated form.)
+- **Clamp where the consumer reads, not where you'd naively write.** Clamping
+  `pos` inside the chain loop (before `y+pos` becomes the next wagon's ceiling)
+  teleports `dir=3` wagons ~600px when the cap crosses; after the loop, the only
+  overlap created is between two wagons already above the viewport top. Also:
+  the chain's ceilings must be built from pre-clamp positions, so a parent's
+  departure never pushes a parked child's cap down — otherwise the child re-enters.
+- **Gates must reuse the implementation's exact comparison, tolerance-free, for
+  conditional invariants.** "The region-visibility clamp applies *if* the scaled
+  region fits" is `pLen <= win`; when the fuzz asserted it with ±1e-9 slack on
+  the size test, ~0.25% of random layouts disagreed by one ULP (hw/vw =
+  1.0000000000000002). The fixed gate checks `out.hw <= vw` — the identical
+  float expression the clamp guards — and is silent. Tolerances belong on
+  *measurements*, never on predicates that mirror an `if`.
+- **In a node test of a browser module, the fakes are the bug surface.** These
+  files run as `(function(global){…})(typeof window !== 'undefined' ? window :
+  globalThis)`: once a fake `global.window` exists, everything the module reads
+  "off global" (`global.HDRegion`, `global.REGIONS`, `global.Snowfall`) must
+  hang off the **fake window**, not globalThis — fakes placed on globalThis
+  produce silent no-ops (a "0 of 3 managed" that looks like an adapter bug).
+  A `querySelectorAll` fake keyed on selector substring plus one `fakeEl()`
+  factory (style/dataset/classList/children-wiring) is enough to run the real
+  engine + adapter end-to-end; a bare `{length:0}` NodeList keeps the engine's
+  layout pass inert while the viewport contract still exercises.
+- **`Function#toString` replaces the forbidden fetch.** The static scans (no
+  `getBoundingClientRect`/`getComputedStyle`/allocation literals in the frame
+  body, no `innerWidth` anywhere in a region file) must run in the GUI under
+  file:// too — `fetch('./snowfall-region.js')` would die on CORS there. The
+  adapter exposes its subscribed functions on its namespace; stringifying those
+  (and the harness's own source via `qMorph`'s existing fetch path, which is
+  http-only anyway) scans the shipped bytes without any I/O.
+- **Determinism needs a seeded generator, not `Math.random`.** One `mulberry32`
+  copy in the test files turns the fuzz into a reproducible regression: failure
+  output prints the exact `t=` parameters, and re-running at the same seed is
+  byte-identical. (Same seed constant `0xC0FFEE` in both gates.)
+- **A gate that never runs the hot loop certifies nothing.** The 0.5.5 clamp edit
+  to `wagonsFrame` swallowed the `let active/parked/pushed/writes = …` line in
+  the replaced context; `node --check` passed (ReferenceError is runtime), and
+  both gates stayed green — the fake DOM had zero `.snow-bg` elements, so the
+  frame returned at the `if (!n)` guard. The user's browser hit it at once, and
+  the boot-time throw killed the harness menu before its bindings registered.
+  Fix: the engine gate now plants one fake wagon in the fake tree and asserts
+  `wagons.n === 1` plus a `translate3d(` write — every statement in the loop
+  executes on each gate run. Then the negative control: deleting the declaration
+  must fail the gate (it does). Any integration fixture whose main path is
+  guarded by `if (!n) return` with n forced 0 is a hole, not a test.

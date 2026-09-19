@@ -48,7 +48,7 @@ function parseT(el) {
 
 /* ---------------- config in location.hash ---------------- */
 const IDS = ['preset', 'n', 'bgs', 'len', 'gap', 'flow', 'mode', 'size', 'dir', 'nest', 'stick'];
-const CHECKS = ['style', 'events', 'exampleGradient', 'gutter', 'hudOn'];
+const CHECKS = ['style', 'events', 'exampleGradient', 'gutter', 'hudOn', 'regions'];
 let SEED = 20260917;
 function getCfg() {
 	const c = { seed: SEED };
@@ -108,6 +108,8 @@ function hash32(s) {
    so no quote can ever close the attribute it is pasted into.
    In repeat mode the bands run vertically with a period that divides the tile
    width, so neighbouring tiles continue the same rhythm. */
+/* returns the BARE data: URI — CSS call sites wrap it in url('…'), the
+   region <img> children use it as src verbatim */
 function artURI(w, h, pal, tag, tile) {
 	const rng = mulberry32(hash32(tag));
 	const short = Math.min(w, h);
@@ -135,7 +137,7 @@ function artURI(w, h, pal, tag, tile) {
 		+ '" stroke-width="' + Math.max(1, Math.round(r / 20)) + '" opacity="' + (tile ? 0.22 : 0.45) + '"/>'
 		+ (tile ? '' : '<text x="' + (fs + 2) + '" y="' + (fs * 2) + '" font-family="monospace" font-size="' + fs + '" fill="#ffffff" opacity="0.55">' + tag + '</text>')
 		+ '</svg>';
-	return "url('data:image/svg+xml," + encodeURIComponent(svg) + "')";
+	return 'data:image/svg+xml,' + encodeURIComponent(svg);
 }
 function wagonVisual(pal, mode, size, tag) {
 	if (mode === 'tiled') return artURI(160, 160, pal, tag, true);
@@ -300,18 +302,41 @@ function flushSource() { if (sourceDirty) applySource(); }
 function templateMode(cfg, rng) { return cfg.mode === 'mixed' ? pick(rng, ['cover','cover','contain','tiled','fixed','auto']) : cfg.mode; }
 function templateGap(cfg, rng) { return cfg.flow === 'mixed' ? pick(rng, ['0','100vh']) : cfg.flow === 'screen' ? '100vh' : '0'; }
 function sourceVisual(source, fallback, pal, mode, size, tag) {
-	if (source) return { image:exampleURL(source), source:source };
-	if (!fallback) return { image:'', source:'' };
-	return { image: wagonVisual(pal, mode, size, tag), source: '' };
+	if (source) return { src:source, image:exampleURL(source), source:source };
+	if (!fallback) return { src:'', image:'', source:'' };
+	const raw = wagonVisual(pal, mode, size, tag);
+	return { src:raw, image:"url('"+raw+"')", source:'' };
+}
+/* region wagons (0.5.5): two data-URI <img> children + an in-memory REGIONS
+   entry — no files, no network, so QA runs from a double-clicked index.html.
+   A pasted example URL becomes the base with NO entry on purpose: its pixel
+   size is unknown in markup space, so it exercises the "whole base is the
+   region, HD hidden" fallback path. */
+function regionWagonInner(k, j, rng, visual) {
+	if (!visual.src) return '';
+	if (visual.source) return '<img src="' + escapeHTML(visual.src) + '" alt="Scene ' + k + '.' + j + '">';
+	const bw = 1600, bh = 1000;
+	const rw = 480 + Math.floor(rng() * 6) * 120, rh = 320 + Math.floor(rng() * 4) * 120;
+	const rx = Math.round(rng() * (bw - rw)), ry = Math.round(rng() * (bh - rh));
+	const hd = artURI(rw * 2, rh * 2, PALETTE[(k + 2) % PALETTE.length], 'ch'+k+'·bg'+j+' crop', false);
+	(window.REGIONS = window.REGIONS || {})[visual.src] = { x:rx, y:ry, w:rw, h:rh, hd:hd, bw:bw, bh:bh };
+	return '<img src="' + escapeHTML(visual.src) + '" alt="Scene ' + k + '.' + j + ' outpainted base">'
+		+ '<img src="' + escapeHTML(hd) + '" alt="" aria-hidden="true">';
 }
 function templateWagonHTML(k, j, cfg, rng, source, pal) {
-	const mode = templateMode(cfg, rng), size = cfg.size === 'mixed' ? pick(rng,[256,512,1024]) : +cfg.size;
+	let mode = templateMode(cfg, rng);
+	const size = cfg.size === 'mixed' ? pick(rng,[256,512,1024]) : +cfg.size;
 	const dir = cfg.dir === 'mixed' ? pick(rng,['top','left','right','bottom']) : cfg.dir === 'none' ? 'top' : cfg.dir;
-	const visual = sourceVisual(source, !!cfg.exampleGradient, pal, mode, size, 'ch'+k+'·bg'+j);
-	let at = ' class="snow-bg" data-mode="'+mode+'" data-gap="'+templateGap(cfg,rng)+'"';
+	if (cfg.regions && (mode === 'fixed' || mode === 'auto')) mode = 'cover';
+	const visual = sourceVisual(source, !!cfg.exampleGradient, pal, cfg.regions ? 'cover' : mode, size, 'ch'+k+'·bg'+j);
+	/* a region wagon needs an actual picture — without one it would be a
+	   managed nothing, so the class stays off and it remains a plain wagon */
+	const isHd = !!(cfg.regions && visual.src);
+	let at = ' class="snow-bg'+(isHd ? ' snow-hd' : '')+'" data-mode="'+mode+'" data-gap="'+templateGap(cfg,rng)+'"';
 	if (mode === 'fixed' || mode === 'auto') at += ' data-size="'+size+'"';
 	if (dir !== 'top') at += ' data-dir="'+dir+'"';
 	if (visual.source) at += ' data-source="'+escapeHTML(visual.source)+'"';
+	if (isHd) return '<div'+at+'>' + regionWagonInner(k, j, rng, visual) + '</div>';
 	if (visual.image) at += ' style="background-image:'+escapeHTML(visual.image)+';"';
 	return '<div'+at+'></div>';
 }
@@ -362,6 +387,7 @@ function templateChapterHTML(k, cfg, rng, sources, cursor) {
 }
 function build() {
 	flushSource(); const cfg=getCfg(), rng=mulberry32(SEED), sources=parseExampleImages($('exampleImages').value), cursor={i:0}, parts=[];
+	window.REGIONS = {};
 	for (let k=1;k<=clamp(+cfg.n||1,1,12);k++) parts.push(templateChapterHTML(k,cfg,rng,sources,cursor));
 	$('app').innerHTML=parts.join('')+'<div class="tail"></div>'; LOG.length=0; $('qa').innerHTML=''; $('jump').max=chapters().length||1;
 	window.scrollTo(0,0); writeHash(); engRefresh(); writeSource(false);
@@ -421,7 +447,9 @@ const SCENE_FIELDS = [
 	{ key:'stickBottom', label:'bottom label', type:'text' }
 ];
 function fieldValue(el, key) {
-	if (key === 'source') return el.dataset.source || '';
+	if (key === 'source') return el.classList.contains('snow-hd')
+		? (el.querySelector('img') ? el.querySelector('img').getAttribute('src') : '')
+		: (el.dataset.source || '');
 	if (key === 'stickTop' || key === 'stickBottom') {
 		const side = key === 'stickTop' ? 'top' : 'bottom';
 		const stick = el.querySelector('.snow-stick[data-park^="' + side + '"]');
@@ -523,6 +551,11 @@ function applyInspector(e) {
 	mutatePreview(() => {
 		const key = input.dataset.key, value = input.value.trim();
 		if (key === 'source') {
+			if (el.classList.contains('snow-hd')) {
+				const img = el.querySelector('img');
+				if (img) { if (value) img.setAttribute('src', value); else img.removeAttribute('src'); }
+				return;
+			}
 			if (value) { el.dataset.source = value; el.style.backgroundImage = exampleURL(value); }
 			else { delete el.dataset.source; el.style.removeProperty('background-image'); }
 			return;
@@ -550,6 +583,28 @@ function applyLayout() {
 function headLines(){if(headLineCache)return headLineCache;headLineCache=[];$('src').value.split('\n').forEach((line,i)=>{if(/<h4\b[^>]*class="[^"]*\bn\b/.test(line))headLineCache.push(i);});return headLineCache;}
 function syncPreviewToSource(){if(!$('syncScroll').checked||qaBusy||document.activeElement===$('src')||scrollDriver==='source'&&Date.now()<driverUntil)return;const hs=chapters();if(!selectedHeading||!hs.length)return;const i=hs.indexOf(selectedHeading),lines=headLines();if(i<0||!lines[i])return;paneQuietUntil=Date.now()+300;$('src').scrollTop=Math.max(0,lines[i]*18-$('src').clientHeight/4);}
 function copyTemplate(){flushSource();writeSource(true);const text=$('src').value,done=ok=>sourceStatus(ok?'copied template HTML':'copy blocked · select source manually',!ok);if(navigator.clipboard&&navigator.clipboard.writeText)navigator.clipboard.writeText(text).then(()=>done(true),()=>done(fallbackCopy(text)));else done(fallbackCopy(text));}
+/* the harness's in-memory REGIONS in the real regions.js format — GENERATED
+   block rewritten, MANUAL block preserved: what the asset pipeline writes. */
+function saveRegionsFile(){
+	const R=window.REGIONS||{};
+	let s='/* regions.js — exported by the snowfall harness · keys are base src (query/hash stripped, ./ removed) */\n'
+		+'var REGIONS = (typeof REGIONS === "undefined") ? {} : REGIONS;\n'
+		+'/* ===== GENERATED-BEGIN ===== */\n';
+	for(const key of Object.keys(R)){
+		const e=R[key];
+		s+='REGIONS['+JSON.stringify(key)+'] = { x: '+e.x+', y: '+e.y+', w: '+e.w+', h: '+e.h
+			+(e.hd?', hd: '+JSON.stringify(e.hd):'')
+			+(e.bw?', bw: '+e.bw+', bh: '+e.bh:'')
+			+(e.maxZoom?', maxZoom: '+e.maxZoom:'')+' };\n';
+	}
+	s+='/* ===== GENERATED-END ===== */\n/* ===== MANUAL-BEGIN ===== */\n/* REGIONS["img/scene.avif"].maxZoom = 2; */\n/* ===== MANUAL-END ===== */\n';
+	const a=document.createElement('a');
+	a.href=URL.createObjectURL(new Blob([s],{type:'text/javascript'}));
+	a.download='regions.js';
+	a.click();
+	setTimeout(()=>URL.revokeObjectURL(a.href),800);
+	sourceStatus('saved regions.js · '+Object.keys(R).length+' entries',!Object.keys(R).length);
+}
 
 /* ---------------- diagnostics @10Hz ---------------- */
 let frames = 0, worstMs = 0, lastT = 0;
@@ -1261,6 +1316,122 @@ async function qMorph() {
 	return row('morph', 1, arrivals + ' arrival(s), ' + snaps + ' snap(s), ' + swaps + ' swap(s), idle 0 writes, regen ok'
 		+ (skipped ? ', ' + skipped + ' skipped (zone/clamp)' : ''));
 }
+/* qRegion (0.5.5): live alignment of the adapter's written child styles with
+   HDRegion.finalLayout at the engine viewport, I1/I2 on the recomputed box,
+   growth under zoom, degradation cases, and static source checks run via
+   Function#toString (no fetch — file:// would block it). */
+async function qRegion() {
+	const hdEls = Array.from(document.querySelectorAll('#app .snow-bg.snow-hd'));
+	if (!hdEls.length) return row('region', -1, 'no .snow-hd wagons (regions off?)');
+	if (!hasEng() || !window.HDRegion || !window.SnowfallRegion)
+		return row('region', 0, 'engine, HDRegion or SnowfallRegion missing');
+	const api = window.SnowfallRegion, HDM = window.HDRegion, vp = Snowfall.viewport;
+	if (!vp || vp.width !== document.documentElement.clientWidth)
+		return row('region', 0, 'engine predates the 0.5.5 viewport contract');
+	const bad = [];
+	let checked = 0;
+	const subs = (Snowfall.default && Snowfall.default.subs) || [];
+	const asub = subs.filter(s => s.frame === api.frame)[0];
+	if (!asub) bad.push('adapter subscriber not registered via Snowfall.use');
+	const fsrc = asub ? asub.frame.toString() : '';
+	if (/getBoundingClientRect|getComputedStyle|addEventListener|fetch\(/.test(fsrc))
+		bad.push('adapter frame() touches forbidden APIs');
+	if (/=>|\bnew \b|= \{|\[ *\]/.test(fsrc)) bad.push('adapter frame() allocates literals/closures');
+	if (/innerWidth|addEventListener\('scroll'/.test(api.frame.toString() + fsrc + HDM.finalLayout.toString()))
+		bad.push('scroll/innerWidth found where forbidden');
+	const A = api.arrays();
+	const wgs = Snowfall.wagons;
+	const px = t => { const m = /translate\(\s*(-?[\d.]+)px,\s*(-?[\d.]+)px/.exec(t || ''); return m ? [+m[1], +m[2]] : null; };
+	const num = v => parseFloat(v) || 0;
+	const entryFor = img => {
+		const T = window.REGIONS || {};
+		return T[HDM.normKey(img.getAttribute('src') || '')] || null;
+	};
+	const layoutOf = (b, v) => {
+		const e = entryFor(b), bw = b.naturalWidth, bh = b.naturalHeight;
+		const region = { x: e ? +e.x || 0 : 0, y: e ? +e.y || 0 : 0, w: e ? +e.w || 0 : 0, h: e ? +e.h || 0 : 0 };
+		const mz = e ? +e.maxZoom : 0;
+		region.maxZoom = mz >= 1 && isFinite(mz) ? mz : 0;
+		return HDM.finalLayout(vp.width, vp.height, bw, bh, region, v, {});
+	};
+	const errs = [], warns = [];
+	const origErr = console.error, origWarn = console.warn;
+	console.error = function() { const a = String(arguments[0]); if (/region|HD/i.test(a)) errs.push(a); return origErr.apply(console, arguments); };
+	console.warn = function() { const a = String(arguments[0]); if (/region|HD/i.test(a)) warns.push(a); };
+	try {
+		for (let i = 0; i < A.els.length; i++) {
+			const el = A.els[i], b = A.base[i], h = A.hd[i], wi = A.wi[i];
+			if (wi < 0 || !b) { bad.push('#' + i + ' unmapped wagon'); continue; }
+			setY(Math.round(wgs.y[wi]) + 1);
+			await raf2();
+			api.setView(i, 1, 0, 0);
+			await raf2();
+			if (!(b.naturalWidth > 0)) { bad.push('#' + i + ' base never sized after park'); continue; }
+			const v0 = api.view(i);
+			const out = layoutOf(b, { zoom: v0.zoom, vx: v0.vx, vy: v0.vy });
+			if (!out.ok) { bad.push('#' + i + ' layout not ok'); continue; }
+			const t = px(b.style.transform), drift = [];
+			if (!t || Math.abs(t[0] - out.x) > 1 || Math.abs(t[1] - out.y) > 1) drift.push('base translate');
+			if (Math.abs(num(b.style.width) - out.w) > 1 || Math.abs(num(b.style.height) - out.h) > 1) drift.push('base size');
+			/* I2/I1 on the recomputed live box */
+			if (out.w >= vp.width - 1 && !(out.x <= 1 && out.x + out.w >= vp.width - 1)) drift.push('I2 x');
+			if (out.h >= vp.height - 1 && !(out.y <= 1 && out.y + out.h >= vp.height - 1)) drift.push('I2 y');
+			if (out.hw <= vp.width && !(out.hx >= -1 && out.hx + out.hw <= vp.width + 1)) drift.push('I1 x');
+			if (out.hh <= vp.height && !(out.hy >= -1 && out.hy + out.hh <= vp.height + 1)) drift.push('I1 y');
+			if (h) {
+				const shown = h.style.display !== 'none';
+				if (shown) {
+					const ht = px(h.style.transform);
+					if (!ht || Math.abs(ht[0] - out.hx) > 1 || Math.abs(ht[1] - out.hy) > 1 ||
+						Math.abs(num(h.style.width) - out.hw) > 1 || Math.abs(num(h.style.height) - out.hh) > 1)
+						drift.push('hd box');
+				}
+				if (!entryFor(b) && shown) drift.push('hd shown without entry');
+			}
+			if (drift.length) bad.push('#' + i + ': ' + drift.join(', '));
+			checked++;
+			/* zoom ×2 at a corner: wagon transform must not change, HD must grow
+			   or stay (clamped), and the written box must equal the recomputation */
+			const wagonT = el.style.transform;
+			api.zoomAt(i, vp.width * 0.25, vp.height * 0.3, 2);
+			await raf2();
+			if (el.style.transform !== wagonT) bad.push('#' + i + ' wagon transform written by adapter');
+			const v2 = api.view(i);
+			const out2 = layoutOf(b, v2);
+			const t2 = px(b.style.transform);
+			if (!t2 || Math.abs(t2[0] - out2.x) > 1 || Math.abs(t2[1] - out2.y) > 1) bad.push('#' + i + ' base drift after zoom');
+			if (out2.s < out.s - 1e-9) bad.push('#' + i + ' zoom did not grow scale');
+			if (out2.w >= vp.width - 1 && !(out2.x <= 1 && out2.x + out2.w >= vp.width - 1)) bad.push('#' + i + ' I2 lost under zoom');
+			api.setView(i, 1, 0, 0);
+			await raf2();
+		}
+		/* degradation: a .snow-hd with data-mode="fixed" is left alone, one warn */
+		const probe = document.createElement('div');
+		probe.className = 'snow-bg snow-hd';
+		probe.dataset.mode = 'fixed';
+		probe.dataset.size = '300';
+		probe.innerHTML = '<img src="' + escapeHTML(artURI(600, 400, PALETTE[1], 'probe base', false)) + '" alt="probe">'
+			+ '<img src="' + escapeHTML(artURI(120, 80, PALETTE[3], 'probe crop', false)) + '" alt="" aria-hidden="true">';
+		const appEl = $('app'), tail = appEl.querySelector('.tail');
+		const warnBefore = warns.length;
+		appEl.insertBefore(probe, tail);
+		engRefresh();
+		await raf2(); await raf2();
+		if (probe.classList.contains('snow-hd-live')) bad.push('fixed-mode .snow-hd was managed');
+		if (probe.children[0].style.width) bad.push('fixed-mode .snow-hd child restyled');
+		if (warns.length - warnBefore > 1) bad.push('more than one exclusion warning');
+		probe.remove();
+		engRefresh();
+		await raf2();
+	} finally {
+		console.error = origErr; console.warn = origWarn;
+	}
+	if (errs.length) bad.push(errs.length + ' console error(s): ' + errs[0]);
+	if (!checked) return row('region', 0, 'no managed wagons were parked for alignment');
+	if (bad.length) return row('region', 0, bad.slice(0, 5).join('; '));
+	return row('region', 1, checked + ' region wagon(s) aligned with HDRegion ±1px, I1/I2 ok, zoom grows, static scan clean'
+		+ (warns.length ? ' (' + warns.length + ' exclusion warn)' : ''));
+}
 async function qaAll() {
 	if (qaBusy) return;
 	qaBusy = true;
@@ -1276,6 +1447,7 @@ async function qaAll() {
 		await qStickSlots();
 		await qEvents();
 		await qMorph();
+		await qRegion();
 	} finally {
 		qaBusy = false;
 		$('qaBtn').disabled = false;
@@ -1289,7 +1461,10 @@ function boot() {
 	readHash(); build(); applyLayout();
 	bind('reg','click',build); bind('seed','click',()=>{SEED=(Math.random()*0xFFFFFFFF)>>>0;build();});
 	bind('addChapter','click',addChapter); bind('addBackground','click',addBackground); bind('templateCopy','click',copyTemplate);
-	bind('sourceToggle','click',()=>toggleSource()); bind('applySource','click',applySource); bind('exampleImages','change',build); bind('exampleGradient','change',build);
+	bind('sourceToggle','click',()=>toggleSource()); bind('applySource','click',applySource); bind('exampleImages','change',build); bind('exampleGradient','change',build); bind('regions','change',build);
+	bind('inspectBg','change',()=>{if(window.SnowfallRegion)SnowfallRegion.setInspect($('inspectBg').checked);});
+	bind('saveRegions','click',saveRegionsFile);
+	if(window.SnowfallRegion){SnowfallRegion.onInspect=on=>{$('inspectBg').checked=!!on;};$('inspectBg').checked=SnowfallRegion.getInspect();}
 	bind('n','input',()=>{$('nO').textContent=$('n').value;}); bind('bgs','input',()=>{$('bgsO').textContent=$('bgs').value;});
 	bind('speed','input',()=>{$('spd').textContent=$('speed').value;}); bind('preset','change',()=>applyPreset($('preset').value));
 	bind('sceneFields','change',applyInspector); bind('backgroundFields','change',applyInspector);

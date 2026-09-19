@@ -33,6 +33,10 @@ button,input,select,textarea{font:inherit}button{cursor:pointer}
 .snow-bg{width:100vw;margin-left:calc(50% - 50vw)}
 .snow-bg[data-mode=cover]{background-size:cover}.snow-bg[data-mode=tiled]{background-repeat:repeat;background-size:auto}
 .snow-bg[data-mode=contain]{background-size:contain;background-color:#0c0f16}.snow-bg[data-mode=fixed]{background-size:100% 100%}
+/* 0.5.5 region wagons: the author-side CSS is only the no-JS fallback — the
+   adapter injects every JS-mode rule itself, scoped to .snow-hd-live */
+.snow-hd{min-height:60vh}
+.snow-hd img{display:block;width:100%;max-height:100vh;object-fit:contain}
 .snow-stick{display:block;width:max-content;max-width:min(var(--measure),100%);margin:1rem 0;padding:.4rem .8rem;border:1px solid #ffffff2e;
 	border-radius:.4rem;background:var(--glass);font:12px/1.35 ui-monospace,monospace;letter-spacing:.02em;backdrop-filter:blur(4px)}
 .snow-stick[data-park=top]{top:0}.snow-stick[data-park=bottom]{bottom:0}
