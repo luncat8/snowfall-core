@@ -281,3 +281,60 @@ one symptom, and both were real in main.
   disable/enable round trip (styles cleared, then repainted byte-identically) is
   the only thing that catches this class; it runs last in `qaAll` for exactly
   that reason.
+
+## 0.5.5 region parity — when a defensible policy is still the bug
+
+The first fix (see the section above) got the *direction* right and still did
+not fit, because it fixed main's deviation from the reference by inventing a
+second, better-sounding rule. Both inventions were the bug. What made the
+difference was stopping the argument and comparing numbers against the reference
+implementation, on the reference's own images and rects.
+
+- **"The background must cover, never letterbox" is not a law.** It justified
+  `s0 = max(vw/bw, vh/bh)` whenever the region was the whole base (no entry, no
+  `hd`, rect = picture). A `.snow-hd` wagon is not a plain cover image: its base
+  is outpainted filler, and the reader came for the picture. Fitted into the
+  window means *contained*, bands and all — bands are what any `auto` image
+  gets, and `cover` pays for them by cutting art off. Symmetric lesson: `min`
+  with coverage was the original bug, `max` for the whole base is its mirror. If
+  a rule reads like a principle ("a background must fill its box"), check it
+  against the reference before shipping it — the reference has no special case
+  and asked for none.
+- **Never clamp the reader to keep the art in frame.** I1 was implemented as a
+  region-visibility *sub-interval inside the placement clamp* — "helpful", and
+  fatal: because the fit makes the crop exactly as tall as the window on its
+  limiting axis, the interval collapses to the rest position on that axis, so
+  vertical dragging did nothing at zoom 1, and on the other axis the crop could
+  never be pushed past a window edge to look at the filler around it. Region
+  visibility is guaranteed by the *fit* at the rest framing; the clamp's only
+  job is coverage. Gate it as a *responsiveness* property (I5: +10 px of pan
+  must move the box 10 px unless a box edge stopped it) — an invariant phrased
+  as "X stays inside Y" cannot catch a clamp that should not exist, because the
+  clamp satisfies it by construction.
+- **Containment invariants cannot settle a policy argument.** I1/I2/I4 all held
+  while the picture was wrong, because they bound where a box may be. What
+  catches it is an *oracle*: keep a pinned copy of the reference module in
+  `test/vendor/`, run both over the reference's real scene data and a fuzz, and
+  require 1e-6 agreement — scale, position, box, and the state left behind by a
+  zoom. The fixture header says "do not edit: an edit here is a silent change of
+  the oracle", and the scenes come from that repo's `regions.js` with image dims
+  read off the shipped files, so the data cannot be adjusted to make a test pass.
+- **Read the generator, not only the viewer.** `tools/make_scene.py` is what
+  defines the material: filler = canvas with a **smeared 1/16 remnant** in the
+  ROI (not black, not a global blur), crop = **1:1 with the rect** (not a 2×
+  supersample). "1:1" is why the fit scale is also the crop's native density; a
+  harness that fakes the pair at 2× and a global blur keeps every number
+  consistent and quietly changes what the feature is for. Vendored the four
+  example files and the four tools so the repo can both show and produce real
+  scenes; `save regions.js` from the browser then writes a regions.js whose keys
+  are the shipped paths.
+- **Give the harness the real thing as a switch, not a rewrite.** A `real scenes`
+  checkbox that mounts `img/*.avif` with the reference rects costs ~15 lines and
+  makes the browser view directly comparable to the reference demo. Keep the
+  synthetic generator for the shape sweep (it varies size/aspect/position on
+  demand and needs no files); keep the real files for the eye test.
+- **A QA fixture can hide an adapter bug by being nicer than reality.** The
+  `nohd` case (rect, no crop to paint) must have a *visible-if-broken* second
+  `<img>`: pre-hiding it in the markup, or in a fixture's style, makes a broken
+  adapter look correct. The gate now asserts the crop is NOT pre-hidden, and
+  that `off()` — not the markup — is what clears it.

@@ -5,20 +5,26 @@
 
 	Coordinates are window space. At park the wagon's local frame IS the
 	viewport (0,0 at top-left, vp.width × vp.height), so the base scaled by
-	s and drawn at (x, y) covers the window on every axis it can and the
-	region rect stays fully inside whenever it fits.
+	s and drawn at (x, y) is placed in the window with no second offset.
 
-	Two decisions carry the feature, and both come from the art, not the
-	filler. SCALE: the region is fitted into the window, so it touches the
-	window on its limiting axis and the cheap outpainted base only follows at
-	the same scale. Fitting the BASE to the window instead (a cover scale)
-	keeps the region a small patch on a blurry field — the sharp crop, which
-	is the only reason the wagon exists, never gets bigger than the filler.
-	Position: the unpanned wagon shows the region CENTRED, coverage being a
-	preference under it, so a region narrower than the window never ends up
-	pinned to an edge by a pan state that nobody set.
-	Region visibility outranks coverage on purpose: outpainted filler is never
-	worth framing at the price of the art. */
+	Two rules, and they are the reference's (HD-region@1a89bb7, mirrored by
+	test/vendor/hdregion-ref.js and enforced every commit by the parity gate):
+
+	SCALE — the region is fitted into the window, `s = min(vw/rw, vh/rh)`, so
+	the crop touches the window on its limiting axis and the outpainted base
+	follows at the same scale. Not `min(cover, room)`: capping the art's scale
+	by what the filler can cover shrinks the crop to a patch, and it is not
+	`max` either — a region that IS the whole base (no entry, or a rect
+	covering the picture) is contained and centred, the whole picture visible,
+	letterbox bands and all. Fitting is what the wagon is for; the page
+	background between the bands is the same background any `auto` image gets.
+
+	POSITION — the rest framing centres the region in the window; the only
+	clamp is coverage, `x ∈ [vw − W, 0]` when the base can cover and centring
+	when it cannot. The coverage clamp never pushes the region out of view at
+	rest (the fit already inscribes it) and no visibility sub-interval may be
+	added to it: that is a clamp on the READER's pan, and it kills dragging on
+	the axis where the crop exactly fills the window. */
 (function(global) {
 'use strict';
 
@@ -45,28 +51,17 @@ function maxZoomOf(region) {
 	return m >= 1 && isFinite(m) ? m : DEFAULT_MAX_ZOOM;
 }
 
-/* zoom-1 scale: the largest that keeps the region inside the window, i.e. the
-   crop fills the window on its limiting axis. A region that IS the whole base
-   (no entry, or a rect covering the picture) has no art left to protect, so it
-   takes the plain background fit: cover, never letterboxed. */
-function fitScale(vw, vh, bw, bh, rw, rh) {
-	if (rw >= bw && rh >= bh) return vw / bw > vh / bh ? vw / bw : vh / bh;
+/* zoom-1 scale: the largest that keeps the region inside the viewport. The crop
+   is authored 1:1 with this rect, so that scale is also its native density. */
+function fitScale(vw, vh, rw, rh) {
 	return vw / rw < vh / rh ? vw / rw : vh / rh;
 }
 
-/* one axis, given the requested base position `want`. The intersection of
-   [win − boxLen, 0] (cover) and [−p0, win − p0 − pl] (region visible) is
-   never empty: pl ≤ win is the caller's condition and p0 + pl ≤ boxLen holds
-   because the rect is inside the base. */
-function clampAxis(want, win, boxLen, p0, pLen) {
+/* one axis: the box may not uncover the window; when it cannot reach both
+   edges there is nothing left to choose, so the picture is centred. */
+function clampAxis(want, win, boxLen) {
 	if (boxLen < win) return (win - boxLen) / 2;
-	let lo = win - boxLen, hi = 0;
-	if (pLen <= win) {
-		const rlo = -p0, rhi = win - p0 - pLen;
-		if (rlo > lo) lo = rlo;
-		if (rhi < hi) hi = rhi;
-	}
-	return clamp(want, lo, hi);
+	return clamp(want, win - boxLen, 0);
 }
 
 /* the unpanned base position on one axis: the region centred in the frame. */
@@ -84,21 +79,21 @@ function panOf(v) { return isFinite(v) ? v : 0; }
 	          phone and on an ultrawide. MUTATED to the canonical clamped pan,
 	          so re-running a frame is a no-op and no other code may clamp.
 	out:    {ok, s, x, y, w, h, hx, hy, hw, hh, clx, cly} — base box, region
-	          box (= the HD child's box), and clamped-axis flags: 1 means the
-	          edge clamp moved the requested pan, by design at the edges. */
+	          box (= the HD child's box), and clamped-axis flags: 1 means
+	          coverage moved the requested pan, by design at the edges. */
 var R = { x: 0, y: 0, w: 0, h: 0 };
 function finalLayout(vw, vh, bw, bh, region, view, out) {
 	out.ok = 0;
 	if (!(vw > 0 && vh > 0 && bw > 0 && bh > 0)) return out;
 	if (!readRegion(region, bw, bh, R)) return out;
 	const z = clamp(view.zoom >= 1 ? view.zoom : 1, 1, maxZoomOf(region));
-	const s = fitScale(vw, vh, bw, bh, R.w, R.h) * z;
+	const s = fitScale(vw, vh, R.w, R.h) * z;
 	const boxW = bw * s, boxH = bh * s;
 	const rx = R.x * s, ry = R.y * s, rw = R.w * s, rh = R.h * s;
 	const restX = restAxis(vw, s, R.x, R.w), restY = restAxis(vh, s, R.y, R.h);
 	const wantX = restX + panOf(view.panX), wantY = restY + panOf(view.panY);
-	const x = clampAxis(wantX, vw, boxW, rx, rw);
-	const y = clampAxis(wantY, vh, boxH, ry, rh);
+	const x = clampAxis(wantX, vw, boxW);
+	const y = clampAxis(wantY, vh, boxH);
 	out.ok = 1;
 	out.s = s;
 	out.x = x; out.y = y; out.w = boxW; out.h = boxH;
@@ -111,24 +106,28 @@ function finalLayout(vw, vh, bw, bh, region, view, out) {
 
 /* zoomAround(vw, vh, bw, bh, region, view, px, py, k) pivots RAW state around
    the window point (px, py): the content point under it stays fixed exactly —
-   only a later finalLayout may clamp. k is a multiplicative factor. It needs
-   the layout inputs because a pan is measured from the rest framing, which
-   moves with the scale: deriving that here is what keeps it out of callers. */
+   only a later finalLayout may clamp. k is a multiplicative factor, so a
+   gesture never has to know the current zoom. It needs the layout inputs
+   because a pan is measured from the rest framing, which moves with the
+   scale: deriving that here is what keeps it out of callers. */
 function zoomAround(vw, vh, bw, bh, region, view, px, py, k) {
+	if (!(vw > 0 && vh > 0 && bw > 0 && bh > 0)) return false;
+	if (!readRegion(region, bw, bh, R)) return false;
 	const mz = maxZoomOf(region);
 	const z0 = clamp(view.zoom >= 1 ? view.zoom : 1, 1, mz);
 	const z1 = clamp(z0 * (k > 0 && isFinite(k) ? k : 1), 1, mz);
-	view.zoom = z1;
-	if (!(vw > 0 && vh > 0 && bw > 0 && bh > 0)) return view;
-	if (!readRegion(region, bw, bh, R)) return view;
-	const fit = fitScale(vw, vh, bw, bh, R.w, R.h);
+	const fit = fitScale(vw, vh, R.w, R.h);
 	const s0 = fit * z0, s1 = fit * z1;
-	const x0 = restAxis(vw, s0, R.x, R.w) + panOf(view.panX);
-	const y0 = restAxis(vh, s0, R.y, R.h) + panOf(view.panY);
-	const r = s1 / s0;
-	view.panX = px - (px - x0) * r - restAxis(vw, s1, R.x, R.w);
-	view.panY = py - (py - y0) * r - restAxis(vh, s1, R.y, R.h);
-	return view;
+	/* the content point is read off the box ON SCREEN, not off the raw state:
+	   where the clamp centred the box it discarded the pan, and pretending
+	   otherwise would pivot around a point nobody can see */
+	const x0 = clampAxis(restAxis(vw, s0, R.x, R.w) + panOf(view.panX), vw, bw * s0);
+	const y0 = clampAxis(restAxis(vh, s0, R.y, R.h) + panOf(view.panY), vh, bh * s0);
+	const cx = isFinite(px) ? px : vw / 2, cy = isFinite(py) ? py : vh / 2;
+	view.zoom = z1;
+	view.panX = cx - (cx - x0) * (s1 / s0) - restAxis(vw, s1, R.x, R.w);
+	view.panY = cy - (cy - y0) * (s1 / s0) - restAxis(vh, s1, R.y, R.h);
+	return true;
 }
 
 /* REGIONS lookup key: strip query, hash and one leading './'. NEVER decode

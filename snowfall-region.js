@@ -341,10 +341,14 @@ function onPointerMove(e) {
 }
 function onPointerUp() { dragI = -1; }
 
+/* double-click is "back to how it arrived": zoom 1 AND the pan dropped, since
+   the rest framing (region centred) is a position worth returning to — the
+   reference does the same, and keeping a stale pan would leave a wagon that
+   never lines up with its neighbours again */
 function onDbl(e) {
 	if (!inspectOn || overForm(e.target)) return;
 	const i = pickTarget();
-	if (i >= 0) setView(i, 1, R.px[i], R.py[i]);
+	if (i >= 0) setView(i, 1, 0, 0);
 }
 
 let tMode = 0, tI = -1, tX = 0, tY = 0, tPx = 0, tPy = 0, tD0 = 0, tZ0 = 1, tMX = 0, tMY = 0;

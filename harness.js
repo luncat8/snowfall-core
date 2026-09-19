@@ -48,7 +48,7 @@ function parseT(el) {
 
 /* ---------------- config in location.hash ---------------- */
 const IDS = ['preset', 'n', 'bgs', 'len', 'gap', 'flow', 'mode', 'size', 'dir', 'nest', 'stick'];
-const CHECKS = ['style', 'events', 'exampleGradient', 'gutter', 'hudOn', 'regions'];
+const CHECKS = ['style', 'events', 'exampleGradient', 'gutter', 'hudOn', 'regions', 'realScenes'];
 let SEED = 20260917;
 function getCfg() {
 	const c = { seed: SEED };
@@ -110,15 +110,20 @@ function hash32(s) {
    width, so neighbouring tiles continue the same rhythm. */
 /* returns the BARE data: URI — CSS call sites wrap it in url('…'), the
    region <img> children use it src verbatim.
-   crop = {x, y, bw, bh} draws the SAME art as the bw×bh base (same tag ⇒ same
-   stripes, motif and label, since everything is generated in the base's user
-   space) and shows only its (x, y, w, h) rect: a harness crop is a real crop,
-   so the reader — and QA — can judge alignment by eye, not just by numbers.
-   blur is a stdDeviation in base units, the fiction of the compressed filler
-   under the sharp crop. */
-function artURI(w, h, pal, tag, tile, crop, blur) {
+   A region pair is ONE picture drawn twice, the way tools/make_scene.py ships
+   the real ones. rect = {x, y, w, h, bw, bh} in base px, and role picks which
+   side of the pair this render is:
+   · 'crop' draws the base's user space (bw×bh, same tag ⇒ same stripes, motif
+     and label) and shows only the rect, so the crop's own pixel size IS the
+     rect — 1:1, the reference's material rule, which makes the layout fit
+     scale also the crop's native density;
+   · 'hole' draws the whole base and then smears the rect area — the low-detail
+     colour-continuous filler under a sharp crop, not a black box.
+   Both keep alignment judgeable by eye: on the base the crop's own pixels are
+   there but smeared, so a misfit shows as doubled content. */
+function artURI(w, h, pal, tag, tile, rect, role) {
 	const rng = mulberry32(hash32(tag));
-	const cw = crop ? crop.bw : w, ch = crop ? crop.bh : h;
+	const cw = role === 'crop' ? rect.bw : w, ch = role === 'crop' ? rect.bh : h;
 	const short = Math.min(cw, ch);
 	const period = Math.max(12, Math.round(short / 6));
 	const stripe = Math.max(3, Math.round(period * 0.55));
@@ -137,18 +142,22 @@ function artURI(w, h, pal, tag, tile, crop, blur) {
 		+ '<circle cx="' + cx + '" cy="' + cy + '" r="' + Math.round(r * 1.4) + '" fill="none" stroke="' + pal.dot
 		+ '" stroke-width="' + Math.max(1, Math.round(r / 20)) + '" opacity="' + (tile ? 0.22 : 0.45) + '"/>'
 		+ (tile ? '' : '<text x="' + (fs + 2) + '" y="' + (fs * 2) + '" font-family="monospace" font-size="' + fs + '" fill="#ffffff" opacity="0.55">' + tag + '</text>');
-	const svg = '<svg xmlns="http://www.w3.org/2000/svg" width="' + w + '" height="' + h + '" viewBox="' +
-		(crop ? crop.x + ' ' + crop.y + ' ' + w + ' ' + h : '0 0 ' + w + ' ' + h) + '">'
+	const vb = role === 'crop' ? rect.x + ' ' + rect.y + ' ' + w + ' ' + h : '0 0 ' + w + ' ' + h;
+	const smear = role === 'hole' ? '<clipPath id="hp"><rect x="' + rect.x + '" y="' + rect.y
+		+ '" width="' + rect.w + '" height="' + rect.h + '"/></clipPath>'
+		+ '<filter id="hq"><feGaussianBlur stdDeviation="' + Math.max(4, Math.round(Math.min(rect.w, rect.h) / 12)) + '"/></filter>' : '';
+	const svg = '<svg xmlns="http://www.w3.org/2000/svg" width="' + w + '" height="' + h + '" viewBox="' + vb + '">'
 		+ '<defs><pattern id="b" width="' + pw + '" height="' + ph + '" patternUnits="userSpaceOnUse" patternTransform="rotate(' + (tile ? 0 : pal.ang) + ')">'
 		+ '<rect width="100%" height="100%" fill="' + pal.s[1] + '"/>'
 		+ '<rect width="' + sw + '" height="' + sh + '" fill="' + pal.s[0] + '"/>'
 		+ '<rect x="' + ox + '" y="' + oy + '" width="' + sw + '" height="' + sh + '" fill="' + pal.s[0] + '" opacity="0.55"/>'
 		+ '</pattern>'
-		+ (blur > 0 ? '<filter id="q"><feGaussianBlur stdDeviation="' + blur + '"/></filter>' : '')
+		+ smear
 		+ '</defs>'
-		/* the unfiltered backdrop keeps a blur from fading the canvas edges */
+		/* the backdrop keeps a smear from fading the canvas edges */
 		+ '<rect width="100%" height="100%" fill="' + pal.s[1] + '"/>'
-		+ (blur > 0 ? '<g filter="url(#q)">' + art + '</g>' : art)
+		+ '<g id="a">' + art + '</g>'
+		+ (role === 'hole' ? '<use href="#a" clip-path="url(#hp)" filter="url(#hq)"/>' : '')
 		+ '</svg>';
 	return 'data:image/svg+xml,' + encodeURIComponent(svg);
 }
@@ -331,22 +340,42 @@ function sourceVisual(source, fallback, pal, mode, size, tag) {
    get NO entry (the whole-base fallback), ch 3, 6 an entry WITHOUT hd (the crop
    <img> is there and loaded, yet must stay hidden), the rest a full entry.
    A pasted example URL becomes the base with NO entry on purpose too: its
-   pixel size is unknown in markup space, so it is the same fallback path. */
-const REGION_BASE_W = 1600, REGION_BASE_H = 1000, REGION_CROP = 2, REGION_FILLER_BLUR = 6;
+   pixel size is unknown in markup space, so it is the same fallback path.
+   `real scenes` swaps the generated pair for the reference book's own files in
+   img/ (HD-region's scenes 1 and 3, filler with a smeared hole plus the 1:1
+   crop, rects transcribed), so the page can be judged against the thing it is
+   meant to reproduce — and `save regions.js` then writes a regions.js that is
+   valid for a real book, because the keys are the shipped paths. */
+const REGION_BASE_W = 1600, REGION_BASE_H = 1000;
+const REAL_SCENES = [
+	{ base: 'img/1.avif', hd: 'img/1_c.avif', x: 477, y: 239, w: 804, h: 1056, bw: 1920, bh: 1536 },
+	{ base: 'img/3.avif', hd: 'img/3_c.avif', x: 476, y: 101, w: 1016, h: 900, bw: 1984, bh: 1152 }
+];
 function regionEntryCase(k) { return k % 3 === 2 ? 'none' : k % 3 === 0 ? 'nohd' : 'full'; }
-function regionWagonInner(k, j, pal, visual) {
+function regionWagonInner(k, j, pal, visual, real) {
 	if (!visual.src) return '';
 	if (visual.source) return '<img src="' + escapeHTML(visual.src) + '" alt="Scene ' + k + '.' + j + '">';
+	const ec = regionEntryCase(k);
+	const alt = 'Scene ' + k + '.' + j;
+	if (real) {
+		const s = REAL_SCENES[(k + j) % REAL_SCENES.length];
+		if (ec === 'none') return '<img src="' + s.base + '" alt="' + alt + '">';
+		const entry = { x: s.x, y: s.y, w: s.w, h: s.h, hd: s.hd, bw: s.bw, bh: s.bh };
+		if (ec === 'nohd') delete entry.hd;
+		(window.REGIONS = window.REGIONS || {})[s.base] = entry;
+		return '<img src="' + s.base + '" alt="' + alt + ' outpainted base">'
+			+ '<img src="' + s.hd + '" alt="" aria-hidden="true">';
+	}
 	const tag = 'ch' + k + '·bg' + j;
 	const rng = mulberry32(hash32(tag + '·rect'));
 	const bw = REGION_BASE_W, bh = REGION_BASE_H;
 	const rw = 480 + Math.floor(rng() * 6) * 120, rh = 320 + Math.floor(rng() * 4) * 120;
 	const rx = Math.round(rng() * (bw - rw)), ry = Math.round(rng() * (bh - rh));
-	const ec = regionEntryCase(k);
-	const raw = artURI(bw, bh, pal, tag, false, null, ec === 'none' ? 0 : REGION_FILLER_BLUR);
-	const base = '<img src="' + escapeHTML(raw) + '" alt="Scene ' + k + '.' + j + ' outpainted base">';
+	const rect = { x: rx, y: ry, w: rw, h: rh, bw: bw, bh: bh };
+	const raw = artURI(bw, bh, pal, tag, false, rect, ec === 'none' ? '' : 'hole');
+	const base = '<img src="' + escapeHTML(raw) + '" alt="' + alt + ' outpainted base">';
 	if (ec === 'none') return base;
-	const hd = artURI(rw * REGION_CROP, rh * REGION_CROP, pal, tag, false, { x: rx, y: ry, bw: bw, bh: bh });
+	const hd = artURI(rw, rh, pal, tag, false, rect, 'crop');
 	const entry = { x: rx, y: ry, w: rw, h: rh, bw: bw, bh: bh };
 	if (ec === 'full') entry.hd = hd;
 	(window.REGIONS = window.REGIONS || {})[raw] = entry;
@@ -365,7 +394,7 @@ function templateWagonHTML(k, j, cfg, rng, source, pal) {
 	if (mode === 'fixed' || mode === 'auto') at += ' data-size="'+size+'"';
 	if (dir !== 'top') at += ' data-dir="'+dir+'"';
 	if (visual.source) at += ' data-source="'+escapeHTML(visual.source)+'"';
-	if (isHd) return '<div'+at+'>' + regionWagonInner(k, j, pal, visual) + '</div>';
+	if (isHd) return '<div'+at+'>' + regionWagonInner(k, j, pal, visual, !!cfg.realScenes) + '</div>';
 	if (visual.image) at += ' style="background-image:'+escapeHTML(visual.image)+';"';
 	return '<div'+at+'></div>';
 }
@@ -1448,6 +1477,14 @@ async function qRegion() {
 					+ ', max-height ' + cs.maxHeight + ', object-fit ' + cs.objectFit + ')');
 			/* 3 · the fit: the crop, not the filler, decides the scale */
 			const e = entryOf(b, h);
+			/* the entry's own base size must be the shipped one: the rect is in
+			   base px, so a resized file silently misplaces the crop (the
+			   reference viewer warns about exactly this) */
+			const rawEntry = rawOf(b);
+			if (rawEntry && rawEntry.bw > 0 && (Math.abs(b.naturalWidth - rawEntry.bw) > 1
+				|| Math.abs(b.naturalHeight - rawEntry.bh) > 1))
+				bad.push('#' + i + ' entry bw/bh ' + rawEntry.bw + '×' + rawEntry.bh
+					+ ' ≠ base image ' + b.naturalWidth + '×' + b.naturalHeight);
 			if (e) {
 				if (out.hw < vp.width - 1 && out.hh < vp.height - 1)
 					bad.push('#' + i + ' region is ' + Math.round(out.hw) + '×' + Math.round(out.hh)
@@ -1456,10 +1493,23 @@ async function qRegion() {
 				if (!framed(out.x, out.w, out.hx, out.hw, vp.width) || !framed(out.y, out.h, out.hy, out.hh, vp.height))
 					bad.push('#' + i + ' region neither centred nor coverage-pinned');
 				else centred++;
-			} else if (out.w < vp.width - 1 || out.h < vp.height - 1)
-				bad.push('#' + i + ' whole-base wagon letterboxed instead of covering');
-			/* 4 · the crop must cover the base's own region sub-rect */
+			} else if (out.w > vp.width + 1 || out.h > vp.height + 1)
+				bad.push('#' + i + ' whole-base wagon magnified past the frame (' + Math.round(out.w)
+					+ '×' + Math.round(out.h) + ' in ' + vp.width + '×' + vp.height + ') — the fit has no cover exception');
+			else if (!framed(out.x, out.w, out.x, out.w, vp.width) || !framed(out.y, out.h, out.y, out.h, vp.height))
+				bad.push('#' + i + ' whole-base wagon not centred in the frame');
+			else fitted++;
+			/* 4 · the crop must cover the base's own region sub-rect, and be
+			      authored 1:1 with it — the reference's material rule (tools/
+			      make_scene.py), because the fit scale is then also the crop's
+			      native density. Only asserted for generated data-URI art:
+			      an author's file may carry any density. */
 			if (h) {
+				const bsrc = b.getAttribute('src') || '';
+				if (e && bsrc.indexOf('data:') === 0 && h.naturalWidth > 0
+					&& !(near(h.naturalWidth, num(e.w), 1) && near(h.naturalHeight, num(e.h), 1)))
+					bad.push('#' + i + ' crop is ' + h.naturalWidth + '×' + h.naturalHeight
+						+ ' for a ' + num(e.w) + '×' + num(e.h) + ' rect (not 1:1)');
 				const shown = h.style.display !== 'none';
 				if (shown) {
 					const hr = h.getBoundingClientRect();
@@ -1572,7 +1622,7 @@ function boot() {
 	readHash(); build(); applyLayout();
 	bind('reg','click',build); bind('seed','click',()=>{SEED=(Math.random()*0xFFFFFFFF)>>>0;build();});
 	bind('addChapter','click',addChapter); bind('addBackground','click',addBackground); bind('templateCopy','click',copyTemplate);
-	bind('sourceToggle','click',()=>toggleSource()); bind('applySource','click',applySource); bind('exampleImages','change',build); bind('exampleGradient','change',build); bind('regions','change',build);
+	bind('sourceToggle','click',()=>toggleSource()); bind('applySource','click',applySource); bind('exampleImages','change',build); bind('exampleGradient','change',build); bind('regions','change',build); bind('realScenes','change',build);
 	bind('inspectBg','change',()=>{if(window.SnowfallRegion)SnowfallRegion.setInspect($('inspectBg').checked);});
 	bind('saveRegions','click',saveRegionsFile);
 	if(window.SnowfallRegion){SnowfallRegion.onInspect=on=>{$('inspectBg').checked=!!on;};$('inspectBg').checked=SnowfallRegion.getInspect();}

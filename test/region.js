@@ -14,6 +14,7 @@ function ok(cond, name) {
 	fails++;
 	console.error('FAIL ' + name);
 }
+function near0(v, win) { const t = 1e-6; return Math.abs(v - (win === undefined ? 0 : win)) <= t; }
 function rng32(seed) {
 	let a = seed >>> 0;
 	return function () {
@@ -60,30 +61,45 @@ function rng32(seed) {
 		/* base box equals bw/bh × s */
 		ok(Math.abs(out.w - bw * out.s) <= 1e-6 * out.w + T, 't' + t + ' w = bw·s');
 		ok(Math.abs(out.h - bh * out.s) <= 1e-6 * out.h + T, 't' + t + ' h = bh·s');
-		/* I4: the zoom-1 scale, recovered by undoing the clamped zoom, is the
-		   region fit — or the cover fit when the region is the whole base */
+		/* I4: the zoom-1 scale, recovered by undoing the clamped zoom, IS the
+		   region fit — one rule for every rect, whole base included. No cover
+		   cap (main's min(cover, room) shrank the art to a patch) and no cover
+		   exception either (a whole-base rect blown up to cover crops the
+		   picture instead of fitting it, which is the other way to fail). */
 		const fw = out.hw / out.s, fh = out.hh / out.s;
 		const fit = out.s / view.zoom;
 		const room = vw / fw < vh / fh ? vw / fw : vh / fh;
-		const cover = vw / bw > vh / bh ? vw / bw : vh / bh;
+		ok(Math.abs(fit - room) <= 1e-9 * fit + T, 't' + t + ' I4 the crop sets the scale');
+		ok(fit + T >= room, 't' + t + ' I4 art never smaller than its fit');
 		if (fw >= bw - 1e-9 && fh >= bh - 1e-9) {
 			wholes++;
-			ok(Math.abs(fit - cover) <= 1e-9 * fit + T, 't' + t + ' I4 whole base takes the cover fit');
-		} else {
-			ok(Math.abs(fit - room) <= 1e-9 * fit + T, 't' + t + ' I4 region fills the window');
-			ok(fit + T >= room, 't' + t + ' I4 art never smaller than its fit');
+			ok(bw * fit <= vw + T && bh * fit <= vh + T, 't' + t + ' I4 whole base is contained');
+			if (out.w <= vw + T) ok(Math.abs(out.x - (vw - out.w) / 2) <= T, 't' + t + ' I4 under-size base centred on x');
+			if (out.h <= vh + T) ok(Math.abs(out.y - (vh - out.h) / 2) <= T, 't' + t + ' I4 under-size base centred on y');
 		}
 		/* I2: covers every axis the box is big enough for; centers the rest */
 		if (out.w >= vw - T) ok(out.x <= T && out.x + out.w >= vw - T, 't' + t + ' I2 x');
 		else ok(Math.abs(out.x - (vw - out.w) / 2) <= T, 't' + t + ' I2 x centered');
 		if (out.h >= vh - T) ok(out.y <= T && out.y + out.h >= vh - T, 't' + t + ' I2 y');
 		else ok(Math.abs(out.y - (vh - out.h) / 2) <= T, 't' + t + ' I2 y centered');
-		/* I1: the region is fully visible whenever it fits the window. The fit
-		   test uses the SAME float comparison as clampAxis (no tolerance): at
-		   the exact-fit boundary "fits" is ULP-ambiguous and the layout is only
-		   required to match its own predicate. */
-		if (out.hw <= vw) ok(out.hx >= -T && out.hx + out.hw <= vw + T, 't' + t + ' I1 x');
-		if (out.hh <= vh) ok(out.hy >= -T && out.hy + out.hh <= vh + T, 't' + t + ' I1 y');
+		/* The clamp is PURE coverage: it may pin a box edge, and it must do
+		   nothing else. A region-visibility sub-interval here (what this repo
+		   shipped before) reads as "the crop can never leave the frame", and
+		   because the fit makes the crop exactly as tall (or wide) as the
+		   window, it also makes that axis undraggable at zoom 1 — a clamp on
+		   the reader, not on the art. So: 10 more px of pan moves the box
+		   10 px, unless a box edge is what stopped it, or the axis centres an
+		   under-size box (where a pan has nothing to act on by definition). */
+		const p2 = { zoom: view.zoom, panX: view.panX + 10, panY: view.panY + 10 };
+		const o2x = HD.finalLayout(vw, vh, bw, bh, region, p2, {});
+		if (o2x.ok) {
+			if (Math.abs(o2x.x - out.x - 10) > 1e-6)
+				ok(o2x.w <= vw + T || near0(o2x.x) || near0(o2x.x + o2x.w - vw)
+					|| near0(out.x) || near0(out.x + out.w - vw), 't' + t + ' I5 pan resisted for no coverage reason (x)');
+			if (Math.abs(o2x.y - out.y - 10) > 1e-6)
+				ok(o2x.h <= vh + T || near0(o2x.y) || near0(o2x.y + o2x.h - vh) || near0(out.y)
+					|| near0(out.y + out.h - vh), 't' + t + ' I5 pan resisted for no coverage reason (y)');
+		}
 		/* the HD box is the region box on the base box */
 		ok(out.hx >= out.x - T && out.hx + out.hw <= out.x + out.w + T, 't' + t + ' hd inside base x');
 		ok(out.hy >= out.y - T && out.hy + out.hh <= out.y + out.h + T, 't' + t + ' hd inside base y');
@@ -436,8 +452,10 @@ function fakeWagon(children, mode) {
 		   backgrounds — the whole base covers the window, nothing letterboxes,
 		   and a declared-but-undecorated second <img> stays hidden */
 		const outW = HD.finalLayout(cw, ih, 800, 600, { x: 0, y: 0, w: 0, h: 0 }, { zoom: 1, panX: 0, panY: 0 }, {});
-		ok(outW.w >= cw - 1e-6 && outW.h >= ih - 1e-6, 'whole-base fallback covers instead of letterboxing');
-		ok(Math.abs(npx(wags[1].kids[0].style.width) - outW.w) <= 1e-6, 'missing-entry base sized from the cover fit');
+		ok(outW.w <= cw + 1e-6 && outW.h <= ih + 1e-6, 'whole-base fallback is contained, never magnified');
+		ok(Math.abs(outW.x - (cw - outW.w) / 2) <= 1e-6 && Math.abs(outW.y - (ih - outW.h) / 2) <= 1e-6,
+			'a contained whole base is centred');
+		ok(Math.abs(npx(wags[1].kids[0].style.width) - outW.w) <= 1e-6, 'missing-entry base sized from the region fit');
 		ok(Math.abs(npx(wags[3].kids[0].style.width) - outW.w) <= 1e-6, 'an entry without hd frames the whole base');
 		ok(wags[3].kids[1].style.display === 'none', 'no crop is painted when the entry declares none');
 		A.zoomAt(0, cw * 0.25, ih * 0.3, 2);
@@ -504,7 +522,9 @@ function fakeWagon(children, mode) {
 	ok(!/innerWidth/.test(adapter), 'adapter sizes from frame args, never innerWidth');
 	ok(/Snowfall\.use|S\.use\(/.test(adapter), 'adapter subscribes via Snowfall.use');
 	ok(/HDRegion\.finalLayout|HD\.finalLayout/.test(adapter) && !/max\(vw/.test(adapter), 'adapter defers fit math to HDRegion');
-	ok(!/document\.|window\.|getComputedStyle|fetch/.test(math.replace(/typeof window/g, '')), 'hdregion is DOM-free');
+	const mathCode = math.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/.*$/gm, '');
+	ok(!/document\.|window\.|getComputedStyle|fetch/.test(mathCode.replace(/typeof window/g, '')),
+		'hdregion is DOM-free');
 	ok(/const cap = W\.pBot\[i\] - sY - e - W\.mb\[i\];/.test(engine), 'engine has the parent-bottom clamp');
 	ok(/pos\[i\] > cap \? cap : W\.pos\[i\]/.test(engine), 'clamp lowers pos, never raises');
 	ok(/de\.clientWidth \|\| window\.innerWidth/.test(engine), 'viewport width is clientWidth-first');
