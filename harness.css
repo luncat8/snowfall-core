@@ -33,6 +33,15 @@ button,input,select,textarea{font:inherit}button{cursor:pointer}
 .snow-bg{width:100vw;margin-left:calc(50% - 50vw)}
 .snow-bg[data-mode=cover]{background-size:cover}.snow-bg[data-mode=tiled]{background-repeat:repeat;background-size:auto}
 .snow-bg[data-mode=contain]{background-size:contain;background-color:#0c0f16}.snow-bg[data-mode=fixed]{background-size:100% 100%}
+/* region wagons (0.5.5): no-JS contained readable pictures. The adapter adds
+   html.snow-ready, which drops the constraints — its own absolute-child rule
+   keys on the same class, so a disabled engine falls back to exactly this */
+.snow-hd{min-height:60vh}
+.snow-hd img{display:block;width:100%;max-height:100vh;object-fit:contain}
+html.snow-ready .snow-hd{min-height:0}
+html.snow-ready .snow-hd img{max-width:none!important;max-height:none!important;object-fit:fill!important}
+/* the harness drives inspect mode from the QA drawer; the adapter HUD stays hidden */
+#snow-region-hud{display:none}
 .snow-stick{display:block;width:max-content;max-width:min(var(--measure),100%);margin:1rem 0;padding:.4rem .8rem;border:1px solid #ffffff2e;
 	border-radius:.4rem;background:var(--glass);font:12px/1.35 ui-monospace,monospace;letter-spacing:.02em;backdrop-filter:blur(4px)}
 .snow-stick[data-park=top]{top:0}.snow-stick[data-park=bottom]{bottom:0}

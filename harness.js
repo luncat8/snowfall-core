@@ -3,6 +3,9 @@
 const $ = id => document.getElementById(id);
 const LOG = [];
 window.Snowlog = msg => { LOG.push(String(msg)); };
+/* the harness owns the in-memory region table (reset at every build); the
+   adapter resolves window.REGIONS at measure time, never at script load */
+window.REGIONS = window.REGIONS || {};
 
 /* ---------------- utils ---------------- */
 function clamp(v, lo, hi) { return v < lo ? lo : v > hi ? hi : v; }
@@ -48,7 +51,7 @@ function parseT(el) {
 
 /* ---------------- config in location.hash ---------------- */
 const IDS = ['preset', 'n', 'bgs', 'len', 'gap', 'flow', 'mode', 'size', 'dir', 'nest', 'stick'];
-const CHECKS = ['style', 'events', 'exampleGradient', 'gutter', 'hudOn'];
+const CHECKS = ['style', 'events', 'exampleGradient', 'gutter', 'hudOn', 'regions'];
 let SEED = 20260917;
 function getCfg() {
 	const c = { seed: SEED };
@@ -103,9 +106,10 @@ function hash32(s) {
 /* striped bands + a big circle, generated in svg so the art stays crisp at any
    size and every display mode keeps its own meaning (cover scales the 16:10
    picture, contain letterboxes it, tiled repeats the seamless square, auto and
-   fixed draw it at the natural size). Returns url('data:…') ready for a style
-   attribute: the svg only uses double quotes, which encodeURIComponent escapes,
-   so no quote can ever close the attribute it is pasted into.
+   fixed draw it at the natural size). Returns the BARE data URI; callers wrap
+   it for a CSS url() or use it directly as an <img src>. The svg only uses
+   double quotes, which encodeURIComponent escapes, so no quote can ever close
+   the attribute it is pasted into.
    In repeat mode the bands run vertically with a period that divides the tile
    width, so neighbouring tiles continue the same rhythm. */
 function artURI(w, h, pal, tag, tile) {
@@ -135,12 +139,13 @@ function artURI(w, h, pal, tag, tile) {
 		+ '" stroke-width="' + Math.max(1, Math.round(r / 20)) + '" opacity="' + (tile ? 0.22 : 0.45) + '"/>'
 		+ (tile ? '' : '<text x="' + (fs + 2) + '" y="' + (fs * 2) + '" font-family="monospace" font-size="' + fs + '" fill="#ffffff" opacity="0.55">' + tag + '</text>')
 		+ '</svg>';
-	return "url('data:image/svg+xml," + encodeURIComponent(svg) + "')";
+	return 'data:image/svg+xml,' + encodeURIComponent(svg);
 }
+function cssURI(u) { return "url('" + u + "')"; }
 function wagonVisual(pal, mode, size, tag) {
-	if (mode === 'tiled') return artURI(160, 160, pal, tag, true);
-	if (mode === 'fixed' || mode === 'auto') return artURI(size, size, pal, tag, false);
-	return artURI(1600, 1000, pal, tag, false);
+	if (mode === 'tiled') return cssURI(artURI(160, 160, pal, tag, true));
+	if (mode === 'fixed' || mode === 'auto') return cssURI(artURI(size, size, pal, tag, false));
+	return cssURI(artURI(1600, 1000, pal, tag, false));
 }
 
 /* ---------------- generator ---------------- */
@@ -236,6 +241,9 @@ function serializeNode(node, depth) {
 	let open = '<' + tag;
 	for (const a of Array.from(node.attributes)) open += ' ' + a.name + '="' + escapeHTML(a.value) + '"';
 	open += '>';
+	/* void elements never get a closing tag — region wagons put <img> in the
+	   template, and </img> would ride through every source-pane round trip */
+	if (VOID_TAGS[tag]) return pad + open;
 	if (!node.children.length) return pad + open + serializeText(tag, node.textContent) + '</' + tag + '>';
 	let text = pad + open;
 	for (const child of Array.from(node.childNodes)) {
@@ -304,9 +312,46 @@ function sourceVisual(source, fallback, pal, mode, size, tag) {
 	if (!fallback) return { image:'', source:'' };
 	return { image: wagonVisual(pal, mode, size, tag), source: '' };
 }
+/* region wagons (0.5.5): art rides in two <img> children (compressed base +
+   sharp 1:1 crop) instead of background-image, and the adapter sizes them
+   from REGIONS. The chapter rule hands QA all three data cases in one story:
+   ch 2,5,… get NO entry (whole-base fallback), ch 3,6,… an entry WITHOUT hd
+   (crop stays hidden), the rest a full entry. fixed/auto give the wagon an
+   explicit centred box — the region math assumes the page-span box — so those
+   modes coerce to cover. The rect/crop draws come from a private rng keyed by
+   the tag, so the main stream (and with it every wagon's geometry) matches the
+   regions-off story draw for draw. */
+function regionEntryCase(k) { return k % 3 === 2 ? 'none' : k % 3 === 0 ? 'nohd' : 'full'; }
+function regionWagonHTML(k, j, cfg, rng, mode, dir, pal, source) {
+	if (mode === 'fixed' || mode === 'auto') mode = 'cover';
+	const tag = 'ch' + k + '·bg' + j;
+	let at = ' class="snow-bg snow-hd" data-mode="' + mode + '" data-gap="' + templateGap(cfg, rng) + '"';
+	if (dir !== 'top') at += ' data-dir="' + dir + '"';
+	if (source) {
+		at += ' data-source="' + escapeHTML(source) + '"';
+		return '<div' + at + '><img src="' + escapeHTML(source) + '" alt="' + tag + '"></div>';
+	}
+	const base = artURI(1600, 1000, pal, tag, false);
+	let inner = '<img src="' + escapeHTML(base) + '" alt="' + tag + '">';
+	const ec = regionEntryCase(k);
+	if (ec !== 'none') {
+		const rr = mulberry32(hash32(tag + '·rect'));
+		const x = Math.round(200 + rr() * 500);
+		const y = Math.round(120 + rr() * 280);
+		const w = Math.round(400 + rr() * 400);
+		const h = Math.round(320 + rr() * 260);
+		const crop = artURI(w * 2, h * 2, pal, tag + '·c', false);
+		inner += '<img src="' + escapeHTML(crop) + '" alt="" aria-hidden="true">';
+		const e = { x: x, y: y, w: w, h: h, bw: 1600, bh: 1000, maxZoom: 4 };
+		if (ec === 'full') e.hd = crop;
+		window.REGIONS[base] = e;
+	}
+	return '<div' + at + '>' + inner + '</div>';
+}
 function templateWagonHTML(k, j, cfg, rng, source, pal) {
 	const mode = templateMode(cfg, rng), size = cfg.size === 'mixed' ? pick(rng,[256,512,1024]) : +cfg.size;
 	const dir = cfg.dir === 'mixed' ? pick(rng,['top','left','right','bottom']) : cfg.dir === 'none' ? 'top' : cfg.dir;
+	if (cfg.regions) return regionWagonHTML(k, j, cfg, rng, mode, dir, pal, source);
 	const visual = sourceVisual(source, !!cfg.exampleGradient, pal, mode, size, 'ch'+k+'·bg'+j);
 	let at = ' class="snow-bg" data-mode="'+mode+'" data-gap="'+templateGap(cfg,rng)+'"';
 	if (mode === 'fixed' || mode === 'auto') at += ' data-size="'+size+'"';
@@ -362,6 +407,9 @@ function templateChapterHTML(k, cfg, rng, sources, cursor) {
 }
 function build() {
 	flushSource(); const cfg=getCfg(), rng=mulberry32(SEED), sources=parseExampleImages($('exampleImages').value), cursor={i:0}, parts=[];
+	/* the harness owns the region table in memory (a real book loads regions.js
+	   before the adapter); the adapter resolves window.REGIONS at measure time */
+	window.REGIONS = {};
 	for (let k=1;k<=clamp(+cfg.n||1,1,12);k++) parts.push(templateChapterHTML(k,cfg,rng,sources,cursor));
 	$('app').innerHTML=parts.join('')+'<div class="tail"></div>'; LOG.length=0; $('qa').innerHTML=''; $('jump').max=chapters().length||1;
 	window.scrollTo(0,0); writeHash(); engRefresh(); writeSource(false);
@@ -1261,6 +1309,144 @@ async function qMorph() {
 	return row('morph', 1, arrivals + ' arrival(s), ' + snaps + ' snap(s), ' + swaps + ' swap(s), idle 0 writes, regen ok'
 		+ (skipped ? ', ' + skipped + ' skipped (zone/clamp)' : ''));
 }
+/* ------------- region probe (0.5.5) -------------
+   Fit/clamp/pivot always come from HDRegion — the predicates below only judge
+   the outcome (I1/I2/I3), they never re-derive a layout. ±1px at the live
+   viewport; the four simulated viewport shapes belong to the node gate. */
+function rgnVisible(vw, vh, r, L) {
+	const x0 = L.x + r.x * L.s, y0 = L.y + r.y * L.s;
+	return x0 >= -1 && y0 >= -1 && x0 + r.w * L.s <= vw + 1 && y0 + r.h * L.s <= vh + 1;
+}
+function rgnCoverPossible(vw, vh, r, L) {
+	if (L.w < vw - 1e-6 || L.h < vh - 1e-6) return false;
+	const loX = Math.max(vw - (r.x + r.w) * L.s, vw - L.w), hiX = Math.min(-r.x * L.s, 0);
+	const loY = Math.max(vh - (r.y + r.h) * L.s, vh - L.h), hiY = Math.min(-r.y * L.s, 0);
+	return loX <= hiX + 1e-6 && loY <= hiY + 1e-6;
+}
+function rgnCovers(L, vw, vh) {
+	return L.x <= 1 && L.y <= 1 && L.x + L.w >= vw - 1 && L.y + L.h >= vh - 1;
+}
+function pxNum(s) { const v = parseFloat(s); return isFinite(v) ? v : NaN; }
+function parseTranslate(el) {
+	const m = /translate3?d?\(\s*(-?[\d.]+)px,\s*(-?[\d.]+)px/.exec(el.style.transform || '');
+	return m ? { x: +m[1], y: +m[2] } : null;
+}
+async function qRegion() {
+	const hds = document.querySelectorAll('#app .snow-hd');
+	if (!hds.length) return row('region', -1, 'no .snow-hd wagons (regions=off?)');
+	if (!window.SnowfallRegion || !window.HDRegion) return row('region', -1, 'adapter or hdregion.js not loaded');
+	if (!hasEng()) return row('region', -1, 'no engine');
+	const R = SnowfallRegion;
+	if (!R.count()) return row('region', 0, hds.length + ' .snow-hd wagon(s) but none managed (all fixed/auto?)');
+	const vp = Snowfall.viewport;
+	const bad = [];
+	let errs = 0;
+	const origErr = console.error;
+	console.error = function () { errs++; origErr.apply(console, arguments); };
+	const rc = { x:0, y:0, w:0, h:0, has:0, hd:0, maxZoom:4, baseW:0, baseH:0, zoom:1, panX:0, panY:0 };
+	try {
+		/* static contract on the LIVE subscriber: file:// cannot fetch its own
+		   script source, so the GUI probe scans the registered frame function —
+		   the full-file scan lives in test/region.js */
+		const subs = Snowfall.default ? Snowfall.default.subs : [];
+		const sub = subs.length > 3 ? subs[3] : null;
+		if (!sub || !sub.frame) bad.push('adapter subscriber not registered after the built-ins');
+		else {
+			const fsrc = String(sub.frame).replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/[^\n]*/g, '');
+			const cleaned = fsrc.replace(/'[^']*'/g, "''").replace(/"[^"]*"/g, '""');
+			if (/=\s*\{[^}]*\}/.test(cleaned) || /=\s*\[[^\]]*\]/.test(cleaned)) bad.push('frame() allocates object/array literals');
+			if (/wagonEls\[[^\]]*\]\.style/.test(fsrc)) bad.push('frame() writes the wagon element');
+		}
+		let parked = 0, degraded = 0, zoomed = 0, skipped = 0;
+		for (let i = 0; i < R.count(); i++) {
+			const el = R.wagonEl(i), wi = R.wagonIndex(i);
+			if (!el || wi < 0) { bad.push('#' + i + ' has no engine wagon index'); continue; }
+			/* park the wagon: ceil lands free ≤ 0 even for fractional anchor Y */
+			setY(clamp(Math.ceil(Snowfall.wagons.y[wi]), 0, maxY())); await raf2();
+			const W = Snowfall.wagons;
+			if (!(W.pos[wi] === 0 && W.free[wi] <= 0)) { skipped++; continue; }   /* pushed or parent-clamped here */
+			const imgs = el.getElementsByTagName('img');
+			const b = imgs[0], h = imgs[1] || null;
+			if (!b || !(b.naturalWidth > 0)) { bad.push('#' + i + ' base not decoded'); continue; }
+			R.rect(i, rc);
+			if (!(rc.w > 0) || !(rc.h > 0)) { bad.push('#' + i + ' rect not seeded'); continue; }
+			const L = {};
+			HDRegion.finalLayout(vp.width, vp.height, b.naturalWidth, b.naturalHeight, rc,
+				{ zoom: rc.zoom, x: rc.panX, y: rc.panY, maxZoom: rc.maxZoom }, L);
+			/* at park, wagon-local space IS viewport space — ±1px on what is written */
+			const cmp = (img, wW, hW, xW, yW, what) => {
+				if (!img) { bad.push('#' + i + ' ' + what + ' missing'); return; }
+				if (Math.abs(pxNum(img.style.width) - wW) > 1 || Math.abs(pxNum(img.style.height) - hW) > 1)
+					bad.push('#' + i + ' ' + what + ' size ' + img.style.width + '×' + img.style.height + ', want ' + wW.toFixed(1) + '×' + hW.toFixed(1));
+				const t = parseTranslate(img);
+				if (!t || Math.abs(t.x - xW) > 1 || Math.abs(t.y - yW) > 1)
+					bad.push('#' + i + ' ' + what + ' at ' + (t ? t.x.toFixed(1) + ',' + t.y.toFixed(1) : '—') + ', want ' + xW.toFixed(1) + ',' + yW.toFixed(1));
+			};
+			cmp(b, L.w, L.h, L.x, L.y, 'base');
+			if (rc.zoom === 1 && rc.panX === 0 && rc.panY === 0) {
+				if (!rgnVisible(vp.width, vp.height, rc, L)) bad.push('#' + i + ' region not fully visible at zoom 1 (I1)');
+				if (rgnCoverPossible(vp.width, vp.height, rc, L) && !rgnCovers(L, vp.width, vp.height)) bad.push('#' + i + ' base does not cover the viewport though possible (I2)');
+			}
+			if (h) {
+				if (!rc.hd) {
+					degraded++;
+					if (h.style.display !== 'none') bad.push('#' + i + ' HD shown with no hd declared');
+				} else {
+					cmp(h, rc.w * L.s, rc.h * L.s, L.x + rc.x * L.s, L.y + rc.y * L.s, 'hd');
+					if (h.style.display === 'none' && h.complete && h.naturalWidth) bad.push('#' + i + ' HD decoded but stuck hidden');
+				}
+			}
+			parked++;
+			/* one deterministic zoom round trip on a full-entry wagon: pivot stays
+			   under the cursor (I3), the HD grows, the base still covers, the wagon
+			   element is untouched, reset returns to the zoom-1 pixels */
+			if (rc.hd && h && !zoomed) {
+				const wT = el.style.transform;
+				const bW1 = b.style.width, bT1 = b.style.transform, hW1 = h.style.width;
+				const cx = Math.round(vp.width / 2), cy = Math.round(vp.height / 2);
+				if (!R.zoomActive(cx, cy, 2)) bad.push('#' + i + ' zoomActive refused at park');
+				else {
+					zoomed++;
+					R.rect(i, rc);
+					const L2 = {};
+					HDRegion.finalLayout(vp.width, vp.height, b.naturalWidth, b.naturalHeight, rc,
+						{ zoom: rc.zoom, x: rc.panX, y: rc.panY, maxZoom: rc.maxZoom }, L2);
+					if (rc.zoom !== 2) bad.push('#' + i + ' zoom did not take (' + rc.zoom + ')');
+					if (!(pxNum(h.style.width) > pxNum(hW1))) bad.push('#' + i + ' HD child did not grow at zoom 2');
+					const ix = (cx - L.x) / L.s, iy = (cy - L.y) / L.s;
+					if (Math.abs(L2.x + ix * L2.s - cx) > 1 || Math.abs(L2.y + iy * L2.s - cy) > 1)
+						bad.push('#' + i + ' pivot moved under zoom by ' + (L2.x + ix * L2.s - cx).toFixed(1) + ',' + (L2.y + iy * L2.s - cy).toFixed(1) + 'px');
+					if (rgnCoverPossible(vp.width, vp.height, rc, L2) && !rgnCovers(L2, vp.width, vp.height)) bad.push('#' + i + ' base stopped covering at zoom 2');
+					cmp(b, L2.w, L2.h, L2.x, L2.y, 'base@2x');
+					cmp(h, rc.w * L2.s, rc.h * L2.s, L2.x + rc.x * L2.s, L2.y + rc.y * L2.s, 'hd@2x');
+					if (el.style.transform !== wT) bad.push('#' + i + ' gesture wrote the wagon element');
+					R.resetActive();
+					if (b.style.width !== bW1 || b.style.transform !== bT1) bad.push('#' + i + ' reset did not return to the zoom-1 pixels');
+				}
+			}
+		}
+		if (!parked) return row('region', -1, 'no .snow-hd wagon parks at a reachable scrollY (' + skipped + ' skipped)');
+		if (errs) bad.push(errs + ' console error(s) during the probe');
+	} finally {
+		console.error = origErr;
+	}
+	if (bad.length) return row('region', 0, bad.slice(0, 6).join('; '));
+	return row('region', 1, parked + ' wagon(s) ±1px at park · zoom pivot+cover+reset ok · ' + degraded + ' degraded hidden · frame() allocation-free'
+		+ (skipped ? ' · ' + skipped + ' skipped (pushed/clamped)' : ''));
+}
+/* the sandbox rule prefers in-GUI test + save: dump the QA panel and the
+   diagnostics snapshot to a file (double-clicked index.html has no console) */
+function saveQa() {
+	const lines = Array.from($('qa').children).map(div =>
+		((div.className.match(/\b(ok|fail|skip)\b/) || ['?'])[0]).toUpperCase() + '\t' + div.textContent.trim());
+	const text = 'snowfall QA · ' + new Date().toISOString() + '\n#' + location.hash.replace(/^#/, '')
+		+ '\n\n' + lines.join('\n') + '\n\n' + $('dstats').textContent + '\n';
+	const a = document.createElement('a');
+	a.href = URL.createObjectURL(new Blob([text], { type: 'text/plain' }));
+	a.download = 'snowfall-qa.txt';
+	document.body.appendChild(a); a.click(); a.remove();
+	setTimeout(() => URL.revokeObjectURL(a.href), 4000);
+}
 async function qaAll() {
 	if (qaBusy) return;
 	qaBusy = true;
@@ -1276,6 +1462,7 @@ async function qaAll() {
 		await qStickSlots();
 		await qEvents();
 		await qMorph();
+		await qRegion();
 	} finally {
 		qaBusy = false;
 		$('qaBtn').disabled = false;
@@ -1289,7 +1476,7 @@ function boot() {
 	readHash(); build(); applyLayout();
 	bind('reg','click',build); bind('seed','click',()=>{SEED=(Math.random()*0xFFFFFFFF)>>>0;build();});
 	bind('addChapter','click',addChapter); bind('addBackground','click',addBackground); bind('templateCopy','click',copyTemplate);
-	bind('sourceToggle','click',()=>toggleSource()); bind('applySource','click',applySource); bind('exampleImages','change',build); bind('exampleGradient','change',build);
+	bind('sourceToggle','click',()=>toggleSource()); bind('applySource','click',applySource); bind('exampleImages','change',build); bind('exampleGradient','change',build); bind('regions','change',build);
 	bind('n','input',()=>{$('nO').textContent=$('n').value;}); bind('bgs','input',()=>{$('bgsO').textContent=$('bgs').value;});
 	bind('speed','input',()=>{$('spd').textContent=$('speed').value;}); bind('preset','change',()=>applyPreset($('preset').value));
 	bind('sceneFields','change',applyInspector); bind('backgroundFields','change',applyInspector);
@@ -1302,6 +1489,11 @@ function boot() {
 	bind('wire','change',()=>{$('wires').classList.toggle('on',$('wire').checked);if(!$('wire').checked)$('wires').innerHTML='';});
 	bind('panelTab','click',()=>togglePanels()); bind('qaTab','click',()=>toggleQa());
 	bind('gutter','change',applyLayout); bind('hudOn','change',applyLayout);
+	/* the adapter owns inspect mode; the harness mirrors it two ways (the QA
+	   checkbox drives setInspect, onInspect syncs back for key i / HUD) */
+	bind('inspectBg','change',e=>{if(window.SnowfallRegion)SnowfallRegion.setInspect(e.target.checked);});
+	bind('saveQa','click',saveQa);
+	if (window.SnowfallRegion) SnowfallRegion.onInspect=on=>{const c=$('inspectBg');if(c)c.checked=on;};
 	window.addEventListener('wheel',e=>{if(e.target!==$('src')){scrollDriver='preview';driverUntil=Date.now()+600;}},{passive:true}); window.addEventListener('resize',engRefresh);
 	document.addEventListener('keydown',e=>{const t=(e.target&&e.target.tagName)||'';if((e.key==='s'||e.key==='S')&&t!=='INPUT'&&t!=='SELECT'&&t!=='TEXTAREA'){toggleSource();return;}if(t==='INPUT'||t==='SELECT'||t==='TEXTAREA')return;if(e.key==='r')build();else if(e.key==='t')setY(0);else if(e.key==='b')setY(maxY());else if(e.key==='q')qaAll();else if(e.key==='p')togglePanels();else if(e.key==='d')toggleQa();else if(e.key===' ') {e.preventDefault();toggleAuto();}});
 	requestAnimationFrame(fpsLoop);setInterval(diagTick,100);diagTick();

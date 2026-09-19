@@ -123,6 +123,25 @@ matrix.
   viewport slot, and parent content-box constraint *including the stick's
   own margins* — because short pages legitimately clamp the probe scroll at
   `maxY` and short sections legitimately constrain the park.
+- An `<img src>` attribute needs the bare data URI; the `url()` wrapper
+  belongs only at CSS call sites. `getAttribute('src')` must match a table
+  key verbatim or lookups silently miss.
+- The source serializer must treat `<img>` (and every void tag) as
+  self-closing: an emitted `</img>` makes the browser parser invent stray
+  elements and corrupts the next rebuild.
+- Park detection in a probe: scroll to `Math.ceil(W.y[wi])` and require
+  `pos === 0 && free <= 0`; on a miss, skip the row — never fail it, since
+  fractional anchor Y under integer scroll may land 1px short.
+- `String(fn)` source scans run fine from `file://` (no fetch needed), but
+  strip comments first — a comment mentioning `{` or `.style` otherwise fails
+  an allocation/write scan.
+- In a `vm` sandbox, `window.X` is NOT the bare binding `X` (unlike browsers,
+  where `window === globalThis`). After running each script, bridge:
+  `sandbox.Snowfall = sandbox.window.Snowfall`, or later scripts' bare
+  references throw.
+- The engine collects `.snow-bg` from the scope element
+  (`app.querySelectorAll`), not `document`; a DOM shim that only implements
+  document-level lookup measures zero wagons.
 
 ## events (0.4)
 
@@ -140,6 +159,45 @@ matrix.
 - Threshold QA reads `events.flags` (the latch itself), not LOG counts —
   1px steps around each threshold prove ±2px without fighting integer
   `scrollY` vs fractional anchor Y.
+
+## regions (0.5.5)
+
+- A render-time clamp of `pos` must not feed the `parked` latch: for a
+  screen-flow wagon (`gap=100vh` ⇒ `ext=vh`, `mb=0`) the cap
+  `pBot − sY − ext − mb` is negative the whole time the trigger anchor is
+  visible, so a clamp-aware `pos === 0` test never parks and the chapter's
+  `parked` event silently dies. Latch on the pre-clamp chain rest state
+  (`W.pkd`), render the clamped value.
+- `documentElement.clientWidth` vs `innerWidth` is exactly one scrollbar of
+  error and only shows up once a child is positioned against the wagon —
+  invisible to transform-only QA. Cache the viewport per frame and expose it;
+  never let a subscriber re-read it mid-frame.
+- No-JS containment CSS (`max-height:100vh`, `object-fit:contain`)
+  re-constrains the replaced-element box *after* explicit pixel writes, so
+  correct math reads as a positioning bug. Scope the fallback with
+  `html.snow-ready`, add the class from `frame()`, remove it in `off()`.
+- `naturalWidth`/`naturalHeight` are decode metadata and legal in `frame()`;
+  `getBoundingClientRect`/`getComputedStyle`/`style.*` reads are layout and
+  are not. Cache the HD child's size at `load` behind an `hdLoaded` flag —
+  never infer visibility from `style.display`.
+- A cached image fires no `load`: seed `complete && naturalWidth` at bind
+  time or the crop stays hidden forever; a late decode must snap in from its
+  own `load` handler with no scroll or resize.
+- `normKey` strips `?`, `#` and a leading `./` but must NOT
+  `decodeURIComponent` — percent-decoding mangles the `data:` URIs the
+  harness uses, and relative paths never need it.
+- Resolve `window.REGIONS` at every measure, never capture at load: the table
+  may arrive after the engine boots and the harness rebuilds it in place.
+  Preserve zoom/pan across measures iff the wagon element at that index is
+  identical, so a rebuild can't inherit stale decode caches.
+- Key handlers (`i`/`Esc`) must skip editable targets and held modifiers, or
+  typing in the source pane toggles inspect mode mid-word. `touchmove`
+  `preventDefault` only while inspecting and only over a parked region wagon
+  — read-mode scrolling is never owned.
+- `test/math.js` simulates the clamp itself and therefore CANNOT catch the
+  engine removing it; only the VM end-to-end assertion (deep scroll renders
+  `translate3d(0px,0px,0)`, unclamped would render thousands of px) proves
+  the engine applies it. Keep both, and break-test each gate once.
 
 ## integration & vendoring (0.5.5)
 

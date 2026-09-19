@@ -1,4 +1,5 @@
-/* snowfall.js — visual novella scroll engine: core + wagons (0.2) + style/theme morph (0.3) + script events (0.4).
+/* snowfall.js — visual novella scroll engine: core + wagons (0.2) + style/theme morph (0.3)
+	+ script events (0.4) + cached viewport / parent-bottom pos clamp (0.5.5).
 	Sticky park (compositor) + JS push chain (sync scroll handler).
 	Classic script, no modules; require()-able under node with zero DOM at load. */
 (function(global) {
@@ -210,12 +211,29 @@ function createCore(opts) {
 		els: [], y: new Float64Array(0), free: new Float64Array(0),
 		pos: new Float64Array(0), ext: new Float64Array(0),
 		pBot: new Float64Array(0), pH: new Float64Array(0), mb: new Float64Array(0),
-		gap: new Float64Array(0), dir: new Uint8Array(0),
+		gap: new Float64Array(0), dir: new Uint8Array(0), pkd: new Uint8Array(0),
 		box: new Float64Array(0), parL: new Float64Array(0), lastMl: new Float64Array(0),
 		lastX: new Float64Array(0), lastY: new Float64Array(0), n: 0
 	};
 	let lastVh = 0, lastVw = 0;
 	const rootEl = hasDOM ? document.documentElement : null;
+	/* one authoritative viewport: width = documentElement.clientWidth (the layout
+	   width — excludes the classic scrollbar, and it is what the page-span wagon
+	   box resolves against), height = window.innerHeight (dynamic — follows mobile
+	   URL-bar show/hide). Wagon boxes, CSS vars, frame(), step() defaults and
+	   Snowfall.viewport all read this one cache, so a subscriber can never
+	   disagree with the engine by a scrollbar. */
+	const vp = { width: 0, height: 0 };
+	function measureViewport() {
+		if (!hasDOM) return;
+		vp.width = rootEl.clientWidth;
+		vp.height = window.innerHeight;
+		if (vp.height !== lastVh || vp.width !== lastVw) {
+			lastVh = vp.height; lastVw = vp.width;
+			rootEl.style.setProperty('--snow-vh', vp.height + 'px');
+			rootEl.style.setProperty('--snow-vw', vp.width + 'px');
+		}
+	}
 
 	/* morph subscriber state (preallocated at measure, mutated in place) */
 	const M = {
@@ -271,16 +289,12 @@ function createCore(opts) {
 	function wagonsMeasure() {
 		if (!hasDOM || !scope || !scope.querySelectorAll) return;
 		injectCSS(document);
-		const vh = window.innerHeight, vw = window.innerWidth;
-		/* art wagons span the visible page, never their parent's text column.
-		   innerWidth counts the classic scrollbar, clientWidth is what the user
-		   actually sees, so the art is not clipped on the right. */
-		const spanW = document.documentElement.clientWidth || vw;
-		if (vh !== lastVh || vw !== lastVw) {
-			lastVh = vh; lastVw = vw;
-			document.documentElement.style.setProperty('--snow-vh', vh + 'px');
-			document.documentElement.style.setProperty('--snow-vw', vw + 'px');
-		}
+		measureViewport();
+		const vh = vp.height;
+		/* art wagons span the visible page, never their parent's text column:
+		   width = vp.width px plus a marginLeft that cancels the parent's
+		   content left, so the border box is the viewport rect at x = 0. */
+		const spanW = vp.width;
 		collectSticks();
 		const found = scope.querySelectorAll('.snow-bg');
 		const els = [];
@@ -294,7 +308,7 @@ function createCore(opts) {
 			W.pos = new Float64Array(n); W.ext = new Float64Array(n);
 			W.pBot = new Float64Array(n); W.pH = new Float64Array(n);
 			W.mb = new Float64Array(n); W.gap = new Float64Array(n);
-			W.dir = new Uint8Array(n);
+			W.dir = new Uint8Array(n); W.pkd = new Uint8Array(n);
 			W.box = new Float64Array(n); W.parL = new Float64Array(n);
 			W.lastMl = new Float64Array(n);
 			W.lastX = new Float64Array(n); W.lastY = new Float64Array(n);
@@ -381,7 +395,22 @@ function createCore(opts) {
 		for (let i = 0; i < n; i++) {
 			const fr = W.free[i], e = W.ext[i];
 			const park = fr > 0 ? fr : 0;
-			const p = W.pos[i], d = park - p;
+			const raw = W.pos[i];
+			/* the parent-bottom clamp is a RENDER constraint: past the parent the
+			   chain leaves pos parked while stickyShown's cap heads to −∞, so an
+			   unclamped dy = pos − sh grows linearly with scroll — the wagon is
+			   translated back onto the screen and the page never ends. Clamped,
+			   dy converges to 0 (the wagon follows its sticky off-screen) and
+			   |dy| stays bounded by ext. Events must NOT read the clamped value:
+			   in a screen-flow chapter (gap = 100vh, trigger at the section end)
+			   the cap is already negative while the trigger is visible
+			   (cap = d − vh), so a clamped parked test could never fire — the
+			   parked latch (pkd) is the pre-clamp chain rest state. */
+			W.pkd[i] = (raw === 0 && fr <= 0) ? 1 : 0;
+			const cap = W.pBot[i] - sY - e - W.mb[i];
+			const p = raw > cap ? cap : raw;
+			W.pos[i] = p;
+			const d = park - raw;
 			const sh = stickyShown(fr, e, W.pBot[i] - sY, W.pH[i], W.mb[i]);
 			/* exits diverge only past the edge (pos<0): while riding, every wagon
 			   respects the chain ceiling exactly like a top exit, so lateral and
@@ -400,7 +429,7 @@ function createCore(opts) {
 				W.lastX[i] = dx; W.lastY[i] = dy; writes++;
 			}
 			if (fr <= 0) active = i;
-			if (p === 0 && fr <= 0) parked++;
+			if (W.pkd[i]) parked++;
 			if (d > 0) pushed++;
 		}
 		inst.debug.active = active;
@@ -430,7 +459,7 @@ function createCore(opts) {
 		M.els = els; M.n = n;
 		M.rawRange = new Array(n); M.tokBg = new Array(n);
 		M.tokFg = new Array(n); M.cls = new Array(n);
-		const vh = window.innerHeight;
+		const vh = vp.height;
 		for (let i = 0; i < n; i++) {
 			const ds = els[i].dataset;
 			const bRaw = ds.bg !== undefined ? String(ds.bg).trim() : '';
@@ -695,7 +724,7 @@ function createCore(opts) {
 					if (d0 < vh * 0.5) f0 |= 2;
 					let pok0 = false;
 					const w0 = E.wagon[i];
-					if (inst.options.wagons && w0 >= 0) pok0 = W.pos[w0] === 0 && W.free[w0] <= 0;
+					if (inst.options.wagons && w0 >= 0) pok0 = W.pkd[w0] === 1;
 					else if (inst.options.parkedAsView) pok0 = true;
 					if (pok0) f0 |= 4;
 				}
@@ -726,7 +755,7 @@ function createCore(opts) {
 				   plus a still-pinned wagon fires it on reverse scroll. */
 				let pok = false;
 				const w = E.wagon[i];
-				if (useW && w >= 0) pok = W.pos[w] === 0 && W.free[w] <= 0;
+				if (useW && w >= 0) pok = W.pkd[w] === 1;
 				else if (aliasV) pok = true;
 				if (pok && !(f & 4)) { f |= 4; if (decl & 4) fireAnchor(i, 2, sY); }
 			}
@@ -767,17 +796,21 @@ function createCore(opts) {
 	inst.refresh = function(replay) {
 		if (inst.destroyed || !hasDOM) return;
 		inst.stamp++;
+		/* viewport first: every subscriber measure and the frame below must see
+		   the same cached numbers */
+		measureViewport();
 		const subs = inst.subs;
 		for (let i = 0; i < subs.length; i++) subs[i].measure(replay);
-		coreFrame(window.scrollY || 0, window.innerHeight, window.innerWidth);
+		coreFrame(window.scrollY || 0, vp.height, vp.width);
 	};
 	inst.step = function(sY, vh, vw) {
 		if (inst.destroyed) return;
 		if (sY === undefined) sY = hasDOM ? window.scrollY || 0 : 0;
-		if (vh === undefined) vh = hasDOM ? window.innerHeight : 0;
-		if (vw === undefined) vw = hasDOM ? window.innerWidth : 0;
+		if (vh === undefined) vh = vp.height;
+		if (vw === undefined) vw = vp.width;
 		coreFrame(sY, vh, vw);
 	};
+	Object.defineProperty(inst, 'viewport', { get: function() { return vp; } });
 	inst.anchorY = function(el) {
 		if (!hasDOM || !el || !el.__snowA || !el.__snowA.parentNode) return 0;
 		return el.__snowA.getBoundingClientRect().top + (window.scrollY || 0);
@@ -804,7 +837,11 @@ function createCore(opts) {
 		}
 	};
 	function onScroll() {
-		coreFrame(window.scrollY || 0, window.innerHeight, window.innerWidth);
+		/* mobile URL-bar show/hide fires scroll without resize — re-measure here
+		   so vh follows it. Reading clientWidth forces no reflow: the engine's
+		   only writes are transforms, which the compositor owns. */
+		measureViewport();
+		coreFrame(window.scrollY || 0, vp.height, vp.width);
 	}
 	function onResize() { inst.refresh(); }
 	if (hasDOM) {
@@ -820,7 +857,7 @@ function createCore(opts) {
 const Snowfall = {
 	create: createCore,
 	default: null,
-	version: '0.4',
+	version: '0.5.5',
 	chain: chain,
 	stickyShown: stickyShown,
 	dirCode: dirCode,
@@ -838,6 +875,7 @@ Snowfall.step = function(a, b, c) { if (Snowfall.default) Snowfall.default.step(
 Snowfall.anchorY = function(el) { return Snowfall.default ? Snowfall.default.anchorY(el) : 0; };
 Snowfall.setEnabled = function(on) { if (Snowfall.default) Snowfall.default.setEnabled(on); };
 Object.defineProperty(Snowfall, 'wagons', { get: function() { return Snowfall.default ? Snowfall.default.wagons : undefined; } });
+Object.defineProperty(Snowfall, 'viewport', { get: function() { return Snowfall.default ? Snowfall.default.viewport : undefined; } });
 Object.defineProperty(Snowfall, 'morph', { get: function() { return Snowfall.default ? Snowfall.default.morph : undefined; } });
 Object.defineProperty(Snowfall, 'events', { get: function() { return Snowfall.default ? Snowfall.default.events : undefined; } });
 Object.defineProperty(Snowfall, 'debug', { get: function() { return Snowfall.default ? Snowfall.default.debug : undefined; } });
