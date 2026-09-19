@@ -140,3 +140,19 @@ matrix.
 - Threshold QA reads `events.flags` (the latch itself), not LOG counts —
   1px steps around each threshold prove ±2px without fighting integer
   `scrollY` vs fractional anchor Y.
+
+## integration & vendoring (0.5.5)
+
+- Two-way vendoring drifts, measurably: the engine and its vendored copy in
+  the asset repo diverged by 180 diff lines within a few commits — four
+  engine fixes existed only downstream, the newest engine work only upstream.
+  Vendor in ONE direction, keep one trunk per kind of file, and stamp the copy
+  (`vendor/VERSION.txt`) so a `--check` command goes red instead of a browser.
+- `git diff <old>:snowfall.js vendored-copy | wc -l` against a few candidate
+  commits finds a fork's origin in seconds; `git fetch --unshallow` first if
+  the checkout is shallow (`.git/shallow` present).
+- Submodules are the wrong tool for a `file://` double-click runtime: a source
+  zip and a plain `git clone` both leave the directory empty, and nothing
+  errors — the page just silently loses a feature.
+- An engine-side fix that a downstream adapter needed is still an engine fix.
+  Upstream it and re-sync; patching the copy is how the fork above happened.
