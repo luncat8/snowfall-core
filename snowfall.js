@@ -181,6 +181,9 @@ var CSS = '.snow-bg{position:sticky;top:0;z-index:-1;pointer-events:none;overflo
 	+ '.snow-bg[data-mode=auto]{background-size:auto}'
 	+ '.snow-stick{position:sticky;z-index:5}'
 	+ '.snow-a{position:absolute;width:0;height:0;margin:0;padding:0;border:0;overflow:hidden;visibility:hidden;pointer-events:none}'
+	+ '.snow-prompt{position:fixed;bottom:2rem;left:50%;transform:translateX(-50%);z-index:60;display:flex;gap:0.5rem;padding:0.5rem 1rem;background:rgba(20,20,20,0.85);color:#fff;border-radius:8px;box-shadow:0 4px 16px rgba(0,0,0,0.4);font-family:inherit}'
+	+ '.snow-prompt button{background:#333;color:#fff;border:1px solid #555;border-radius:4px;padding:0.4rem 0.8rem;cursor:pointer;font:inherit}'
+	+ '.snow-prompt button:hover{background:#444}'
 	+ 'script[type=txt]{display:none}'
 	+ 'html.snow-off .snow-bg{position:relative;transform:none !important}';
 function injectCSS(doc) {
@@ -189,6 +192,168 @@ function injectCSS(doc) {
 	st.id = 'snowfall-core-css';
 	st.textContent = CSS;
 	doc.head.appendChild(st);
+}
+
+/* ---------------- result store & choice primitive ---------------- */
+function fnv1a(str) {
+	let hash = 0x811c9dc5;
+	for (let i = 0; i < str.length; i++) {
+		hash ^= str.charCodeAt(i);
+		hash = Math.imul(hash, 0x01000193);
+	}
+	return (hash >>> 0).toString(16);
+}
+
+const POL_ONCE = 1;
+const POL_BOTH = 2;
+const POL_SKIP_NONE = 4;
+
+function isScalar(v) {
+	return v === null || typeof v === 'string' || (typeof v === 'number' && Number.isFinite(v)) || typeof v === 'boolean';
+}
+
+function deriveStoryId() {
+	if (typeof document !== 'undefined') {
+		const docEl = document.documentElement;
+		if (docEl && docEl.getAttribute) {
+			const s = docEl.getAttribute('data-story');
+			if (s && s.trim()) return s.trim();
+		}
+		if (document.querySelector) {
+			const meta = document.querySelector('meta[name="story"]');
+			if (meta && meta.getAttribute) {
+				const c = meta.getAttribute('content');
+				if (c && c.trim()) return c.trim();
+			}
+		}
+	}
+	if (typeof location !== 'undefined' && location.pathname) {
+		const parts = location.pathname.split('/').filter(Boolean);
+		if (parts.length) return parts[parts.length - 1];
+	}
+	return 'default';
+}
+
+let persistent = true;
+let warnedStorage = false;
+function getStorage() {
+	try {
+		if (typeof localStorage === 'undefined') {
+			persistent = false;
+			return null;
+		}
+		const testKey = '__snow_test__';
+		localStorage.setItem(testKey, '1');
+		localStorage.removeItem(testKey);
+		return localStorage;
+	} catch (e) {
+		if (!warnedStorage) {
+			warnedStorage = true;
+			console.warn('Snowfall store localStorage unavailable; falling back to in-memory store', e);
+		}
+		persistent = false;
+		return null;
+	}
+}
+
+const storeData = {
+	v: 1,
+	story: deriveStoryId(),
+	slot: 0,
+	at: Math.floor(Date.now() / 1000),
+	vars: {},
+	keys: {},
+	fired: {}
+};
+let isDirty = false;
+let saveTimer = null;
+
+function flushSave() {
+	if (saveTimer) {
+		clearTimeout(saveTimer);
+		saveTimer = null;
+	}
+	if (!isDirty) return;
+	storeData.at = Math.floor(Date.now() / 1000);
+	const storage = getStorage();
+	if (storage) {
+		try {
+			storage.setItem('snowfall:' + storeData.story + ':' + storeData.slot, JSON.stringify(storeData));
+			isDirty = false;
+		} catch (e) {
+			if (!warnedStorage) {
+				warnedStorage = true;
+				console.warn('Snowfall store save failed', e);
+			}
+			persistent = false;
+		}
+	} else {
+		isDirty = false;
+	}
+}
+
+function scheduleAutosave() {
+	isDirty = true;
+	if (saveTimer) clearTimeout(saveTimer);
+	saveTimer = setTimeout(flushSave, 250);
+}
+
+function loadFromStorage() {
+	const storage = getStorage();
+	if (!storage) return;
+	const k = 'snowfall:' + storeData.story + ':' + storeData.slot;
+	try {
+		const item = storage.getItem(k);
+		if (item) {
+			const parsed = JSON.parse(item);
+			if (parsed && typeof parsed === 'object') {
+				storeData.v = 1;
+				storeData.story = typeof parsed.story === 'string' ? parsed.story : storeData.story;
+				storeData.slot = typeof parsed.slot === 'number' ? parsed.slot : 0;
+				storeData.at = typeof parsed.at === 'number' ? parsed.at : Math.floor(Date.now() / 1000);
+				storeData.vars = (parsed.vars && typeof parsed.vars === 'object') ? parsed.vars : {};
+				storeData.keys = (parsed.keys && typeof parsed.keys === 'object') ? parsed.keys : {};
+				storeData.fired = (parsed.fired && typeof parsed.fired === 'object') ? parsed.fired : {};
+				isDirty = false;
+			}
+		}
+	} catch (e) {
+		console.warn('Snowfall store read error', e);
+	}
+}
+
+if (typeof window !== 'undefined') {
+	window.addEventListener('pagehide', flushSave);
+	window.addEventListener('beforeunload', flushSave);
+}
+
+let pending = {};
+let currentAnchor = -1;
+let currentScriptId = null;
+let currentMode = 'live';
+
+function abandonPendingAtAnchor(a) {
+	let any = false;
+	for (const k in pending) {
+		const p = pending[k];
+		if (p.anchor === a) {
+			any = true;
+			delete pending[k];
+			if (p.el && p.el.parentNode) {
+				p.el.parentNode.removeChild(p.el);
+				p.el = null;
+			}
+			let val = p.fallback;
+			let mode = 'default';
+			if (storeData.keys && Object.prototype.hasOwnProperty.call(storeData.keys, k)) {
+				val = storeData.keys[k];
+				mode = 'saved';
+			}
+			try { p.done(val, mode); }
+			catch (e) { console.error('Snowfall.ask continuation threw on abandon for key ' + k, e); }
+		}
+	}
+	return any;
 }
 
 /* ---------------- core factory ---------------- */
@@ -261,13 +426,15 @@ function createCore(opts) {
 	   Scripts keep their own fn + counts for data-snow. All preallocated. */
 	const E = {
 		els: [], n: 0, y: new Float64Array(0), flags: new Uint8Array(0),
+		side: new Uint8Array(0),
 		wagon: new Int32Array(0), decl: new Uint8Array(0), needPrefill: false
 	};
 	const S = {
 		els: [], n: 0, decl: new Uint8Array(0), anchor: new Int32Array(0),
+		pol: new Uint8Array(0), id: [],
 		fn: [], cnt: new Uint16Array(0)
 	};
-	const detail = { el: null, event: '', y: 0, scrollY: 0, wagon: -1, morph: 0 };
+	const detail = { el: null, event: '', y: 0, scrollY: 0, wagon: -1, morph: 0, dir: 1, mode: 'live' };
 
 	function ensureMarker(el) {
 		if (!hasDOM) return null;
@@ -608,6 +775,7 @@ function createCore(opts) {
 			inst.debug.styleCls = key;
 		}
 	}
+	let lastSY = 0, lastDir = 1;
 	function eventsMeasure(replay) {
 		E.n = 0; E.els = [];
 		S.n = 0; S.els = []; S.fn = [];
@@ -615,9 +783,20 @@ function createCore(opts) {
 		inst.eventCount = 0;
 		inst.debug.eventN = 0;
 		E.needPrefill = false;
+		for (const k in pending) {
+			const p = pending[k];
+			if (p.el && p.el.parentNode) {
+				p.el.parentNode.removeChild(p.el);
+				p.el = null;
+			}
+		}
+		pending = {};
+		lastSY = typeof window !== 'undefined' ? window.scrollY || 0 : 0;
+		lastDir = 1;
 		if (!hasDOM || !scope || !scope.querySelectorAll) return;
 		const found = scope.querySelectorAll('script[type="txt"][event]');
-		const tmpEls = [], tmpDecl = [], tmpCode = [];
+		const tmpEls = [], tmpDecl = [], tmpCode = [], tmpPol = [], tmpId = [];
+		const seenIds = new Set();
 		for (let k = 0; k < found.length; k++) {
 			const el = found[k];
 			const attr = el.getAttribute('event');
@@ -631,16 +810,43 @@ function createCore(opts) {
 			if (!mask) continue;
 			const code = el.textContent.trim();
 			if (!code) continue;
+
+			let rawId = el.getAttribute('data-id');
+			let id = rawId ? rawId.trim() : '';
+			let times = (el.getAttribute('data-times') || 'many').trim().toLowerCase();
+			if (id) {
+				if (seenIds.has(id)) {
+					console.warn('Snowfall duplicate script data-id: ' + id);
+					times = 'many';
+				} else {
+					seenIds.add(id);
+				}
+			} else {
+				id = fnv1a(code);
+			}
+			let pol = 0;
+			if (times === 'once') pol |= POL_ONCE;
+			const dir = (el.getAttribute('data-dir') || 'forward').trim().toLowerCase();
+			if (dir === 'both') pol |= POL_BOTH;
+			const skip = (el.getAttribute('data-skip') || 'replay').trim().toLowerCase();
+			if (skip === 'none') pol |= POL_SKIP_NONE;
+
 			ensureMarker(el);
 			tmpEls.push(el); tmpDecl.push(mask); tmpCode.push(code);
+			tmpPol.push(pol); tmpId.push(id);
 		}
 		const m = tmpEls.length;
 		if (!m) return;
 		if (E.y.length < m) {
 			E.y = new Float64Array(m); E.flags = new Uint8Array(m);
+			E.side = new Uint8Array(m);
 			E.wagon = new Int32Array(m); E.decl = new Uint8Array(m);
 		}
-		if (S.decl.length < m) { S.decl = new Uint8Array(m); S.anchor = new Int32Array(m); }
+		if (S.decl.length < m) {
+			S.decl = new Uint8Array(m); S.anchor = new Int32Array(m);
+			S.pol = new Uint8Array(m);
+		}
+		S.id = new Array(m);
 		S.fn = new Array(m); S.cnt = new Uint16Array(m * 5);
 		/* same rule as the wagons: read the scroll with the anchors, after the
 		   wagon margins have settled the document height */
@@ -658,6 +864,7 @@ function createCore(opts) {
 			catch (e) { console.error('Snowfall event script at y=' + Math.round(E.y[i]), e); continue; }
 			if (j !== i) { E.y[j] = E.y[i]; E.wagon[j] = E.wagon[i]; E.decl[j] = E.decl[i]; tmpEls[j] = tmpEls[i]; }
 			S.fn[j] = fn; S.decl[j] = E.decl[j];
+			S.pol[j] = tmpPol[i]; S.id[j] = tmpId[i];
 			const mk = E.decl[j];
 			for (let e = 0; e < 5; e++) if (mk & (1 << e)) pairs++;
 			try { tmpEls[j].removeAttribute('data-snow'); } catch (_ignored) {}
@@ -683,20 +890,37 @@ function createCore(opts) {
 		const nA = a + 1;
 		anchorEls.length = nA;
 		E.els = anchorEls; E.n = nA;
-		E.flags.fill(0, 0, nA);
+		for (let i = 0; i < nA; i++) {
+			let allOnceFired = true;
+			for (let s = 0; s < nS; s++) {
+				if (S.anchor[s] !== i) continue;
+				if (!(S.pol[s] & POL_ONCE) || !storeData.fired[S.id[s]]) {
+					allOnceFired = false;
+					break;
+				}
+			}
+			E.flags[i] = allOnceFired ? 31 : 0;
+			E.side[i] = 0;
+		}
 		inst.events = { n: nA, els: E.els, y: E.y, wagon: E.wagon, flags: E.flags, decl: E.decl };
 		inst.eventCount = pairs;
 		inst.debug.eventN = nA;
 		E.needPrefill = !replay;
 	}
-	function fireAnchor(a, e, sY) {
+	function fireAnchor(a, e, sY, dir, mode, isReverse) {
 		for (let s = 0; s < S.n; s++) {
 			if (S.anchor[s] !== a) continue;
 			if (!(S.decl[s] & (1 << e))) continue;
+			if (isReverse && !(S.pol[s] & POL_BOTH)) continue;
+			if (e === 4 && (S.pol[s] & POL_SKIP_NONE)) continue;
+			if ((S.pol[s] & POL_ONCE) && storeData.fired[S.id[s]]) continue;
+
 			const el = S.els[s];
 			detail.el = el; detail.event = EV_NAMES[e];
 			detail.y = E.y[a]; detail.scrollY = sY;
 			detail.wagon = E.wagon[a]; detail.morph = inst.debug.styleT;
+			detail.dir = dir !== undefined ? dir : 1;
+			detail.mode = mode || 'live';
 			S.cnt[s * 5 + e]++;
 			let ds = '';
 			const mk = S.decl[s];
@@ -705,29 +929,51 @@ function createCore(opts) {
 				ds += EV_NAMES[k] + ':' + S.cnt[s * 5 + k];
 			}
 			try { el.setAttribute('data-snow', ds); } catch (_ignored) {}
+			currentAnchor = a;
+			currentScriptId = S.id[s];
+			currentMode = mode || 'live';
 			try { S.fn[s](Snowfall, detail); }
 			catch (err) { console.error('Snowfall event script at y=' + Math.round(E.y[a]), err); }
+			currentAnchor = -1;
+			currentScriptId = null;
+			currentMode = 'live';
+			if (S.pol[s] & POL_ONCE) {
+				storeData.fired[S.id[s]] = 1;
+				scheduleAutosave();
+			}
 		}
 	}
 	function eventsFrame(sY, vh) {
 		const nA = E.n;
 		if (!nA || !inst.options.events) return;
+		const dSY = sY - lastSY;
+		const frameDir = dSY > 0 ? 1 : (dSY < 0 ? -1 : lastDir);
+		lastSY = sY;
+		lastDir = frameDir;
+
 		if (E.needPrefill) {
 			E.needPrefill = false;
 			for (let i = 0; i < nA; i++) {
 				const d0 = E.y[i] - sY;
-				let f0 = 0;
+				let f0 = E.flags[i];
+				let pok0 = false;
+				const w0 = E.wagon[i];
+				if (inst.options.wagons && w0 >= 0) pok0 = W.pos[w0] === 0 && W.free[w0] <= 0;
+				else if (inst.options.parkedAsView) pok0 = true;
 				if (d0 < 0) f0 = 31;
 				else if (d0 < vh) {
 					f0 |= 1;
 					if (d0 < vh * 0.5) f0 |= 2;
-					let pok0 = false;
-					const w0 = E.wagon[i];
-					if (inst.options.wagons && w0 >= 0) pok0 = W.pos[w0] === 0 && W.free[w0] <= 0;
-					else if (inst.options.parkedAsView) pok0 = true;
 					if (pok0) f0 |= 4;
 				}
 				E.flags[i] = f0;
+
+				let s0 = 0;
+				if (d0 < vh) s0 |= 1;
+				if (d0 < vh * 0.5) s0 |= 2;
+				if (pok0 && d0 < vh && d0 >= 0) s0 |= 4;
+				if (d0 < 0) s0 |= 8;
+				E.side[i] = s0;
 			}
 		}
 		const hyst = inst.options.hysteresis;
@@ -737,6 +983,20 @@ function createCore(opts) {
 			const d = E.y[i] - sY;
 			let f = E.flags[i];
 			const decl = E.decl[i];
+
+			let pok = false;
+			const w = E.wagon[i];
+			if (useW && w >= 0) pok = W.pos[w] === 0 && W.free[w] <= 0;
+			else if (aliasV) pok = true;
+
+			let curSide = 0;
+			if (d < vh) curSide |= 1;
+			if (d < vh2) curSide |= 2;
+			if (pok && d < vh && d >= 0) curSide |= 4;
+			if (d < 0) curSide |= 8;
+
+			const oldSide = E.side[i];
+
 			if (d > vhH) {
 				f &= ~(1 | 2 | 4 | 16);
 				f &= ~8;
@@ -747,21 +1007,27 @@ function createCore(opts) {
 				} else if (d > vh2H) f &= ~2;
 			}
 			if (d < vh && d >= 0) {
-				if (!(f & 1)) { f |= 1; if (decl & 1) fireAnchor(i, 0, sY); }
-				if (d < vh2 && !(f & 2)) { f |= 2; if (decl & 2) fireAnchor(i, 1, sY); }
-				/* parked needs the anchor on screen too: otherwise huge chapters fire it
-				   while the script is far below, view-first order breaks, and re-arm
-				   plus a still-pinned wagon fires it on reverse scroll. */
-				let pok = false;
-				const w = E.wagon[i];
-				if (useW && w >= 0) pok = W.pos[w] === 0 && W.free[w] <= 0;
-				else if (aliasV) pok = true;
-				if (pok && !(f & 4)) { f |= 4; if (decl & 4) fireAnchor(i, 2, sY); }
+				if (!(f & 1)) { f |= 1; if (decl & 1) fireAnchor(i, 0, sY, frameDir, 'live', false); }
+				if (d < vh2 && !(f & 2)) { f |= 2; if (decl & 2) fireAnchor(i, 1, sY, frameDir, 'live', false); }
+				if (pok && !(f & 4)) { f |= 4; if (decl & 4) fireAnchor(i, 2, sY, frameDir, 'live', false); }
 			}
 			if (d < 0 && !(f & 8)) {
-				f |= 8; if (decl & 8) fireAnchor(i, 3, sY);
-				if (!(f & 1) && !(f & 16)) { f |= 16; if (decl & 16) fireAnchor(i, 4, sY); }
+				f |= 8;
+				if (abandonPendingAtAnchor(i)) f |= 16;
+				if (decl & 8) fireAnchor(i, 3, sY, frameDir, 'live', false);
+				if (!(f & 1) && !(f & 16)) { f |= 16; if (decl & 16) fireAnchor(i, 4, sY, frameDir, 'replay', false); }
 			}
+
+			if (frameDir === -1) {
+				const revEdges = oldSide & ~curSide;
+				if (revEdges) {
+					if ((revEdges & 8) && (decl & 8)) fireAnchor(i, 3, sY, -1, 'live', true);
+					if ((revEdges & 4) && (decl & 4)) fireAnchor(i, 2, sY, -1, 'live', true);
+					if ((revEdges & 2) && (decl & 2)) fireAnchor(i, 1, sY, -1, 'live', true);
+					if ((revEdges & 1) && (decl & 1)) fireAnchor(i, 0, sY, -1, 'live', true);
+				}
+			}
+			E.side[i] = curSide;
 			E.flags[i] = f;
 		}
 	}
@@ -865,7 +1131,9 @@ const Snowfall = {
 	parseColor: parseColor,
 	num255: num255,
 	mixLin: mixLin,
-	mixA: mixA
+	mixA: mixA,
+	fnv1a: fnv1a,
+	onChoice: null
 };
 Snowfall.use = function(s) { return Snowfall.default.use(s); };
 Snowfall.refresh = function(replay) { if (Snowfall.default) Snowfall.default.refresh(replay); };
@@ -879,7 +1147,189 @@ Object.defineProperty(Snowfall, 'events', { get: function() { return Snowfall.de
 Object.defineProperty(Snowfall, 'debug', { get: function() { return Snowfall.default ? Snowfall.default.debug : undefined; } });
 Object.defineProperty(Snowfall, 'options', { get: function() { return Snowfall.default ? Snowfall.default.options : undefined; } });
 Object.defineProperty(Snowfall, 'eventCount', { get: function() { return Snowfall.default ? Snowfall.default.eventCount : undefined; } });
+
+Snowfall.get = function(key, fallback) {
+	if (storeData.vars && Object.prototype.hasOwnProperty.call(storeData.vars, key)) {
+		return storeData.vars[key];
+	}
+	return fallback;
+};
+Snowfall.set = function(key, value) {
+	if (!isScalar(value)) {
+		console.warn('Snowfall store dropped non-scalar value for key ' + key);
+		return;
+	}
+	storeData.vars[key] = value;
+	scheduleAutosave();
+};
+Snowfall.sum = function(prefix) {
+	if (prefix === undefined || prefix === null) prefix = '';
+	let total = 0;
+	const v = storeData.vars;
+	for (const k in v) {
+		if (k.indexOf(prefix) === 0) {
+			const val = v[k];
+			if (typeof val === 'number') total += val;
+		}
+	}
+	const m = storeData.keys;
+	for (const k in m) {
+		if (k.indexOf(prefix) === 0) {
+			const val = m[k];
+			if (typeof val === 'number') total += val;
+		}
+	}
+	return total;
+};
+Snowfall.ask = function(key, fallback, options, done) {
+	if (typeof done !== 'function') return;
+	if (currentMode === 'replay') {
+		let val = fallback;
+		let mode = 'default';
+		if (storeData.keys && Object.prototype.hasOwnProperty.call(storeData.keys, key)) {
+			val = storeData.keys[key];
+			mode = 'saved';
+		}
+		done(val, mode);
+		return;
+	}
+	if (pending[key]) {
+		console.warn('Snowfall.ask called for already-pending key: ' + key);
+		return;
+	}
+	const item = {
+		key: key,
+		fallback: fallback,
+		options: options,
+		done: done,
+		anchor: currentAnchor,
+		id: currentScriptId,
+		el: null
+	};
+	pending[key] = item;
+	if (options && Array.isArray(options)) {
+		if (typeof Snowfall.onChoice === 'function') {
+			Snowfall.onChoice({
+				key: key,
+				fallback: fallback,
+				options: options,
+				y: currentAnchor >= 0 && Snowfall.events && currentAnchor < Snowfall.events.n ? Snowfall.events.y[currentAnchor] : (typeof window !== 'undefined' ? window.scrollY || 0 : 0),
+				id: currentScriptId
+			}, function(val) {
+				Snowfall.answer(key, val);
+			});
+		} else if (typeof document !== 'undefined' && document.body) {
+			const box = document.createElement('div');
+			box.className = 'snow-prompt';
+			for (let i = 0; i < options.length; i++) {
+				const opt = options[i];
+				const btn = document.createElement('button');
+				btn.type = 'button';
+				btn.textContent = Array.isArray(opt) ? opt[0] : String(opt);
+				const val = Array.isArray(opt) ? opt[1] : opt;
+				btn.addEventListener('click', function() {
+					Snowfall.answer(key, val);
+				});
+				box.appendChild(btn);
+			}
+			document.body.appendChild(box);
+			item.el = box;
+		}
+	}
+};
+Snowfall.answer = function(key, value) {
+	const item = pending[key];
+	if (!item) {
+		console.warn('Snowfall.answer called for unknown or resolved key: ' + key);
+		return;
+	}
+	delete pending[key];
+	if (item.el && item.el.parentNode) {
+		item.el.parentNode.removeChild(item.el);
+		item.el = null;
+	}
+	if (isScalar(value)) {
+		storeData.keys[key] = value;
+		scheduleAutosave();
+	} else {
+		console.warn('Snowfall store dropped non-scalar value for key ' + key);
+	}
+	try {
+		item.done(value, 'live');
+	} catch (e) {
+		console.error('Snowfall.ask continuation threw for key ' + key, e);
+	}
+};
+Snowfall.save = function() {
+	flushSave();
+	return true;
+};
+Snowfall.exportJSON = function() {
+	flushSave();
+	return JSON.stringify(storeData);
+};
+Snowfall.importJSON = function(text) {
+	if (typeof text !== 'string') return false;
+	try {
+		const parsed = JSON.parse(text);
+		if (!parsed || typeof parsed !== 'object') return false;
+		storeData.v = 1;
+		storeData.story = typeof parsed.story === 'string' ? parsed.story : deriveStoryId();
+		storeData.slot = typeof parsed.slot === 'number' ? parsed.slot : 0;
+		storeData.at = typeof parsed.at === 'number' ? parsed.at : Math.floor(Date.now() / 1000);
+		storeData.vars = (parsed.vars && typeof parsed.vars === 'object') ? parsed.vars : {};
+		storeData.keys = (parsed.keys && typeof parsed.keys === 'object') ? parsed.keys : {};
+		storeData.fired = (parsed.fired && typeof parsed.fired === 'object') ? parsed.fired : {};
+		isDirty = false;
+		const storage = getStorage();
+		if (storage) {
+			try {
+				storage.setItem('snowfall:' + storeData.story + ':' + storeData.slot, JSON.stringify(storeData));
+			} catch (_ignored) {}
+		}
+		return true;
+	} catch (e) {
+		console.warn('Snowfall.importJSON parse error', e);
+		return false;
+	}
+};
+Snowfall.load = function(json) {
+	if (typeof json === 'string') return Snowfall.importJSON(json);
+	if (json && typeof json === 'object') {
+		return Snowfall.importJSON(JSON.stringify(json));
+	}
+	return false;
+};
+Snowfall.reset = function(mask) {
+	if (!mask) {
+		storeData.vars = {};
+		storeData.keys = {};
+		storeData.fired = {};
+	} else {
+		if (mask.vars) storeData.vars = {};
+		if (mask.keys) storeData.keys = {};
+		if (mask.fired) storeData.fired = {};
+	}
+	isDirty = true;
+	flushSave();
+};
+Object.defineProperty(Snowfall, 'store', {
+	get: function() {
+		return {
+			persistent: persistent,
+			dirty: isDirty,
+			counts: {
+				vars: Object.keys(storeData.vars).length,
+				keys: Object.keys(storeData.keys).length,
+				fired: Object.keys(storeData.fired).length
+			},
+			pending: Object.keys(pending).length
+		};
+	}
+});
 function boot() {
+	storeData.story = deriveStoryId();
+	loadFromStorage();
 	if (typeof window === 'undefined' || typeof document === 'undefined') return;
 	Snowfall.default = Snowfall.create({ scope: document.getElementById('app') || document });
 	if (document.readyState === 'loading')

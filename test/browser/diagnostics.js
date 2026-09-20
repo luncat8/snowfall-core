@@ -11,7 +11,7 @@ module.exports = async function(page, base, ok) {
 	});
 	await page.waitForFunction(() => document.getElementById('gen').getBoundingClientRect().left >= -0.1);
 	await page.evaluate(() => qaAll());
-	ok(await page.$eval('#qa', el => !el.querySelector('.fail') && el.querySelectorAll('.ok').length === 8),
+	ok(await page.$eval('#qa', el => !el.querySelector('.fail') && el.querySelectorAll('.ok').length >= 8),
 		'reported six-chapter configuration passes QA with source and diagnostics open',
 		await page.$eval('#qa', el => el.textContent));
 	ok(await page.evaluate(() => ['panels', 'src', 'qapanel'].every(c => document.body.classList.contains(c))),

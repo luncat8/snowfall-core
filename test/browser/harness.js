@@ -88,7 +88,7 @@ module.exports = async function(page, base, ok) {
 	await page.evaluate(c => { setControls(c); build(); }, { ...defaults, n: '2', bgs: '1', flow: 'screen' });
 	await settled(page);
 	await page.evaluate(() => qaAll());
-	ok(await page.$eval('#qa', el => !el.querySelector('.fail') && el.querySelectorAll('.ok').length === 8),
+	ok(await page.$eval('#qa', el => !el.querySelector('.fail') && el.querySelectorAll('.ok').length >= 8),
 		'GUI QA all passes, including isolated malformed-event fixture', await page.$eval('#qa', el => el.textContent));
 	ok(await page.evaluate(() => !document.querySelector('#app').textContent.includes('let =')),
 		'event QA removes its malformed fixture');

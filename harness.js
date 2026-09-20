@@ -182,6 +182,29 @@ function scriptsHTML(k, cfg) {
 		+ '<script type="txt" event="end">Snowlog("ch' + k + ' end")<\/script>'
 		+ '<script type="txt" event="skip">Snowlog("ch' + k + ' skip")<\/script>';
 	if (k === 1) s += '<script type="txt" event="center,parked">Snowlog("ch1 center+parked")<\/script>';
+	const totalN = clamp(+cfg.n || 1, 1, 12);
+	if (k === 1) {
+		s += '<script type="txt" event="center" data-id="story-choice">'
+			+ 'Snowfall.ask("choice.ch1", "stay", [["Explore", "explore"], ["Stay", "stay"]], function(val, mode) {'
+			+ 'Snowfall.set("story.choice", val);});<\/script>'
+			+ '<script type="txt" event="center" data-times="once" data-id="story-once">'
+			+ 'Snowfall.set("story.once", (Snowfall.get("story.once", 0) || 0) + 1);<\/script>';
+		if (totalN === 1) {
+			s += '<script type="txt" event="center" data-id="story-minigame">'
+				+ 'Snowfall.ask("game.ch1", 1, null, function(val, mode) {'
+				+ 'Snowfall.set("story.minigame", val);});<\/script>'
+				+ '<button type="button" class="snow-game-btn" onclick="Snowfall.answer(\'game.ch1\', 5)" style="display:none">play</button>'
+				+ '<script type="txt" event="center" data-dir="both" data-id="story-both">'
+				+ 'Snowfall.set("story.both_last_dir", detail.dir);<\/script>';
+		}
+	} else if (k === 2) {
+		s += '<script type="txt" event="center" data-id="story-minigame">'
+			+ 'Snowfall.ask("game.ch2", 1, null, function(val, mode) {'
+			+ 'Snowfall.set("story.minigame", val);});<\/script>'
+			+ '<button type="button" class="snow-game-btn" onclick="Snowfall.answer(\'game.ch2\', 5)" style="display:none">play</button>'
+			+ '<script type="txt" event="center" data-dir="both" data-id="story-both">'
+			+ 'Snowfall.set("story.both_last_dir", detail.dir);<\/script>';
+	}
 	return s;
 }
 function applyPreset(name) {
@@ -752,10 +775,19 @@ function diagTick() {
 			+ ' t:' + (dd.styleT === undefined || dd.styleT < 0 ? '—' : (+dd.styleT).toFixed(2))
 			+ ' n:' + Snowfall.morph.n;
 	}
+	let storeStats = '';
+	if (hasEng() && Snowfall.store) {
+		const st = Snowfall.store;
+		const c = st.counts || { vars: 0, keys: 0, fired: 0 };
+		storeStats = '\nstore ' + (st.persistent ? 'persistent' : 'memory')
+			+ ' · vars ' + c.vars + ' · keys ' + c.keys + ' · fired ' + c.fired
+			+ ' · pending ' + (st.pending || 0);
+	}
 	$('dstats').textContent = 'scrollY ' + y + ' · vh ' + vh + ' · doc ' + docH
 		+ '\n#bg ' + n + ' · ' + eng + ' · ' + act
 		+ '\nfps ' + fps + ' · max frame gap ' + worstMs.toFixed(1) + 'ms'
 		+ '\nevents ' + logCounts() + ' · total ' + LOG.length
+		+ storeStats
 		+ '\n' + theme
 		+ '\n#' + location.hash.replace(/^#/, '');
 	frames = 0; worstMs = 0;
@@ -1308,6 +1340,318 @@ async function qEvents() {
 	if (bad.length) return row('events', 0, bad.slice(0, 6).join('; '));
 	return row('events', 1, expCh.length + ' chapter(s): slow 1×, reverse 0, re-arm ok, flick skip+end, thresholds ±2px (' + thChecked + ' checked), wagons0+alias ok, broken isolated');
 }
+async function qChoices() {
+	if (!hasEng()) return row('choices', 1, 'no engine — choices inert');
+	if (typeof Snowfall.ask !== 'function' || !Snowfall.store)
+		return row('choices', -1, 'choices land in 0.4.1 — engine has no choice primitive');
+
+	const bad = [];
+	const mx = maxY(), vh = window.innerHeight;
+	const createdEls = [];
+	const track = el => { createdEls.push(el); return el; };
+
+	// Save original store state
+	const savedExport = Snowfall.exportJSON();
+	try {
+		// 1. live ask with options renders a prompt at fire; click stores value and runs done once with mode = 'live'
+		{
+			let liveVal = null, liveMode = null, doneCalls = 0;
+			Snowfall.ask('qa.choice', 'stay', [['Explore', 'explore'], ['Stay', 'stay']], function(val, mode) {
+				liveVal = val;
+				liveMode = mode;
+				doneCalls++;
+			});
+			const prompt = document.querySelector('.snow-prompt');
+			if (!prompt) bad.push('live ask rendered no prompt in DOM');
+			else {
+				const btns = prompt.querySelectorAll('button');
+				if (btns.length !== 2) bad.push('prompt has ' + btns.length + ' buttons (want 2)');
+				else {
+					btns[0].click(); // click 'Explore' -> 'explore'
+					if (liveVal !== 'explore') bad.push('choice value was ' + liveVal + ' (want explore)');
+					if (liveMode !== 'live') bad.push('choice mode was ' + liveMode + ' (want live)');
+					if (doneCalls !== 1) bad.push('done called ' + doneCalls + '× (want 1)');
+					if (document.querySelector('.snow-prompt')) bad.push('prompt not removed after click');
+					if (Snowfall.sum('qa.choice') !== 0) bad.push('string choice sum should be 0');
+				}
+			}
+		}
+
+		// 2. Snowfall.answer resolves an options = null prompt identically
+		{
+			let mgVal = null, mgMode = null, mgDoneCalls = 0;
+			Snowfall.ask('qa.gold', 1, null, function(val, mode) {
+				mgVal = val;
+				mgMode = mode;
+				mgDoneCalls++;
+			});
+			if (document.querySelector('.snow-prompt')) bad.push('prompt rendered for options=null');
+			Snowfall.answer('qa.gold', 15);
+			if (mgVal !== 15) bad.push('answer value was ' + mgVal + ' (want 15)');
+			if (mgMode !== 'live') bad.push('answer mode was ' + mgMode + ' (want live)');
+			if (mgDoneCalls !== 1) bad.push('options=null done called ' + mgDoneCalls + '× (want 1)');
+			if (Snowfall.sum('qa.gold') !== 15) bad.push('sum was ' + Snowfall.sum('qa.gold') + ' (want 15)');
+		}
+
+		// 3. abandon: scrolling past without answering calls done exactly once, with stored value or fallback, and never again
+		{
+			const sAb = track(document.createElement('script'));
+			sAb.type = 'txt'; sAb.setAttribute('event', 'center');
+			sAb.setAttribute('data-id', 'qa-ab-script');
+			let abVal = null, abMode = null, abCalls = 0;
+			window.__qaAbDone = function(v, m) { abVal = v; abMode = m; abCalls++; };
+			sAb.textContent = 'Snowfall.ask("qa.abandon", 99, [["A", 1]], window.__qaAbDone);';
+			$('app').appendChild(sAb);
+			engRefresh(true);
+
+			// Scroll past the new script's center so it fires:
+			const aY = Snowfall.anchorY(sAb);
+			setY(Math.round(aY - vh * 0.4)); await raf2();
+			const pr = document.querySelector('.snow-prompt');
+			if (!pr) bad.push('abandon test prompt never appeared');
+
+			// Scroll past end (d < 0):
+			setY(Math.round(aY + 100)); await raf2();
+			if (document.querySelector('.snow-prompt')) bad.push('abandoned prompt still in DOM');
+			if (abVal !== 99) bad.push('abandon value was ' + abVal + ' (want 99)');
+			if (abMode !== 'default') bad.push('abandon mode was ' + abMode + ' (want default)');
+			if (abCalls !== 1) bad.push('abandon done called ' + abCalls + '× (want 1)');
+
+			// Extra frames must not call done again:
+			setY(Math.round(aY + 200)); await raf2();
+			if (abCalls !== 1) bad.push('abandon done called again on subsequent frame');
+			delete window.__qaAbDone;
+		}
+
+		// 4. reload with a save present: skipped chapter => mode = 'saved' and recorded value; never-played => 'default'
+		{
+			Snowfall.reset();
+			// Store saved key
+			const doc = {
+				v: 1, story: Snowfall.store.story || 'test', slot: 0, at: 1000,
+				vars: {}, keys: { 'qa.savedKey': 50 }, fired: {}
+			};
+			Snowfall.importJSON(JSON.stringify(doc));
+
+			const sSk = track(document.createElement('script'));
+			sSk.type = 'txt'; sSk.setAttribute('event', 'skip');
+			sSk.setAttribute('data-id', 'qa-skip-script');
+			let sk1Val = null, sk1Mode = null, sk2Val = null, sk2Mode = null;
+			window.__qaSk1 = (v, m) => { sk1Val = v; sk1Mode = m; };
+			window.__qaSk2 = (v, m) => { sk2Val = v; sk2Mode = m; };
+			sSk.textContent = 'Snowfall.ask("qa.savedKey", 1, null, window.__qaSk1);'
+				+ 'Snowfall.ask("qa.unplayedKey", 7, null, window.__qaSk2);';
+			$('app').appendChild(sSk);
+
+			// Flick past this script to trigger skip:
+			setY(0); await raf2();
+			engRefresh(true);
+			setY(maxY()); await raf2();
+
+			if (sk1Val !== 50) bad.push('skip saved key value was ' + sk1Val + ' (want 50)');
+			if (sk1Mode !== 'saved') bad.push('skip saved key mode was ' + sk1Mode + ' (want saved)');
+			if (sk2Val !== 7) bad.push('skip unplayed key value was ' + sk2Val + ' (want 7)');
+			if (sk2Mode !== 'default') bad.push('skip unplayed key mode was ' + sk2Mode + ' (want default)');
+			delete window.__qaSk1; delete window.__qaSk2;
+		}
+
+		// 5. data-times="once": one fire over two full passes, zero after reload, one again after clear save
+		{
+			Snowfall.reset({ fired: true });
+			const sOnce = track(document.createElement('script'));
+			sOnce.type = 'txt'; sOnce.setAttribute('event', 'view');
+			sOnce.setAttribute('data-times', 'once');
+			sOnce.setAttribute('data-id', 'qa-once-script');
+			let onceFires = 0;
+			window.__qaOnceFire = () => { onceFires++; };
+			sOnce.textContent = 'window.__qaOnceFire();';
+			$('app').appendChild(sOnce);
+
+			setY(0); await raf2();
+			engRefresh(true);
+			const yOnce = Snowfall.anchorY(sOnce);
+			// Pass 1:
+			setY(Math.round(yOnce - vh * 0.8)); await raf2();
+			setY(Math.round(yOnce + 100)); await raf2();
+			if (onceFires !== 1) bad.push('once pass 1 fires=' + onceFires + ' (want 1)');
+
+			// Pass 2:
+			setY(0); await raf2();
+			setY(Math.round(yOnce - vh * 0.8)); await raf2();
+			setY(Math.round(yOnce + 100)); await raf2();
+			if (onceFires !== 1) bad.push('once pass 2 fires=' + onceFires + ' (want 1)');
+
+			// Reload with save present (false replay):
+			setY(0); await raf2();
+			engRefresh(false);
+			setY(Math.round(yOnce - vh * 0.8)); await raf2();
+			if (onceFires !== 1) bad.push('once after reload fires=' + onceFires + ' (want 1)');
+
+			// Clear save:
+			Snowfall.reset();
+			setY(0); await raf2();
+			engRefresh(true);
+			setY(Math.round(yOnce - vh * 0.8)); await raf2();
+			if (onceFires !== 2) bad.push('once after clear save fires=' + onceFires + ' (want 2)');
+			delete window.__qaOnceFire;
+		}
+
+		// 6. data-dir="both": one fire per threshold on each leg with right detail.dir, while forward sibling fires only going down
+		{
+			const sBoth = track(document.createElement('script'));
+			sBoth.type = 'txt'; sBoth.setAttribute('event', 'view');
+			sBoth.setAttribute('data-dir', 'both');
+			sBoth.setAttribute('data-id', 'qa-both-script');
+
+			const sFwd = track(document.createElement('script'));
+			sFwd.type = 'txt'; sFwd.setAttribute('event', 'view');
+			sFwd.setAttribute('data-dir', 'forward');
+			sFwd.setAttribute('data-id', 'qa-fwd-sibling');
+
+			let bFires = [], fFires = [];
+			window.__qaBothLog = d => bFires.push(d);
+			window.__qaFwdLog = d => fFires.push(d);
+			sBoth.textContent = 'window.__qaBothLog(detail.dir);';
+			sFwd.textContent = 'window.__qaFwdLog(detail.dir);';
+			$('app').appendChild(sBoth);
+			$('app').appendChild(sFwd);
+
+			setY(0); await raf2();
+			engRefresh(true);
+			const yB = Snowfall.anchorY(sBoth);
+
+			// Leg 1: scroll down through view
+			setY(Math.round(yB - vh * 0.8)); await raf2();
+			if (bFires.length !== 1 || bFires[0] !== 1) bad.push('both down leg: ' + JSON.stringify(bFires));
+			if (fFires.length !== 1 || fFires[0] !== 1) bad.push('fwd down leg: ' + JSON.stringify(fFires));
+
+			// Leg 2: scroll up through view
+			bFires.length = 0; fFires.length = 0;
+			setY(0); await raf2();
+			if (bFires.length !== 1 || bFires[0] !== -1) bad.push('both up leg: ' + JSON.stringify(bFires));
+			if (fFires.length !== 0) bad.push('fwd up leg fired ' + fFires.length + '× (want 0)');
+			delete window.__qaBothLog; delete window.__qaFwdLog;
+		}
+
+		// 7. data-skip="none": a flick fires siblings and not this script
+		{
+			const sSkNone = track(document.createElement('script'));
+			sSkNone.type = 'txt'; sSkNone.setAttribute('event', 'skip');
+			sSkNone.setAttribute('data-skip', 'none');
+			sSkNone.setAttribute('data-id', 'qa-sk-none');
+
+			const sSkRep = track(document.createElement('script'));
+			sSkRep.type = 'txt'; sSkRep.setAttribute('event', 'skip');
+			sSkRep.setAttribute('data-skip', 'replay');
+			sSkRep.setAttribute('data-id', 'qa-sk-rep');
+
+			let noneFired = false, repFired = false;
+			window.__qaSkNone = () => { noneFired = true; };
+			window.__qaSkRep = () => { repFired = true; };
+			sSkNone.textContent = 'window.__qaSkNone();';
+			sSkRep.textContent = 'window.__qaSkRep();';
+			$('app').appendChild(sSkNone);
+			$('app').appendChild(sSkRep);
+
+			setY(0); await raf2();
+			engRefresh(true);
+			setY(maxY()); await raf2();
+			if (!repFired) bad.push('skip replay sibling did not fire on flick');
+			if (noneFired) bad.push('skip none script fired on flick (want filtered)');
+			delete window.__qaSkNone; delete window.__qaSkRep;
+		}
+
+		// 8. once + both: exactly one fire, whichever leg comes first
+		{
+			Snowfall.reset({ fired: true });
+			const sOnceBoth = track(document.createElement('script'));
+			sOnceBoth.type = 'txt'; sOnceBoth.setAttribute('event', 'view');
+			sOnceBoth.setAttribute('data-times', 'once');
+			sOnceBoth.setAttribute('data-dir', 'both');
+			sOnceBoth.setAttribute('data-id', 'qa-once-both');
+
+			let obFires = 0;
+			window.__qaOB = () => { obFires++; };
+			sOnceBoth.textContent = 'window.__qaOB();';
+			$('app').appendChild(sOnceBoth);
+
+			setY(0); await raf2();
+			engRefresh(true);
+			const yOB = Snowfall.anchorY(sOnceBoth);
+
+			// Downward pass:
+			setY(Math.round(yOB - vh * 0.8)); await raf2();
+			// Upward pass:
+			setY(0); await raf2();
+			// Second downward pass:
+			setY(Math.round(yOB - vh * 0.8)); await raf2();
+			if (obFires !== 1) bad.push('once + both fired ' + obFires + '× over 3 legs (want 1)');
+			delete window.__qaOB;
+		}
+
+		// 9. export/import: byte-identical JSON, and refresh() after import respects fired
+		{
+			Snowfall.set('testExp', 123);
+			const exp1 = Snowfall.exportJSON();
+			Snowfall.importJSON(exp1);
+			const exp2 = Snowfall.exportJSON();
+			if (exp1 !== exp2) bad.push('exportJSON round-trip was not byte-identical');
+		}
+
+		// 10. injected localStorage throw: in-memory fallback, no exception, persistent === false
+		{
+			const origSetItem = localStorage.setItem;
+			let threwEx = false;
+			try {
+				localStorage.setItem = function() { throw new Error('QuotaExceeded'); };
+				Snowfall.set('qa.quota', 999);
+				Snowfall.save();
+			} catch (e) { threwEx = true; }
+			finally { localStorage.setItem = origSetItem; }
+
+			if (threwEx) bad.push('localStorage throw leaked exception');
+			if (Snowfall.store.persistent !== false) bad.push('store.persistent not false after throw');
+		}
+
+		// 11. cold load mid-document with save present: zero events
+		{
+			LOG.length = 0;
+			setY(Math.round(mx / 2)); await raf2();
+			engRefresh(false);
+			await raf2();
+			if (LOG.length !== 0) bad.push('cold load mid-doc with save fired ' + LOG.length + '× (want 0)');
+		}
+
+		// 12. eventsFrame source contains no store access and no allocation
+		{
+			const sub = Snowfall.default && Snowfall.default.subs ? Snowfall.default.subs.find(s => s.frame && s.frame.name === 'eventsFrame') : null;
+			const fnStr = sub ? sub.frame.toString() : '';
+			if (!fnStr) bad.push('eventsFrame subscriber not found');
+			else {
+				if (fnStr.includes('storeData')) bad.push('eventsFrame source contains storeData');
+				if (fnStr.includes('localStorage')) bad.push('eventsFrame source contains localStorage');
+				if (fnStr.includes('JSON.')) bad.push('eventsFrame source contains JSON');
+				if (fnStr.includes('new Array')) bad.push('eventsFrame source contains new Array');
+				if (fnStr.includes('new Object')) bad.push('eventsFrame source contains new Object');
+				if (/\[\s*\]/.test(fnStr)) bad.push('eventsFrame source contains array literal []');
+			}
+		}
+
+	} finally {
+		// Clean up temporary DOM elements
+		for (const el of createdEls) {
+			if (el.__snowA) el.__snowA.remove();
+			el.remove();
+		}
+		// Restore original store state
+		try { Snowfall.importJSON(savedExport); } catch (_e) {}
+		setY(0); await raf2();
+		try { engRefresh(true); } catch (_e) {}
+	}
+
+	if (bad.length) return row('choices', 0, bad.slice(0, 6).join('; '));
+	return row('choices', 1, 'live ask ok, options=null ok, abandon ok, replay saved/default ok, once ok, both dir=±1 ok, skip=none ok, export/import round-trip ok, zero allocations in eventsFrame');
+}
 async function qMorph() {
 	if (!hasEng() || !Snowfall.morph) return row('morph', -1, 'no engine');
 	const M0 = Snowfall.morph;
@@ -1715,6 +2059,7 @@ async function qaAll() {
 		await qJump();
 		await qStickSlots();
 		await qEvents();
+		await qChoices();
 		await qMorph();
 		await qRegion();
 	} finally {
@@ -1743,6 +2088,40 @@ function boot() {
 	bind('src','wheel',()=>{scrollDriver='source';driverUntil=Date.now()+600;},{passive:true});
 	bind('src','scroll',()=>{if(Date.now()<paneQuietUntil||!$('syncScroll').checked||qaBusy)return;scrollDriver='source';driverUntil=Date.now()+600;const lines=headLines(),top=$('src').scrollTop/18;let i=0;for(let k=0;k<lines.length;k++)if(lines[k]<=top)i=k;const h=chapters()[i];if(h)setY(h.getBoundingClientRect().top+window.scrollY-window.innerHeight*.1);});
 	bind('top','click',()=>setY(0));bind('bot','click',()=>setY(maxY()));bind('prev','click',()=>gotoChapter(-1));bind('next','click',()=>gotoChapter(1));bind('jump','change',jumpTo);bind('auto','click',toggleAuto);bind('qaBtn','click',()=>{flushSource();qaAll();});
+	bind('saveStore', 'click', () => {
+		if (!hasEng()) return;
+		const json = Snowfall.exportJSON();
+		const story = (Snowfall.store && Snowfall.store.story) || 'snowfall-story';
+		const blob = new Blob([json], { type: 'application/json' });
+		const url = URL.createObjectURL(blob);
+		const a = document.createElement('a');
+		a.href = url;
+		a.download = story + '-save.json';
+		a.click();
+		URL.revokeObjectURL(url);
+	});
+	bind('loadStore', 'click', () => {
+		const f = $('loadStoreFile');
+		if (f) f.click();
+	});
+	bind('loadStoreFile', 'change', e => {
+		const f = e.target.files && e.target.files[0];
+		if (!f) return;
+		const r = new FileReader();
+		r.onload = () => {
+			if (hasEng()) {
+				Snowfall.importJSON(r.result);
+				engRefresh(true);
+			}
+		};
+		r.readAsText(f);
+		e.target.value = '';
+	});
+	bind('clearStore', 'click', () => {
+		if (!hasEng()) return;
+		Snowfall.reset();
+		engRefresh(true);
+	});
 	bind('wire','change',()=>{$('wires').classList.toggle('on',$('wire').checked);if(!$('wire').checked)$('wires').innerHTML='';});
 	bind('panelTab','click',()=>togglePanels()); bind('qaTab','click',()=>toggleQa());
 	bind('gutter','change',applyLayout); bind('hudOn','change',applyLayout);
