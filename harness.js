@@ -780,7 +780,7 @@ function diagTick() {
 		const st = Snowfall.store;
 		const c = st.counts || { vars: 0, keys: 0, fired: 0 };
 		storeStats = '\nstore ' + (st.persistent ? 'persistent' : 'memory')
-			+ ' · vars ' + c.vars + ' · keys ' + c.keys + ' · fired ' + c.fired
+			+ ' · vars ' + c.vars + ' · keys ' + c.keys + ' · defaults ' + (c.defaults || 0) + ' · fired ' + c.fired
 			+ ' · pending ' + (st.pending || 0);
 	}
 	$('dstats').textContent = 'scrollY ' + y + ' · vh ' + vh + ' · doc ' + docH
@@ -1123,7 +1123,26 @@ async function qEvents() {
 		LOG.length = 0;
 		doRefresh(false);
 		await raf2();
-		if (LOG.length) bad.push('reload mid-doc fired ' + LOG.length + '× (want 0)');
+		/* a cold load mid-document replays no history: only the chapters standing
+		   in the viewport fire, and only their view (0.4) */
+		{
+			const yMid = window.scrollY, onMid = [];
+			const evMid = Snowfall.events;
+			if (evMid && evMid.n) {
+				for (let i = 0; i < evMid.n; i++) {
+					const d = evMid.y[i] - yMid;
+					if (d < 0 || d >= vh) continue;
+					const cm = /ch(\d+)/.exec((evMid.els[i] && evMid.els[i].textContent) || '');
+					if (cm) onMid.push(cm[1]);
+				}
+			}
+			for (const m of LOG) {
+				const mm = /^ch(\d+) (\S+)$/.exec(m);
+				if (!mm) continue;
+				if (mm[2] === 'end' || mm[2] === 'skip') bad.push('reload mid-doc replayed ' + m + ' (want no history)');
+				else if (onMid.indexOf(mm[1]) < 0) bad.push('reload mid-doc fired ' + m + ' off screen (' + (onMid.join(',') || 'none') + ' on screen)');
+			}
+		}
 		setY(0); await raf2();
 		LOG.length = 0;
 		doRefresh(true);
@@ -1613,13 +1632,77 @@ async function qChoices() {
 			if (Snowfall.store.persistent !== false) bad.push('store.persistent not false after throw');
 		}
 
-		// 11. cold load mid-document with save present: zero events
+		// 11. cold load mid-document with a save present: the chapters above you stay
+		// silent (no history replay), the ones standing on screen fire their view
 		{
 			LOG.length = 0;
 			setY(Math.round(mx / 2)); await raf2();
 			engRefresh(false);
 			await raf2();
-			if (LOG.length !== 0) bad.push('cold load mid-doc with save fired ' + LOG.length + '× (want 0)');
+			/* a chapter may fire only if one of its anchors stands inside the
+			   viewport: the anchor element carries the chapter it logs for */
+			const y0 = window.scrollY, onScreen = [];
+			const Ev = Snowfall.events;
+			if (Ev && Ev.n) {
+				for (let i = 0; i < Ev.n; i++) {
+					const d = Ev.y[i] - y0;
+					if (d < 0 || d >= vh) continue;
+					const cm = /ch(\d+)/.exec((Ev.els[i] && Ev.els[i].textContent) || '');
+					if (cm) onScreen.push(cm[1]);
+				}
+			}
+			for (const m of LOG) {
+				const mm = /^ch(\d+) (\S+)$/.exec(m);
+				if (!mm) continue;
+				if (mm[2] === 'end' || mm[2] === 'skip') bad.push('cold load mid-doc replayed ' + m + ' (want no history)');
+				else if (onScreen.indexOf(mm[1]) < 0) bad.push('cold load mid-doc fired ' + m + ' for a chapter off screen (' + (onScreen.join(',') || 'none') + ' on screen)');
+			}
+		}
+
+		// 11b. a skipped chapter's fallback is resolved and recorded by the engine,
+		// so a derived total counts a chapter nobody played — exactly once
+		{
+			Snowfall.reset();
+			const sFb = track(document.createElement('script'));
+			sFb.type = 'txt'; sFb.setAttribute('event', 'skip');
+			sFb.setAttribute('data-id', 'qa-fallback-skip');
+			let fbVal = null, fbMode = null, fbCalls = 0;
+			window.__qaFb = (v, m) => { fbVal = v; fbMode = m; fbCalls++; };
+			sFb.textContent = 'Snowfall.ask("qa.fallback", 4, null, window.__qaFb);';
+			$('app').appendChild(sFb);
+			setY(0); await raf2();
+			engRefresh(true);
+			const yFb = Snowfall.anchorY(sFb);
+			LOG.length = 0;
+			setY(Math.round(yFb + 100)); await raf2();
+
+			if (fbVal !== 4) bad.push('skipped ask value was ' + fbVal + ' (want the fallback 4)');
+			if (fbMode !== 'default') bad.push('skipped ask mode was ' + fbMode + ' (want default)');
+			if (fbCalls !== 1) bad.push('skipped ask continuation called ' + fbCalls + '× (want 1)');
+			if (Snowfall.sum('qa.fallback') !== 4) bad.push('skipped chapter sum was ' + Snowfall.sum('qa.fallback') + ' (want 4)');
+			if (Snowfall.store.counts.defaults < 1) bad.push('skipped ask not marked default in the store');
+
+			// a second visit replays it, still default, still counted once
+			setY(0); await raf2();
+			engRefresh(true);
+			fbVal = null; fbMode = null;
+			setY(Math.round(yFb + 100)); await raf2();
+			if (fbVal !== 4 || fbMode !== 'default') bad.push('second skip gave ' + fbVal + '/' + fbMode + ' (want 4/default)');
+			if (Snowfall.sum('qa.fallback') !== 4) bad.push('skipped chapter double-counted: sum ' + Snowfall.sum('qa.fallback'));
+
+			// answering it live overwrites the fallback, marked as the reader's own
+			Snowfall.ask('qa.fallback', 4, null, function() {});
+			Snowfall.answer('qa.fallback', 9);
+			if (Snowfall.sum('qa.fallback') !== 9) bad.push('live answer did not overwrite the fallback (sum ' + Snowfall.sum('qa.fallback') + ')');
+			if (Snowfall.store.counts.defaults >= 1 && Snowfall.sum('qa.fallback') === 9 && fbMode === 'default') {
+				// the marker must be gone: replaying now is `saved`, not `default`
+				setY(0); await raf2();
+				engRefresh(true);
+				fbVal = null; fbMode = null;
+				setY(Math.round(yFb + 100)); await raf2();
+				if (fbMode !== 'saved') bad.push('answered key replayed as ' + fbMode + ' (want saved)');
+			}
+			delete window.__qaFb;
 		}
 
 		// 12. eventsFrame source contains no store access and no allocation
@@ -1650,7 +1733,7 @@ async function qChoices() {
 	}
 
 	if (bad.length) return row('choices', 0, bad.slice(0, 6).join('; '));
-	return row('choices', 1, 'live ask ok, options=null ok, abandon ok, replay saved/default ok, once ok, both dir=±1 ok, skip=none ok, export/import round-trip ok, zero allocations in eventsFrame');
+	return row('choices', 1, 'live ask ok, options=null ok, abandon ok, replay saved/default ok, skip records+counts the fallback ok, once ok, both dir=±1 ok, skip=none ok, export/import round-trip ok, zero allocations in eventsFrame');
 }
 async function qMorph() {
 	if (!hasEng() || !Snowfall.morph) return row('morph', -1, 'no engine');

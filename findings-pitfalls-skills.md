@@ -90,8 +90,12 @@ matrix.
   never cleared on unpark (re-fires on reverse scroll).
 - `view`/`center` as viewport overlap (not edge crossing) is what makes
   `skip` distinguishable from `end` after a flick.
-- Pre-fill event latches for above-the-fold anchors at load — restored
-  scrollY must not re-fire the whole story in one frame.
+- Pre-fill only the anchors *already past* at load (`Y < scrollY`) — restored
+  scrollY must not re-fire the whole story in one frame. Anchors inside the
+  load viewport are not latched: the reader is looking at them, so their
+  `view` fires in that same frame, live. Latching them makes a first-screen
+  script dead forever (`skip` is suppressed while `view` is latched, and
+  `Y <= vh` can never re-arm).
 - No `IntersectionObserver` for scroll state: batched, irreversible, blind
   to transform-only states like `parked`.
 
@@ -140,6 +144,40 @@ matrix.
 - Threshold QA reads `events.flags` (the latch itself), not LOG counts —
   1px steps around each threshold prove ±2px without fighting integer
   `scrollY` vs fractional anchor Y.
+
+## choices & score (0.4.1)
+
+- **`ask` records every resolution, not only live answers.** In replay mode and
+  on abandon the engine resolves `saved`/`default` *and* writes the outcome
+  into `keys` (marking a fallback in `defaults`), so a `sum`-derived total
+  counts a chapter the reader skipped. Two designs were tried before that one:
+  a store that kept live answers only (a skipped chapter silently scored 0
+  while its own label read `default 1`), and an author-side grant into `vars`
+  (double-counted the chapters the engine had already recorded — `sum` adds
+  `vars` + `keys`). Deciding what a skipped chapter is worth belongs to the
+  engine; an author must never keep a second score next to the store.
+- `defaults` exists only to keep the label honest: replaying a key whose value
+  came from the author's fallback still reports `mode = 'default'`, instead of
+  passing it off as the reader's own `saved` choice. A live answer deletes the
+  mark; `reset({keys})` clears both maps.
+- Display reads the resolution, never `Snowfall.get`: `get` is author `vars`
+  (`0` or a grant), the outcome lives in `keys` — mixing them prints `0 live`
+  next to a non-zero total.
+- A store-backed HUD must be reconstructible: after a reload or a `load ↑` the
+  chapters have not resolved yet this pass, so paint `keys => saved` /
+  `defaults => default` from `exportJSON()` without writing anything.
+- Growable chrome above the story (a breakdown line wrapping in a sticky HUD)
+  shifts every anchor the engine measured once at load. Reserve one line.
+- The engine's first frame can fire a snippet, so the page's functions must
+  exist by then: with the page's inline script after `<script src>` and the
+  document still parsing, `boot()`'s deferred `DOMContentLoaded` refresh is
+  what makes that ordering safe.
+- Verify an interactive page without a browser: parse the markup into a fake
+  DOM, boot the real engine on it, drive `Snowfall.step(y)` at simulated
+  positions and click the page's own buttons (`test/demo-game-score.js`). Model
+  the document as `readyState = 'loading'` and dispatch `DOMContentLoaded`
+  after the page's inline script, or the engine's first frame fires before the
+  page's functions are defined.
 
 ## integration & vendoring (0.5.5)
 

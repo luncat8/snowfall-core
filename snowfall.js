@@ -1,5 +1,5 @@
 /* snowfall.js — visual novella scroll engine: core + wagons (0.2) + style/theme morph (0.3) + script events (0.4)
-	+ cached viewport & parent-bottom clamp (0.5.5).
+	+ choices, save slots and recorded ask outcomes (0.4.1) + cached viewport & parent-bottom clamp (0.5.5).
 	Sticky park (compositor) + JS push chain (sync scroll handler).
 	Classic script, no modules; require()-able under node with zero DOM at load. */
 (function(global) {
@@ -263,6 +263,7 @@ const storeData = {
 	at: Math.floor(Date.now() / 1000),
 	vars: {},
 	keys: {},
+	defaults: {},
 	fired: {}
 };
 let isDirty = false;
@@ -313,6 +314,7 @@ function loadFromStorage() {
 				storeData.at = typeof parsed.at === 'number' ? parsed.at : Math.floor(Date.now() / 1000);
 				storeData.vars = (parsed.vars && typeof parsed.vars === 'object') ? parsed.vars : {};
 				storeData.keys = (parsed.keys && typeof parsed.keys === 'object') ? parsed.keys : {};
+				storeData.defaults = (parsed.defaults && typeof parsed.defaults === 'object') ? parsed.defaults : {};
 				storeData.fired = (parsed.fired && typeof parsed.fired === 'object') ? parsed.fired : {};
 				isDirty = false;
 			}
@@ -332,6 +334,32 @@ let currentAnchor = -1;
 let currentScriptId = null;
 let currentMode = 'live';
 
+/* Resolve an ask the reader did not answer — a skipped chapter or an abandoned
+   prompt. The outcome is what the reader's own earlier play recorded, else the
+   author's fallback; either way the story needs a state, so the engine records
+   it and `sum` counts a chapter the reader skipped too. A fallback-resolved
+   key is marked in `defaults` so a later visit still reports
+   `mode = 'default'` rather than passing the fallback off as the reader's own
+   `saved` choice. */
+let outVal, outMode;
+function resolveWithoutReader(key, fallback) {
+	const recorded = storeData.keys && Object.prototype.hasOwnProperty.call(storeData.keys, key);
+	if (recorded) {
+		outVal = storeData.keys[key];
+		outMode = (storeData.defaults && storeData.defaults[key]) ? 'default' : 'saved';
+		return;
+	}
+	outVal = fallback;
+	outMode = 'default';
+	if (!isScalar(fallback)) {
+		console.warn('Snowfall store dropped non-scalar fallback for key ' + key);
+		return;
+	}
+	storeData.keys[key] = fallback;
+	storeData.defaults[key] = 1;
+	scheduleAutosave();
+}
+
 function abandonPendingAtAnchor(a) {
 	let any = false;
 	for (const k in pending) {
@@ -343,13 +371,8 @@ function abandonPendingAtAnchor(a) {
 				p.el.parentNode.removeChild(p.el);
 				p.el = null;
 			}
-			let val = p.fallback;
-			let mode = 'default';
-			if (storeData.keys && Object.prototype.hasOwnProperty.call(storeData.keys, k)) {
-				val = storeData.keys[k];
-				mode = 'saved';
-			}
-			try { p.done(val, mode); }
+			resolveWithoutReader(k, p.fallback);
+			try { p.done(outVal, outMode); }
 			catch (e) { console.error('Snowfall.ask continuation threw on abandon for key ' + k, e); }
 		}
 	}
@@ -955,23 +978,24 @@ function createCore(opts) {
 			E.needPrefill = false;
 			for (let i = 0; i < nA; i++) {
 				const d0 = E.y[i] - sY;
-				let f0 = E.flags[i];
-				let pok0 = false;
-				const w0 = E.wagon[i];
-				if (inst.options.wagons && w0 >= 0) pok0 = W.pos[w0] === 0 && W.free[w0] <= 0;
-				else if (inst.options.parkedAsView) pok0 = true;
-				if (d0 < 0) f0 = 31;
-				else if (d0 < vh) {
-					f0 |= 1;
-					if (d0 < vh * 0.5) f0 |= 2;
-					if (pok0) f0 |= 4;
-				}
-				E.flags[i] = f0;
+				/* Only anchors already past at load (restored scroll, a #hash
+				   jump) are latched: the story must not re-fire its history in
+				   one frame. An anchor inside the load viewport is not latched —
+				   the reader is looking at it, so the normal pass below fires its
+				   view/center/parked live in this same frame. Latching those
+				   instead made a first-screen script dead forever: its skip bit
+				   is suppressed while view is latched, and d <= vh can never
+				   re-arm it. */
+				E.flags[i] = d0 < 0 ? 31 : E.flags[i];
 
+				const w0 = E.wagon[i];
+				const pok0 = d0 >= 0 && (inst.options.wagons && w0 >= 0
+					? (W.pos[w0] === 0 && W.free[w0] <= 0)
+					: !!inst.options.parkedAsView);
 				let s0 = 0;
 				if (d0 < vh) s0 |= 1;
 				if (d0 < vh * 0.5) s0 |= 2;
-				if (pok0 && d0 < vh && d0 >= 0) s0 |= 4;
+				if (pok0 && d0 < vh) s0 |= 4;
 				if (d0 < 0) s0 |= 8;
 				E.side[i] = s0;
 			}
@@ -1184,13 +1208,8 @@ Snowfall.sum = function(prefix) {
 Snowfall.ask = function(key, fallback, options, done) {
 	if (typeof done !== 'function') return;
 	if (currentMode === 'replay') {
-		let val = fallback;
-		let mode = 'default';
-		if (storeData.keys && Object.prototype.hasOwnProperty.call(storeData.keys, key)) {
-			val = storeData.keys[key];
-			mode = 'saved';
-		}
-		done(val, mode);
+		resolveWithoutReader(key, fallback);
+		done(outVal, outMode);
 		return;
 	}
 	if (pending[key]) {
@@ -1250,6 +1269,7 @@ Snowfall.answer = function(key, value) {
 	}
 	if (isScalar(value)) {
 		storeData.keys[key] = value;
+		delete storeData.defaults[key];             /* the reader chose this one */
 		scheduleAutosave();
 	} else {
 		console.warn('Snowfall store dropped non-scalar value for key ' + key);
@@ -1279,6 +1299,7 @@ Snowfall.importJSON = function(text) {
 		storeData.at = typeof parsed.at === 'number' ? parsed.at : Math.floor(Date.now() / 1000);
 		storeData.vars = (parsed.vars && typeof parsed.vars === 'object') ? parsed.vars : {};
 		storeData.keys = (parsed.keys && typeof parsed.keys === 'object') ? parsed.keys : {};
+		storeData.defaults = (parsed.defaults && typeof parsed.defaults === 'object') ? parsed.defaults : {};
 		storeData.fired = (parsed.fired && typeof parsed.fired === 'object') ? parsed.fired : {};
 		isDirty = false;
 		const storage = getStorage();
@@ -1304,10 +1325,11 @@ Snowfall.reset = function(mask) {
 	if (!mask) {
 		storeData.vars = {};
 		storeData.keys = {};
+		storeData.defaults = {};
 		storeData.fired = {};
 	} else {
 		if (mask.vars) storeData.vars = {};
-		if (mask.keys) storeData.keys = {};
+		if (mask.keys) { storeData.keys = {}; storeData.defaults = {}; }
 		if (mask.fired) storeData.fired = {};
 	}
 	isDirty = true;
@@ -1321,6 +1343,7 @@ Object.defineProperty(Snowfall, 'store', {
 			counts: {
 				vars: Object.keys(storeData.vars).length,
 				keys: Object.keys(storeData.keys).length,
+				defaults: Object.keys(storeData.defaults).length,
 				fired: Object.keys(storeData.fired).length
 			},
 			pending: Object.keys(pending).length

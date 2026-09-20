@@ -524,6 +524,82 @@ eq(Snowfall.store.counts.fired, 0, 'initial fired count 0');
 		ok(!/\[\s*\]/.test(bodyText), 'eventsFrame source contains no array literals []');
 	}
 
+	// Sequence 11: load-time pre-fill latches only what is already past
+	{
+		// (a) an anchor standing inside the load viewport fires in that frame
+		sLogs.length = 0;
+		winScrollY = 1150;             // anchor 0 (Y=1500) is 350px down: inside view AND center
+		S.refresh(false);
+		ok(sLogs.includes('s1 view dir=1 mode=live'), 'a script in the load viewport fires view in the frame that loads it');
+		eq(sLogs.filter(l => l.indexOf('s1 ') === 0).length, 2, 'its view and center fire once each, live');
+
+		// (b) an anchor already past at load latches whole: no view, no center, no skip, ever
+		sLogs.length = 0;
+		winScrollY = 1600;             // anchor 0 is 100px past the top, anchor 1 still 1400px below
+		S.refresh(false);
+		eq(sLogs.length, 0, 'a frame that loads mid-document fires nothing for the anchors above it');
+		winScrollY = 2600; S.step(winScrollY, ih, iw);
+		ok(sLogs.includes('s3 both view dir=1') && sLogs.includes('s4 fwd view dir=1'), 'anchors below the load viewport fire normally');
+		winScrollY = 5000; S.step(winScrollY, ih, iw);
+		ok(!sLogs.some(l => l.indexOf('s1 ') === 0), 'the latched anchor never fires on a later pass, view or skip');
+	}
+
+	// Sequence 12: a skipped chapter is resolved BY THE ENGINE: the fallback becomes
+	// the recorded outcome, counted once, and still labelled default on a later visit
+	{
+		allScripts.push(makeScript(4500, 'skip', { 'data-id': 's9-skip-ask' },
+			'Snowfall.ask("late.fallback", 3, null, function(v, m) { global.lateVal = v; global.lateMode = m; });'));
+		global.lateVal = null; global.lateMode = null;
+		S.reset();
+		winScrollY = 0; S.refresh(true);
+		winScrollY = 5600; S.step(winScrollY, ih, iw);
+		eq(global.lateVal, 3, 'a skipped chapter resolves with the fallback');
+		eq(global.lateMode, 'default', 'and reports mode default');
+		let store = JSON.parse(S.exportJSON());
+		eq(store.keys['late.fallback'], 3, 'the engine records the fallback as the outcome');
+		eq(store.defaults['late.fallback'], 1, 'marked default, not the reader\'s own play');
+		eq(S.sum('late.'), 3, 'a derived total counts a chapter nobody played');
+
+		global.lateVal = null; global.lateMode = null;
+		winScrollY = 0; S.refresh(true);
+		winScrollY = 5600; S.step(winScrollY, ih, iw);
+		eq(global.lateVal, 3, 'a later visit replays the recorded outcome');
+		eq(global.lateMode, 'default', 'still labelled default, never passed off as saved');
+		eq(S.sum('late.'), 3, 'and stays counted exactly once');
+
+		S.ask('late.fallback', 3, null, function() {});
+		S.answer('late.fallback', 9);
+		store = JSON.parse(S.exportJSON());
+		eq(store.keys['late.fallback'], 9, 'a live answer overwrites the fallback');
+		ok(!store.defaults || !store.defaults['late.fallback'], 'and drops the default mark');
+		eq(S.sum('late.'), 9, 'the total follows the new outcome, never adds');
+
+		const warnless = S.store.counts.keys;
+		S.reset({ keys: true });
+		eq(S.store.counts.keys, 0, 'reset({keys}) clears the recorded outcomes');
+		eq(S.store.counts.defaults, 0, 'and their default marks with them');
+		ok(warnless > 0, 'there was something to clear');
+	}
+
+	// Sequence 13: the un-latched load frame must not resurrect a `once` script,
+	// and must not un-latch an anchor whose scripts have all already fired
+	{
+		const sOnceMany = makeScript(6200, 'view', { 'data-id': 's12-many' }, 'sLogs.push("s12 many");');
+		const sOnceFired = makeScript(6200, 'view', { 'data-times': 'once', 'data-id': 's12-once' }, 'sLogs.push("s12 once");');
+		const sAllOnce = makeScript(6300, 'view', { 'data-times': 'once', 'data-id': 's12-all-once' }, 'sLogs.push("s12 all once");');
+		allScripts.push(sOnceMany, sOnceFired, sAllOnce);
+		S.importJSON(JSON.stringify({
+			v: 1, story: 'synthetic-test', slot: 0, at: 0,
+			vars: {}, keys: {}, defaults: {}, fired: { 's12-once': 1, 's12-all-once': 1 }
+		}));
+		sLogs.length = 0;
+		winScrollY = 6000;                     // 6200 (d=200) and 6300 (d=300) both on screen
+		S.refresh(false);
+		ok(sLogs.includes('s12 many'), 'a fresh script on an un-latched anchor fires in the load frame');
+		ok(!sLogs.includes('s12 once'), 'a once-fired sibling on the same anchor stays silent');
+		ok(!sLogs.includes('s12 all once'), 'an anchor whose scripts all already fired is latched whole');
+	}
+
 	// Clean up global mocks
 	delete global.window;
 	delete global.document;
