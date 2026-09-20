@@ -44,7 +44,7 @@ async function geometry(page, label, ok, canPark) {
 module.exports = async function(page, base, ok) {
 	await page.goto(base + '/index.html', { waitUntil: 'load' });
 	const defaults = { preset: 'mixed', n: '3', bgs: '2', len: 'tiny', gap: 'zero', flow: 'overlay',
-		mode: 'mixed', size: 'mixed', dir: 'none', nest: 'both', stick: 'both', regions: 1,
+		mode: 'mixed', size: 'mixed', dir: 'top', nest: 'both', stick: 'both', regions: 1,
 		realScenes: 0, regionCases: 0, exampleGradient: 1, seed: 42 };
 	for (const [label, viewport, changes] of [
 		['generated desktop', { width: 1440, height: 900 }, {}],

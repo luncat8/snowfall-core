@@ -5,9 +5,9 @@
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Region cover test 1 — one HD background</title>
 <!-- Standalone check page for the 0.5.5 region adapter in cover mode.
-     Expected layout per github.com/luncat8/HD-region (hdregion.js @1a89bb7,
-     embedded below verbatim as REF): the HD crop is scaled to the LARGEST
-     size that keeps its region rect inside the window (aspect kept), the
+     Expected layout per github.com/luncat8/HD-region (hdregion.js @1a89bb7;
+     its fit+clamp math is embedded below as REF): the HD crop is scaled to the
+     LARGEST size that keeps its region rect inside the window (aspect kept), the
      outpainted low-res base follows at the SAME scale and covers everything
      around it; the region is centred, or coverage-pinned to a window edge
      where centring would uncover the page.
@@ -62,7 +62,7 @@
 			the red region outline on the base must sit exactly under the red frame
 			of the crop. Any offset = mispositioned.</p>
 			<p>Panel below compares rendered pixels against <code>HDRegion.finalLayout</code>
-			and, independently, against the reference math copied verbatim from
+			and, independently, against the reference's fit+clamp math copied from
 			<code>luncat8/HD-region@1a89bb7</code>. Resize the window: it must re-fit
 			(the crop stays maximal, the base keeps covering when it can).</p>
 		</div>
@@ -134,9 +134,10 @@
 		+ '<rect x="' + R.x + '" y="' + R.y + '" width="' + R.w + '" height="' + R.h + '" fill="none" stroke="' + PAL.mark + '" stroke-width="6" stroke-dasharray="22 12"/>'
 		+ '<text x="' + (R.x + 14) + '" y="' + (R.y + 46) + '" font-family="ui-monospace,monospace" font-size="32" fill="' + PAL.mark + '">REGION ' + R.x + ',' + R.y + ' ' + R.w + '\u00d7' + R.h + '</text>'
 		+ crosshair() + '</svg>';
-	/* crop = the same picture, sharp, at 2× density; viewBox IS the region rect
-	   in base coordinates, so its grid/labels continue the base's exactly */
-	var cropSVG = '<svg xmlns="http://www.w3.org/2000/svg" width="' + (R.w * 2) + '" height="' + (R.h * 2) + '" viewBox="' + R.x + ' ' + R.y + ' ' + R.w + ' ' + R.h + '">'
+	/* crop = the same picture, sharp, 1:1 with the rect (the material rule for
+	   a real _c file); viewBox IS the region rect in base coordinates, so its
+	   grid/labels continue the base's exactly */
+	var cropSVG = '<svg xmlns="http://www.w3.org/2000/svg" width="' + R.w + '" height="' + R.h + '" viewBox="' + R.x + ' ' + R.y + ' ' + R.w + ' ' + R.h + '">'
 		+ '<rect x="' + R.x + '" y="' + R.y + '" width="' + R.w + '" height="' + R.h + '" fill="' + PAL.bg + '"/>'
 		+ quadrants() + gridLines(R.x, R.x + R.w, R.y, R.y + R.h) + labels(R.x, R.x + R.w, R.y, R.y + R.h) + crosshair()
 		+ '<rect x="' + (R.x + 4) + '" y="' + (R.y + 4) + '" width="' + (R.w - 8) + '" height="' + (R.h - 8) + '" fill="none" stroke="' + PAL.mark + '" stroke-width="8"/>'
@@ -152,19 +153,19 @@
 	/* regions.js role: one table keyed by base src (classic script, before the engine) */
 	window.REGIONS = {};
 	window.REGIONS[baseSrc] = { x: R.x, y: R.y, w: R.w, h: R.h, hd: cropSrc, bw: BW, bh: BH, maxZoom: 4 };
-	window.SCENE_META = { bw: BW, bh: BH, r: R };
 })();
 </script>
-<script src="hdregion.js?v=12"></script>
-<script src="snowfall.js?v=12"></script>
-<script src="snowfall-region.js?v=12"></script>
+<script src="hdregion.js?v=15"></script>
+<script src="snowfall.js?v=15"></script>
+<script src="snowfall-region.js?v=15"></script>
 <script>
 /* ---------------- checker: rendered page vs HDRegion vs HD-region reference ---------------- */
 (function () {
 	'use strict';
-	/* VERBATIM copy of hdregion.js from github.com/luncat8/HD-region @1a89bb7
-	   (the oracle this repo pins in test/vendor/hdregion-ref.js). It is embedded
-	   so this page proves parity live, without trusting the local file alone. */
+	/* the oracle: baseLayout/finalLayout taken unchanged from hdregion.js
+	   @1a89bb7 (the same copy this repo pins in test/vendor/hdregion-ref.js,
+	   here reduced to the two functions the page compares against), so the
+	   page proves parity live instead of trusting the local file alone */
 	var REF = (function () {
 		function clamp(v, lo, hi) { return v < lo ? lo : (v > hi ? hi : v); }
 		function baseLayout(vw, vh, bw, bh, r, zoom, out) {

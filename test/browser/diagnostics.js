@@ -3,7 +3,7 @@
 module.exports = async function(page, base, ok) {
 	await page.setViewport({ width: 1440, height: 991 });
 	await page.goto(base + '/index.html#preset=mixed&n=6&bgs=1&len=mono&gap=mixed&flow=mixed'
-		+ '&mode=mixed&size=mixed&dir=none&nest=both&stick=both&style=1&events=1'
+		+ '&mode=mixed&size=mixed&dir=top&nest=both&stick=both&style=1&events=1'
 		+ '&exampleGradient=1&gutter=1&hudOn=1&regions=1&realScenes=1&regionCases=0&seed=20260917');
 	await page.evaluate(async () => {
 		await Promise.all(Array.from(document.querySelectorAll('#app img'), img => img.decode()));

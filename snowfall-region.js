@@ -121,8 +121,11 @@ function hdUsable() {
 }
 
 function measure() {
-	if (!hasDOM || !hdUsable()) {
-		if (hasDOM && !HD) { R.n = 0; return; }
+	/* no document (this file require()-d under node) or no usable math: manage
+	   nothing. The contract break is named only when hdregion.js is really the
+	   one failing — a browser-less load must not accuse the math file. */
+	if (!hasDOM) { R.n = 0; return; }
+	if (!hdUsable()) {
 		if (HD) console.error('[snowfall-region] hdregion.js does not satisfy finalLayout(){ok,w,h,x,y,hw,hh,hx,hy} — regions stay plain backgrounds');
 		off(); R.n = 0; return;
 	}

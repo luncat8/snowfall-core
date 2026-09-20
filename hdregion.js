@@ -131,7 +131,7 @@ function zoomAround(vw, vh, bw, bh, region, view, px, py, k) {
 }
 
 /* REGIONS lookup key: strip query, hash and one leading './'. NEVER decode
-  URIComponent: percent-decoding mangles the data: URIs the harness uses. */
+   URIComponent: percent-decoding mangles the data: URIs the harness uses. */
 function normKey(src) {
 	let s = String(src || '');
 	const q = s.indexOf('?');

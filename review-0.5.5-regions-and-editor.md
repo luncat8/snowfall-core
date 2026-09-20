@@ -124,15 +124,16 @@ are all per spec. Known gaps:
    so hand-edited source with a missing or extra `h4.n` shifts the mapping
    for all later chapters.
 
-## 5 · Smaller observations (no change made)
+## 5 · Smaller observations
 
 - `index.html` exit select: `<option value="none" selected>top</option>`
-  plus a second `top` option produce identical output; the label/value
-  mismatch ("none" displays as "top") is confusing.
-- With `regions` on, the generator coerces fixed/auto → cover but still
-  emits `tiled`/`contain` on `.snow-hd` wagons in mixed mode — a visual
-  no-op (see §1). Coercing/normalising all non-page-span modes would make
-  the generated markup honest.
+  plus a second `top` option produced identical output; the label/value
+  mismatch ("none" displays as "top") was confusing. **Fixed in the leftover
+  pass (§10)**: one `top` option, presets and the QA hash say `top`.
+- With `regions` on, the generator coerced fixed/auto → cover but still
+  emitted `tiled`/`contain` on `.snow-hd` wagons in mixed mode — a visual
+  no-op (see §1). **Fixed in the leftover pass (§10)**: a `.snow-hd` wagon is
+  emitted as `cover`, the one value the adapter obeys.
 - `applySource` intentionally does not regenerate `REGIONS` (keys are stable
   data-URIs / book paths); pasted new URLs correctly land on the no-entry
   ladder.
@@ -188,10 +189,11 @@ browser gate (identical painted geometry to the body-loaded page).
 | `test/region.js` | exclude/re-manage gate (§3.1); head-load boot gate (§6) |
 | `test/browser/` | new: scene1/scene2/scene1-head pages + self-contained `check.js` rendered-pixel gate, wired into `test/run.js` (§6) |
 | `test/run.js` | includes the browser gate; SKIPs without a toolchain |
-| `index.html` | shared token `?v=10 → ?v=12` |
+| `index.html` | shared `?v=` token, one value on every page (15 at the end of the branch) |
 
-`node test/run.js`: all 5 gates green (math 1781, region-art 1012,
-region-parity 64 684, region 2 813 577, browser 44 rendered checks).
+`node test/run.js`: all 5 gates green (math 1781, region-art 1206,
+region-parity 64 684, region 2 813 585 by the end of the branch, browser 44
+rendered checks).
 
 ## 8 · Verdict
 
@@ -204,21 +206,21 @@ mutations (§3.1), editor selection vs flat markup (§3.2), source-sync edge
 are fixed and double-gated; §4.1 (region source edit in the inspector) still
 needs a product decision.
 
-## 8 · Round 3 — user-facing cover pages, verified with real rendered pixels
+## 9 · Round 3 — user-facing cover pages, verified with real rendered pixels
 
 Two standalone pages the user can open directly (work from `file://`, zero
 network): `region-cover-1.html` (one `.snow-hd` wagon, `data-mode="cover"`)
 and `region-cover-2.html` (same scene as page 1 + a second scene with a
 different rect/palette). The art is generated for the eye: the base is a
 **blurred** coordinate grid (labeled every 200 px) with a dashed region
-outline; the crop is the **sharp** 2×-density version of exactly that rect,
-drawn in the base's coordinate space (its `viewBox` is the region rect). A
-correct layout therefore shows the sharp grid continuing the blurred grid
-with zero offset and the crop frame lying on the dashed outline — any
-misplacement is visible at a glance, not only in numbers. Each page carries
-a panel that compares the painted rects against `HDRegion.finalLayout` and,
-independently, against a verbatim embed of `hdregion.js` from
-luncat8/HD-region@1a89bb7.
+outline; the crop is the **sharp** vector twin of exactly that rect, 1:1 with
+it (the material rule), drawn in the base's coordinate space (its `viewBox`
+is the region rect). A correct layout therefore shows the sharp grid
+continuing the blurred grid with zero offset and the crop frame lying on the
+dashed outline — any misplacement is visible at a glance, not only in
+numbers. Each page carries a panel that compares the painted rects against
+`HDRegion.finalLayout` and, independently, against the pinned reference's
+fit+clamp math (`hdregion.js` @ luncat8/HD-region@1a89bb7).
 
 Verified in the round-2 Chromium toolchain (rendered pixels, 1440×900):
 
@@ -237,7 +239,56 @@ Verified in the round-2 Chromium toolchain (rendered pixels, 1440×900):
   `node test/run.js` now runs 5 gates green (4 node + the 44-check rendered
   browser gate).
 
-The crop images are authored at 2× density on purpose: the layout math never
-reads the crop's natural size (it only gates on `naturalWidth > 0`), so the
-fit comes purely from the entry rect while the crop stays visibly sharper
-than the blurred base — "hi-res vs low-res" without changing the contract.
+The crop art is a vector SVG: the layout math never reads the crop's natural
+size (it only gates on `naturalWidth > 0`), so the fit comes purely from the
+entry rect while the crop stays visibly sharper than the blurred base —
+"hi-res vs low-res" without changing the contract. Its intrinsic size is still
+1:1 with the rect, the same rule a real `_c.avif` follows (§ material rule), so
+no page teaches a density the pipeline does not use.
+
+## 10 · Leftover pass over the branch delta
+
+A read-through of the whole `278b8f..HEAD` delta for dead code, stale comments
+and non-optimal bits. Fixed here:
+
+- **Dead code.** `parseT()` (unused since the tolerant-transform experiments)
+  and the orphaned `hyst` in `harness.js` (the check that consumed
+  `vh + hyst` was replaced by the parent-cap arithmetic) — removed.
+  `window.SCENE_META` in `region-cover-1.html` had no reader either, and the
+  test files carried two more: `near()` in `test/math.js` and the
+  `LATE_WHOLE` layout in `test/region.js` — the latter's assertion ("an
+  absent rect is the whole base, not a rect at the origin") is written where
+  it belongs now, in the fake-DOM integration block. A dead-function and
+  dead-binding scan over every `.js` in the repo is clean after this.
+- **A false error line.** `snowfall-region.js` reported "hdregion.js does not
+  satisfy finalLayout(…)" when the file was `require()`-d under node with no
+  document. A browser-less load is not a broken contract; the contract break
+  is still named when the math file is really the one failing. Gated by a
+  no-document block in `test/region.js`.
+- **Indentation.** The `overflow:clip` comment and `var CSS` block in
+  `snowfall.js` sat one tab deeper than every sibling top-level statement.
+- **Version tokens.** `region-cover-1/2.html` and the three `test/browser`
+  pages still said `?v=12` while `index.html` said `?v=15`, and the static
+  gate scanned `index.html` only. All pages now share one token, and the gate
+  checks every page for the token *and* for load order
+  (`regions.js → hdregion.js → snowfall.js → adapter/harness`).
+- **Comments that were not true.** The three demo pages called their inline
+  oracle a "verbatim copy of hdregion.js" (it is the reference's two layout
+  functions, reduced), and they drew and announced a "2×" crop — the density
+  the material rule rejects. Both corrected to 1:1.
+- **Honesty of the generated markup.** A `.snow-hd` wagon is emitted as
+  `data-mode="cover"`, the one value the adapter obeys (§5).
+- **Line references** in this document became symbol names: `file:line` rots
+  with every edit, and several of them were already pointing at the wrong
+  line.
+
+Open, reported rather than changed — the branch disagrees with itself about
+`tools/*.py`. `findings-pitfalls-skills.md` says they were vendored on purpose
+("Vendored the four example files and the four tools so the repo can both show
+and produce real scenes"), while the plan's non-goals and owner table put the
+asset pipeline in HD-region ("No asset pipeline here"; `tools/*.py` → HD-region,
+runtime JS vendored one-way *from* this repo). Their docstrings cite
+`archive/plan-tools.md` / `archive/plan-storage.md`, which exist in the asset
+repo, not here. Either the tools stay (then the plan's rows should say so, and
+the doc pointers should resolve here) or they leave (then the findings line
+should drop them) — a product/ownership call, not a code fix.

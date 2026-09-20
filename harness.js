@@ -37,15 +37,6 @@ function hex3(rgb) {
 function rootCls() {
 	return (document.documentElement.className || '').split(/\s+/).filter(c => c && c !== 'snow-off').sort().join(' ');
 }
-/* tolerant transform parse: engines normalize translate3d spacing differently */
-function parseT(el) {
-	const s = el.style.transform || '';
-	if (!s) return { x: 0, y: 0 };
-	const m = /translate3d\(\s*(-?[\d.]+)px,\s*(-?[\d.]+)px/.exec(s);
-	if (!m) return { x: 0, y: 0 };
-	return { x: +m[1], y: +m[2] };
-}
-
 /* ---------------- config in location.hash ---------------- */
 const IDS = ['preset', 'n', 'bgs', 'len', 'gap', 'flow', 'mode', 'size', 'dir', 'nest', 'stick'];
 const CHECKS = ['style', 'events', 'exampleGradient', 'gutter', 'hudOn', 'regions', 'realScenes', 'regionCases'];
@@ -57,7 +48,15 @@ function getCfg() {
 	return c;
 }
 function setControls(c) {
-	for (const id of IDS) if (c[id] !== undefined && $(id)) $(id).value = c[id];
+	for (const id of IDS) {
+		const el = $(id);
+		if (!el || c[id] === undefined) continue;
+		el.value = c[id];
+		/* a select rejects a value it has no option for (an old #dir=none
+		   link) by emptying itself — keep the default option instead of a
+		   blank control */
+		if (el.tagName === 'SELECT' && !el.value) el.selectedIndex = 0;
+	}
 	for (const id of CHECKS) if (c[id] !== undefined && $(id)) $(id).checked = !!+c[id];
 	if (+c.realScenes) $('regions').checked = true;
 	if (c.seed !== undefined) SEED = c.seed >>> 0;
@@ -189,16 +188,16 @@ function applyPreset(name) {
 	const set = (id, v) => { $(id).value = v; };
 	if (name === 'mixed') {
 		set('len', 'mono'); set('gap', 'mixed'); set('flow', 'mixed');
-		set('mode', 'mixed'); set('size', 'mixed'); set('dir', 'none'); set('nest', 'both');
+		set('mode', 'mixed'); set('size', 'mixed'); set('dir', 'top'); set('nest', 'both');
 	} else if (name === 'mono') {
 		set('len', 'mono'); set('gap', 'same'); set('flow', 'screen');
-		set('mode', 'cover'); set('size', '512'); set('dir', 'none'); set('nest', 'section');
+		set('mode', 'cover'); set('size', '512'); set('dir', 'top'); set('nest', 'section');
 	} else if (name === 'tight') {
 		set('len', 'tiny'); set('gap', 'zero'); set('flow', 'overlay');
-		set('mode', 'cover'); set('size', '512'); set('dir', 'none'); set('nest', 'both');
+		set('mode', 'cover'); set('size', '512'); set('dir', 'top'); set('nest', 'both');
 	} else if (name === 'draft') {
 		set('n', '2'); set('len', 'tiny'); set('gap', 'same'); set('flow', 'overlay');
-		set('mode', 'cover'); set('size', '512'); set('dir', 'none'); set('nest', 'section');
+		set('mode', 'cover'); set('size', '512'); set('dir', 'top'); set('nest', 'section');
 	}
 	$('nO').textContent = $('n').value;
 }
@@ -382,16 +381,19 @@ function regionWagonInner(k, j, pal, visual, real, cases, seed) {
 function templateWagonHTML(k, j, cfg, rng, source, pal) {
 	let mode = templateMode(cfg, rng);
 	const size = cfg.size === 'mixed' ? pick(rng,[256,512,1024]) : +cfg.size;
-	const dir = cfg.dir === 'mixed' ? pick(rng,['top','left','right','bottom']) : cfg.dir === 'none' ? 'top' : cfg.dir;
-	if (cfg.regions && (mode === 'fixed' || mode === 'auto')) mode = 'cover';
+	const dir = cfg.dir === 'mixed' ? pick(rng,['top','left','right','bottom']) : cfg.dir;
 	const visual = sourceVisual(source, !!cfg.exampleGradient, pal, cfg.regions ? 'cover' : mode, size, 'ch'+k+'·bg'+j);
 	/* a region wagon needs an actual picture — without one it would be a
 	   managed nothing, so the class stays off and it remains a plain wagon */
 	const isHd = !!(cfg.regions && (visual.src || cfg.realScenes));
+	/* the adapter frames a region wagon whatever data-mode says, and fixed/auto
+	   would only take it out of management: emit the one value it obeys, so the
+	   generated markup never claims tiled/contain/fixed on a .snow-hd wagon */
+	if (isHd) mode = 'cover';
 	let at = ' class="snow-bg'+(isHd ? ' snow-hd' : '')+'" data-mode="'+mode+'" data-gap="'+templateGap(cfg,rng)+'"';
 	at += ' data-demo-bg="' + j + '"';
 	if (mode === 'fixed' || mode === 'auto') at += ' data-size="'+size+'"';
-	if (dir !== 'top') at += ' data-dir="'+dir+'"';
+	if (dir === 'left' || dir === 'right' || dir === 'bottom') at += ' data-dir="'+dir+'"';
 	if (visual.source) at += ' data-source="'+escapeHTML(visual.source)+'"';
 	if (isHd) return '<div'+at+'>' + regionWagonInner(k, j, pal, visual, cfg.realScenes, cfg.regionCases, cfg.seed) + '</div>';
 	if (visual.image) at += ' style="background-image:'+escapeHTML(visual.image)+';"';
@@ -1048,7 +1050,6 @@ async function qEvents() {
 	const expCh = Object.keys(expSet).map(Number).sort((a, b) => a - b);
 	if (!expCh.length) return row('events', -1, 'scripts log no ch numbers');
 	const vh = window.innerHeight, mx = maxY();
-	const hyst = (Snowfall.options && +Snowfall.options.hysteresis) || 40;
 	const bad = [];
 	let refreshes = 0, errCount = 0;
 	const origErr = console.error;
@@ -1101,7 +1102,6 @@ async function qEvents() {
 		for (let y = 200; y < mx; y += 200) { setY(y); await raf2(); if (Snowfall.debug) styleTrail.push(Snowfall.debug.styleBg); }
 		setY(mx); await raf2();
 		const w1 = (Snowfall.wagons && Snowfall.wagons.n) ? Array.from(Snowfall.wagons.pos.slice(0, Snowfall.wagons.n)) : null;
-		const bg1 = (Snowfall.morph && Snowfall.morph.n && Snowfall.debug) ? Snowfall.debug.styleBg : null;
 		const slow = logTable();
 		/* the theme must move at some point on the way down, not merely differ
 		   between the two ends: a chapter count that lands on the same palette
@@ -1536,7 +1536,7 @@ async function qRegion() {
 			await raf2();
 			if (!(b.naturalWidth > 0)) { bad.push('#' + i + ' base never sized after park'); continue; }
 			const v0 = api.view(i);
-				if (rawOf(b) && rawOf(b).hd && !h) bad.push('#' + i + ' entry declares hd with no crop child');
+			if (rawOf(b) && rawOf(b).hd && !h) bad.push('#' + i + ' entry declares hd with no crop child');
 			const out = layoutOf(b, { zoom: v0.zoom, panX: v0.panX, panY: v0.panY }, h);
 			if (!out.ok) { bad.push('#' + i + ' layout not ok'); continue; }
 			/* Short authored scenes can be pushed before they park. The region

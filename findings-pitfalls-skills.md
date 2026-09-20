@@ -361,12 +361,14 @@ implementation, on the reference's own images and rects.
 - **A dev page that is served over http must version every local asset.** Five
   unversioned `<script src>` tags are enough for one stale file to sit next to a
   new one, and the result is a page where every region crop is hidden with no
-  error line — the "my fix did not arrive" loop. `index.html` now carries one
-  shared `?v=N` token on `harness.css`, `hdregion.js`, `snowfall.js`,
-  `snowfall-region.js`, `harness.js`, bumped with every change, and
-  `test/region.js` fails the build if any local tag loses it.
-  (Skill: grep the page for `<(script|link)` tags without `?v=` in CI; the
-  token must be identical everywhere, or a half-update is possible again.)
+  error line — the "my fix did not arrive" loop. Every page now carries one
+  shared `?v=N` token on `hdregion.js`, `snowfall.js`, `snowfall-region.js`
+  (`index.html` also on `harness.css` / `harness.js`), bumped with every change,
+  and `test/region.js` fails the build if any page's runtime tag loses it or
+  disagrees with `index.html` — the demo and QA pages are served by
+  `test/browser/check.js`, so a page left behind is the same half-update.
+  (Skill: grep *every* page for `<(script|link)` tags without `?v=` in CI, not
+  just the entry page; the token must be identical everywhere.)
 - Never hide content over a metadata disagreement. An adapter-side check that
   the crop element's `src` equals `entry.hd` looked like a good guard and took
   the whole chapter's art away whenever the two strings differed for any reason

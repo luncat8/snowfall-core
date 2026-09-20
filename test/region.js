@@ -1,7 +1,7 @@
 #!/usr/bin/env node
-/* test/region.js — 0.5.5 gates: HDRegion invariant fuzz (200k random
-/layouts), the fake-DOM engine viewport-contract integration, and static
-/ source checks for the adapter. `node test/region.js`. */
+/* test/region.js — 0.5.5 gates: the HDRegion invariant fuzz (200k random
+	layouts), the fake-DOM engine viewport-contract integration, and the static
+	source checks for the adapter. `node test/region.js`. */
 'use strict';
 const fs = require('fs');
 const path = require('path');
@@ -450,8 +450,12 @@ function fakeWagon(children, mode) {
 		ok(out.hx >= -1e-6 && out.hx + out.hw <= cw + 1e-6, 'I1 x at fake viewport');
 		/* no entry at all, and an entry with no crop to paint: both are plain
 		   backgrounds — the whole base covers the window, nothing letterboxes,
-		   and a declared-but-undecorated second <img> stays hidden */
+		   and a declared-but-undecorated second <img> stays hidden. An absent
+		   rect is the WHOLE base, not a rect at the origin: the two boxes are
+		   different, so a dropped rect field cannot hide behind these numbers */
 		const outW = HD.finalLayout(cw, ih, 800, 600, { x: 0, y: 0, w: 0, h: 0 }, { zoom: 1, panX: 0, panY: 0 }, {});
+		ok(outW.hw === outW.w && outW.hh === outW.h,
+			'an absent rect is the whole base, not a rect at the origin');
 		ok(outW.w <= cw + 1e-6 && outW.h <= ih + 1e-6, 'whole-base fallback is contained, never magnified');
 		ok(Math.abs(outW.x - (cw - outW.w) / 2) <= 1e-6 && Math.abs(outW.y - (ih - outW.h) / 2) <= 1e-6,
 			'a contained whole base is centred');
@@ -539,9 +543,6 @@ function lateFit(rect) {
 	return HD.finalLayout(LATE_CW, LATE_CH, LATE_BW, LATE_BH,
 		{ x: rect.x, y: rect.y, w: LATE_RW, h: LATE_RH, maxZoom: 0 }, { zoom: 1, panX: 0, panY: 0 }, {});
 }
-/* the fallback is "no rect at all", not "a rect at the origin" */
-const LATE_WHOLE = HD.finalLayout(LATE_CW, LATE_CH, LATE_BW, LATE_BH,
-	{ x: 0, y: 0, w: 0, h: 0 }, { zoom: 1, panX: 0, panY: 0 }, {});
 function lateNum(s) { return parseFloat(s) || 0; }
 function latePaints(img, o, kind) {
 	const want = kind === 'crop' ? [o.hw, o.hh, o.hx, o.hy] : [o.w, o.h, o.x, o.y];
@@ -787,6 +788,22 @@ lateRun([2, 1, 0], 'loads out of order', false);
 	delete global.document;
 }
 
+/* ---------------- no document at all ---------------- */
+{
+	/* plain require() under node: manage nothing, throw nothing, and do not
+	   blame hdregion.js — a browser-less load is not a broken contract */
+	delete require.cache[require.resolve('../snowfall-region.js')];
+	const errs = [], orig = console.error;
+	console.error = function() { errs.push(Array.prototype.join.call(arguments, ' ')); };
+	let A = null, threw = null;
+	try { A = require('../snowfall-region.js'); } catch (e) { threw = e; }
+	console.error = orig;
+	ok(!threw, 'the adapter loads without a document', threw && String(threw));
+	eqv(A && A.count(), 0, 'nothing is managed without a document');
+	eqv(errs.length, 0, 'and no contract error is logged — ' + errs.join(' | '));
+	delete require.cache[require.resolve('../snowfall-region.js')];
+}
+
 /* ---------------- static source scans ---------------- */
 {
 	const root = path.join(__dirname, '..');
@@ -836,6 +853,39 @@ lateRun([2, 1, 0], 'loads out of order', false);
 		const vers = local.map(t => /(\d+)"/.exec(t)).filter(Boolean).map(m => +m[1]);
 		ok(vers.length === local.length && vers.every(v => v === vers[0]),
 			'one shared ?v= token, so nothing can half-update');
+		/* the demo and QA pages load the same runtime files, so they carry the
+		   same token — a page left behind keeps a stale copy of one script next
+		   to the new ones, and the only symptom is a crop that never appears */
+		const RUNTIME = ['hdregion.js', 'snowfall.js', 'snowfall-region.js', 'harness.js'];
+		const pages = fs.readdirSync(root).filter(f => /\.html$/.test(f))
+			.concat(fs.readdirSync(path.join(root, 'test/browser')).filter(f => /\.html$/.test(f)).map(f => 'test/browser/' + f));
+		const stale = [], order = [];
+		let refs = 0;
+		for (const rel of pages) {
+			const text = fs.readFileSync(path.join(root, rel), 'utf8');
+			const at = {};
+			for (const tag of text.match(/<(?:script[^>]*src|link[^>]*href)="([^"]+)"/g) || []) {
+				if (tag.indexOf('http') >= 0) continue;
+				const file = /([\w.-]+\.js)/.exec(tag);
+				if (!file || RUNTIME.indexOf(file[1]) < 0) continue;
+				refs++;
+				at[file[1]] = text.indexOf(tag);
+				const tok = /\?v=(\d+)/.exec(tag);
+				if (!tok || +tok[1] !== vers[0]) stale.push(rel + ' ' + file[1] + (tok ? ' v=' + tok[1] : ' no token'));
+			}
+			/* the adapter reads globals set by the two files before it, and the
+			   harness drives both: order is part of the contract */
+			if (at['hdregion.js'] !== undefined && at['snowfall.js'] !== undefined && at['hdregion.js'] > at['snowfall.js'])
+				order.push(rel + ': snowfall.js before hdregion.js');
+			if (at['snowfall-region.js'] !== undefined && (at['hdregion.js'] === undefined || at['snowfall.js'] === undefined
+				|| at['hdregion.js'] > at['snowfall-region.js'] || at['snowfall.js'] > at['snowfall-region.js']))
+				order.push(rel + ': adapter before its dependencies');
+			if (at['harness.js'] !== undefined && (at['snowfall.js'] === undefined || at['snowfall.js'] > at['harness.js']))
+				order.push(rel + ': harness.js before snowfall.js');
+		}
+		ok(refs >= 15, 'the demo/QA pages load the runtime too (' + refs + ' refs)');
+		eqv(stale.length, 0, 'every page shares index.html\'s ?v=' + vers[0] + ' — stale: ' + stale.join(', '));
+		eqv(order.length, 0, 'load order holds on every page — broken: ' + order.join(', '));
 	}
 	/* brace-match the adapter's frame() body so the scan is scoped to it */
 	const m = adapter.indexOf('function frame(sY, vh, vw)');

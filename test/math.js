@@ -11,7 +11,6 @@ function ok(cond, name) {
 	fails++;
 	console.error('FAIL ' + name);
 }
-function near(a, b, tol, name) { ok(Math.abs(a - b) <= tol, name + ' (' + a + ' vs ' + b + ')'); }
 function eq(a, b, name) { ok(a === b, name + ' (' + a + ' vs ' + b + ')'); }
 
 function rng32(seed) {
