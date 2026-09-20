@@ -475,7 +475,7 @@ function build() {
 	stopAuto(); flushSource(); const cfg=getCfg(), rng=mulberry32(SEED), sources=parseExampleImages($('exampleImages').value), cursor={i:0}, parts=[];
 	window.REGIONS = {}; realSceneCursor = 0;
 	for (let k=1;k<=clamp(+cfg.n||1,1,12);k++) parts.push(templateChapterHTML(k,cfg,rng,sources,cursor));
-	$('app').innerHTML=parts.join('')+'<div class="tail"></div>'; LOG.length=0; $('qa').innerHTML=''; $('jump').max=chapters().length||1;
+	$('app').innerHTML=parts.join('')+'<div class="tail"></div>'; LOG.length=0; clearQa(); $('jump').max=chapters().length||1;
 	window.scrollTo(0,0); writeHash(); engRefresh(); writeSource(false);
 }
 function mutatePreview(fn) { flushSource(); fn(); engRefresh(); writeSource(true); }
@@ -853,12 +853,21 @@ function jumpTo() {
 
 /* ------------- QA probes ------------- */
 let qaBusy = false;
+function updateQaTab() {
+	const tab = $('qaTab'), qa = $('qa');
+	const failed = !!qa.querySelector('.fail');
+	const passed = !failed && !!qa.querySelector('.qrow');
+	tab.classList.toggle('qa-pass', passed);
+	tab.classList.toggle('qa-fail', failed);
+}
+function clearQa() { $('qa').replaceChildren(); updateQaTab(); }
 function row(name, ok, detail) {
 	const div = document.createElement('div');
 	div.className = 'qrow ' + (ok === 1 ? 'ok' : ok === 0 ? 'fail' : 'skip');
 	div.innerHTML = '<b>' + (ok === 1 ? 'PASS' : ok === 0 ? 'FAIL' : 'SKIP') + '</b>' + name + '<small></small>';
 	div.querySelector('small').textContent = detail;
 	$('qa').appendChild(div);
+	updateQaTab();
 	console.info('Snowfall QA', name, ok === 1 ? 'PASS' : ok === 0 ? 'FAIL' : 'SKIP', detail);
 	return { name, ok, detail };
 }
@@ -1368,6 +1377,17 @@ async function qChoices() {
 	const mx = maxY(), vh = window.innerHeight;
 	const createdEls = [];
 	const track = el => { createdEls.push(el); return el; };
+	/* The tail is the scroll runway. A fixture after it is below max scroll, so
+	   its center/end thresholds can never be crossed. */
+	const mount = el => $('app').insertBefore(el, $('app').querySelector('.tail'));
+	const unmount = (...els) => {
+		for (const el of els) {
+			if (el.__snowA) el.__snowA.remove();
+			el.remove();
+		}
+		/* Drop compiled scripts before their temporary callbacks are deleted. */
+		engRefresh(true);
+	};
 
 	// Save original store state
 	const savedExport = Snowfall.exportJSON();
@@ -1420,7 +1440,8 @@ async function qChoices() {
 			let abVal = null, abMode = null, abCalls = 0;
 			window.__qaAbDone = function(v, m) { abVal = v; abMode = m; abCalls++; };
 			sAb.textContent = 'Snowfall.ask("qa.abandon", 99, [["A", 1]], window.__qaAbDone);';
-			$('app').appendChild(sAb);
+			mount(sAb);
+			setY(0); await raf2();
 			engRefresh(true);
 
 			// Scroll past the new script's center so it fires:
@@ -1439,6 +1460,7 @@ async function qChoices() {
 			// Extra frames must not call done again:
 			setY(Math.round(aY + 200)); await raf2();
 			if (abCalls !== 1) bad.push('abandon done called again on subsequent frame');
+			unmount(sAb);
 			delete window.__qaAbDone;
 		}
 
@@ -1460,7 +1482,7 @@ async function qChoices() {
 			window.__qaSk2 = (v, m) => { sk2Val = v; sk2Mode = m; };
 			sSk.textContent = 'Snowfall.ask("qa.savedKey", 1, null, window.__qaSk1);'
 				+ 'Snowfall.ask("qa.unplayedKey", 7, null, window.__qaSk2);';
-			$('app').appendChild(sSk);
+			mount(sSk);
 
 			// Flick past this script to trigger skip:
 			setY(0); await raf2();
@@ -1471,6 +1493,7 @@ async function qChoices() {
 			if (sk1Mode !== 'saved') bad.push('skip saved key mode was ' + sk1Mode + ' (want saved)');
 			if (sk2Val !== 7) bad.push('skip unplayed key value was ' + sk2Val + ' (want 7)');
 			if (sk2Mode !== 'default') bad.push('skip unplayed key mode was ' + sk2Mode + ' (want default)');
+			unmount(sSk);
 			delete window.__qaSk1; delete window.__qaSk2;
 		}
 
@@ -1484,7 +1507,7 @@ async function qChoices() {
 			let onceFires = 0;
 			window.__qaOnceFire = () => { onceFires++; };
 			sOnce.textContent = 'window.__qaOnceFire();';
-			$('app').appendChild(sOnce);
+			mount(sOnce);
 
 			setY(0); await raf2();
 			engRefresh(true);
@@ -1512,6 +1535,7 @@ async function qChoices() {
 			engRefresh(true);
 			setY(Math.round(yOnce - vh * 0.8)); await raf2();
 			if (onceFires !== 2) bad.push('once after clear save fires=' + onceFires + ' (want 2)');
+			unmount(sOnce);
 			delete window.__qaOnceFire;
 		}
 
@@ -1532,8 +1556,8 @@ async function qChoices() {
 			window.__qaFwdLog = d => fFires.push(d);
 			sBoth.textContent = 'window.__qaBothLog(detail.dir);';
 			sFwd.textContent = 'window.__qaFwdLog(detail.dir);';
-			$('app').appendChild(sBoth);
-			$('app').appendChild(sFwd);
+			mount(sBoth);
+			mount(sFwd);
 
 			setY(0); await raf2();
 			engRefresh(true);
@@ -1549,6 +1573,7 @@ async function qChoices() {
 			setY(0); await raf2();
 			if (bFires.length !== 1 || bFires[0] !== -1) bad.push('both up leg: ' + JSON.stringify(bFires));
 			if (fFires.length !== 0) bad.push('fwd up leg fired ' + fFires.length + '× (want 0)');
+			unmount(sBoth, sFwd);
 			delete window.__qaBothLog; delete window.__qaFwdLog;
 		}
 
@@ -1569,14 +1594,15 @@ async function qChoices() {
 			window.__qaSkRep = () => { repFired = true; };
 			sSkNone.textContent = 'window.__qaSkNone();';
 			sSkRep.textContent = 'window.__qaSkRep();';
-			$('app').appendChild(sSkNone);
-			$('app').appendChild(sSkRep);
+			mount(sSkNone);
+			mount(sSkRep);
 
 			setY(0); await raf2();
 			engRefresh(true);
 			setY(maxY()); await raf2();
 			if (!repFired) bad.push('skip replay sibling did not fire on flick');
 			if (noneFired) bad.push('skip none script fired on flick (want filtered)');
+			unmount(sSkNone, sSkRep);
 			delete window.__qaSkNone; delete window.__qaSkRep;
 		}
 
@@ -1592,7 +1618,7 @@ async function qChoices() {
 			let obFires = 0;
 			window.__qaOB = () => { obFires++; };
 			sOnceBoth.textContent = 'window.__qaOB();';
-			$('app').appendChild(sOnceBoth);
+			mount(sOnceBoth);
 
 			setY(0); await raf2();
 			engRefresh(true);
@@ -1605,6 +1631,7 @@ async function qChoices() {
 			// Second downward pass:
 			setY(Math.round(yOB - vh * 0.8)); await raf2();
 			if (obFires !== 1) bad.push('once + both fired ' + obFires + '× over 3 legs (want 1)');
+			unmount(sOnceBoth);
 			delete window.__qaOB;
 		}
 
@@ -1669,7 +1696,7 @@ async function qChoices() {
 			let fbVal = null, fbMode = null, fbCalls = 0;
 			window.__qaFb = (v, m) => { fbVal = v; fbMode = m; fbCalls++; };
 			sFb.textContent = 'Snowfall.ask("qa.fallback", 4, null, window.__qaFb);';
-			$('app').appendChild(sFb);
+			mount(sFb);
 			setY(0); await raf2();
 			engRefresh(true);
 			const yFb = Snowfall.anchorY(sFb);
@@ -1702,6 +1729,7 @@ async function qChoices() {
 				setY(Math.round(yFb + 100)); await raf2();
 				if (fbMode !== 'saved') bad.push('answered key replayed as ' + fbMode + ' (want saved)');
 			}
+			unmount(sFb);
 			delete window.__qaFb;
 		}
 
@@ -2134,7 +2162,7 @@ async function qaAll() {
 	stopAuto();
 	$('qaBtn').disabled = true;
 	$('auto').disabled = true;
-	$('qa').innerHTML = '';
+	clearQa();
 	try {
 		await qReversibility();
 		await qOverlap();

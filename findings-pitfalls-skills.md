@@ -127,6 +127,12 @@ matrix.
   viewport slot, and parent content-box constraint *including the stick's
   own margins* — because short pages legitimately clamp the probe scroll at
   `maxY` and short sections legitimately constrain the park.
+- Put event fixtures immediately **before** the trailing run-out, never after
+  it. The run-out supplies the scroll range needed to cross the fixture's end;
+  an anchor after it sits below `maxY` and produces a convincing false failure.
+- Removing a temporary script from the DOM does not remove its compiled event
+  callback. Refresh the engine before deleting callback globals, or later
+  probe scrolls execute stale scripts and turn cleanup into page errors.
 
 ## events (0.4)
 

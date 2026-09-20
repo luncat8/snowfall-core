@@ -14,6 +14,9 @@ module.exports = async function(page, base, ok) {
 	ok(await page.$eval('#qa', el => !el.querySelector('.fail') && el.querySelectorAll('.ok').length >= 8),
 		'reported six-chapter configuration passes QA with source and diagnostics open',
 		await page.$eval('#qa', el => el.textContent));
+	ok(await page.$eval('#qaTab', el => el.classList.contains('qa-pass')
+		&& !el.classList.contains('qa-fail') && getComputedStyle(el).borderLeftColor === 'rgb(74, 222, 128)'),
+		'right QA tab marks an all-pass run with a green border');
 	ok(await page.evaluate(() => ['panels', 'src', 'qapanel'].every(c => document.body.classList.contains(c))),
 		'QA leaves editor drawers open');
 
@@ -50,6 +53,9 @@ module.exports = async function(page, base, ok) {
 		try { await qOverlap(); } finally { style.remove(); }
 	});
 	ok(await page.$eval('#qa', el => !!el.querySelector('.fail')), 'overlap still detects genuinely overlapping visible backgrounds');
+	ok(await page.$eval('#qaTab', el => el.classList.contains('qa-fail')
+		&& !el.classList.contains('qa-pass') && getComputedStyle(el).borderLeftColor === 'rgb(251, 113, 133)'),
+		'right QA tab marks a failed probe with a red border');
 
 	await page.evaluate(async () => {
 		const blocker = document.createElement('div');

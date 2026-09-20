@@ -60,6 +60,7 @@ body.panels #gen{transform:none;box-shadow:0 0 44px #000b}body.qapanel #diag{tra
 	color:var(--dim);font:10px/1 ui-monospace,monospace;writing-mode:vertical-rl;letter-spacing:.14em;backdrop-filter:blur(6px)}
 #panelTab{left:0;border-left:0;border-radius:0 8px 8px 0;transform:translateY(-50%)}
 #qaTab{right:0;border-right:0;border-radius:8px 0 0 8px;transform:translateY(-50%)}
+#qaTab.qa-pass{border-color:var(--ok)}#qaTab.qa-fail{border-color:var(--fail)}
 #panelTab:hover,#qaTab:hover{color:var(--ink)}
 #controls{display:block}.panel-title{display:flex;flex-direction:column;margin:3px 2px 12px}.panel-title small{color:var(--dim);margin-top:3px;font-size:11px}
 #srcbar{position:sticky;top:-10px;z-index:5;display:flex;align-items:center;gap:9px;background:var(--panel);padding:8px 0;border-bottom:1px solid var(--line);margin-bottom:10px;font-size:11px}
