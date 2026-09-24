@@ -1,0 +1,49 @@
+/* games/gamble.css — look of the 0.6 example minigame. Injected once by the
+   runner (a <link data-snow-game="gamble">) the first time the game file is
+   loaded, so a story page never has to know the game ships a stylesheet.
+
+   Everything is namespaced under .gamble, the wrapper run() paints. The
+   wrapper reserves its own height, which is the whole layout contract: the
+   mount measures the same idle, live and resolved, so painting a game cannot
+   shift an anchor the engine measured once at load. */
+
+.gamble {
+	min-height: 8.5rem;
+	box-sizing: border-box;
+	padding: .75rem .9rem;
+	border: 1px solid #38506e;
+	border-radius: 8px;
+	background: #16233a;
+	color: #e9f1ff;
+}
+.gamble p { margin: .35rem 0; }
+
+.gamble-ask { font-style: italic; opacity: .85; }
+
+.gamble-row { display: flex; gap: .6rem; flex-wrap: wrap; }
+.gamble-row button {
+	flex: 1 1 8rem;
+	padding: .6rem 1rem;
+	border-radius: 6px;
+	border: 1px solid #4a6a92;
+	background: #1f3350;
+	color: #e9f1ff;
+	font: inherit;
+	font-size: 1.05rem;
+	cursor: pointer;
+}
+.gamble-row button:hover { border-color: #8dd7ff; }
+.gamble-row button:focus-visible { outline: 2px solid #8dd7ff; outline-offset: 2px; }
+.gamble-bust { border-color: #7d4a52 !important; }
+.gamble-win { border-color: #4f7a52 !important; }
+
+.gamble-out { font-size: 1.05rem; }
+.gamble-out b { color: #ffd166; font-size: 1.25em; }
+.gamble-out small { color: #b8c7d9; }
+.gamble-out.is-bust b { color: #ff9aa8; }
+
+/* the runner's own hooks, shown here so a page can lean on them: .snow-game
+   marks a mount, -live is up while the reader can still act, -done once the
+   engine has resolved the slot in any mode */
+.snow-game-live .gamble { border-color: #8dd7ff; }
+.snow-game-done .gamble { opacity: .92; }

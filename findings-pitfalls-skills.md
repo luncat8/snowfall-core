@@ -487,3 +487,62 @@ implementation, on the reference's own images and rects.
   adjacent edges mistakes reordered, fully offscreen wagons for visible overlap.
   Story hit tests should ignore editor chrome but still catch story blockers.
   FPS is frame count divided by measured elapsed seconds, not timer ticks.
+
+## minigames (0.6)
+
+- **An extension point with one implementation per plugin wants a table, not a
+  base class.** `Snowfall.use({measure, frame, off})` set the precedent, and
+  `SnowfallGames.add({id, css, run, result})` follows it: no parent global to
+  load first, no `new`, no `this` to thread through a runner that owns the
+  session anyway, and the file still `require()`s alone under node. The test
+  that a contract is the right size: after deleting every hook nothing calls,
+  what is left is `run` plus one optional paint.
+- **The plugin must not own the branch that the host decides.** `play()` opens
+  the slot with `Snowfall.ask`, which resolves *synchronously* in replay mode;
+  the runner returns false and never calls `run`, so a skip cannot paint
+  controls. A game that checks `mode` itself, or paints before answering, draws
+  buttons nothing can click. Same rule as the 0.4.2 `resolved` flag, moved into
+  the runtime where one implementation serves every game.
+- **`refresh()` silently drops pending asks** (`eventsMeasure` removes prompt
+  elements and clears `pending` without resolving). Anything interactive that
+  outlives it keeps its timers and its dead controls. The fix is a
+  measure-only subscriber that tears live sessions down and restores the
+  mount's idle markup; an on-screen anchor re-fires its own snippet inside the
+  same refresh and remounts, so the reader never sees the gap.
+- **`coreFrame` called `subs[i].frame` unguarded**, so a measure-only
+  subscriber threw on the first frame after registering. `off` was already
+  optional; `measure` and `frame` both are now. Adding a subscriber shape the
+  engine cannot call is a one-word bug that only appears at runtime.
+- **A mount that changes flow height shifts every anchor below it**, and the
+  symptom is events firing a screen early, not a visual glitch. Reserve the
+  height in the game's own wrapper (`.gamble{min-height:…}`), keep it identical
+  idle/live/resolved, and compare `offsetHeight` around `run()` to warn when a
+  game gets it wrong. Never `refresh()` from inside a snippet: it is reentrant
+  with the fire that called it.
+- **A multiplicative score has no zero.** `product(prefix)` returns 1 on an
+  empty match, so clearing the save restores the base purse instead of
+  emptying it — and a HUD that formats an additive total's `0` reads wrong.
+  One key still holds one value, so re-answering replaces a factor; the
+  invariant to assert is `store.counts.keys`, not the total.
+- **A fallback binds when the slot opens.** Passing a per-page `fallback`
+  after a seat already went pending (its `view` fired at load) changes nothing
+  for that seat; it pays the value it was asked with. Let the game declare the
+  default it is themed around, and treat the page override as per-instance.
+- **The fake DOM is load-bearing, so its fidelity gaps become real bugs.** Two
+  surfaced here: `innerHTML` returned only what had been *assigned*, so markup
+  built by `appendChild` read back empty and the runner's idle-restore
+  silently blanked a mount; and the parser dropped inter-tag text, so no
+  serialized string could ever contain the words a gate greps for. Both were
+  invisible until a gate asserted on the restored markup.
+  (Skill: when a page gate's expectation fails, first ask whether the harness
+  models the DOM behaviour the code relies on — `el.innerHTML` round-tripping
+  is part of the contract, not a convenience.)
+- **Give a synthetic test page a trailing spacer.** Without one the last
+  anchor sits at max scroll, i.e. inside the viewport, so a "flick past
+  everything" scenario fires `view` and mounts a game instead of skipping it —
+  the gate then fails on a page geometry, not on the runtime.
+- **An anchor inside `vh + hysteresis` of the top never re-arms.** Re-reading
+  from the top only re-offers a seat whose anchor left through the bottom, so
+  a re-pass can legitimately leave the first screen's seat holding its earlier
+  call. Assert the store (`counts.keys`, one factor per seat), not the total,
+  when testing "overwrite, never stack".

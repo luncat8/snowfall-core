@@ -1,0 +1,289 @@
+<!doctype html>
+<html data-story="demo-minigame"><head><meta charset="utf-8"><title>Snowfall · demo minigame</title>
+<style>
+body{margin:0;background:#101827;color:#e9f1ff;font:16px/1.6 system-ui,sans-serif}#hud{position:sticky;top:0;z-index:9;padding:.6rem 1rem;background:#18263b;border-bottom:1px solid #38506e}#hud b{color:#ffd166;font-size:1.3em}#hud button{margin-left:.4rem}#breakdown{display:block;white-space:nowrap;overflow:hidden}#persist{margin-left:1rem;color:#9fc7ad}#toc{padding:1rem;display:flex;gap:1rem;position:sticky;top:3.2rem;z-index:8;background:#101827}#toc a{color:#8dd7ff}#app{max-width:42rem;margin:auto;padding:1rem}section{min-height:14rem;padding:2rem 0}h1{font-size:2.2rem;margin-bottom:.2rem}#cover p{margin:.4rem 0}
+.game{min-height:13rem;padding:1rem;background:#18263b;border:1px solid #38506e;border-radius:8px}.spacer{height:var(--snow-vh,100vh)}#qa{white-space:pre-wrap;background:#09101c;padding:1rem;border-radius:8px}.idle{opacity:.7}small{color:#b8c7d9}code{color:#8dd7ff}
+</style></head><body>
+<div id="hud">purse <b id="purse">100</b> gold <small id="breakdown"></small><span id="persist"></span><button
+		id="saveBtn">save ↓</button><button id="loadBtn">load ↑</button><button id="clearBtn">clear save</button><button
+		id="selfBtn">self-test</button><input id="loadFile" type="file" accept=".json,application/json" hidden></div>
+<nav id="toc"><a href="#ch1">1</a><a href="#ch2">2</a><a href="#final">tally</a></nav>
+<div id="app">
+	<section id="cover">
+		<h1>the coin road</h1>
+		<p>You start with <b>100</b> gold. Twice on this road a coin is offered: call <b>×0.5</b> and the purse halves,
+			call <b>×2</b> and it doubles. Walk past without calling and the game's own default pays — <b>×2</b>.</p>
+		<p><small>The coin is one file, <code>games/gamble.js</code> plus <code>games/gamble.css</code>, registered with
+				<code>SnowfallGames.add</code> and played with <code>SnowfallGames.play</code>. This page never writes
+				story state: the engine records every resolution and the purse is
+				<code>100 × Snowfall.product('mult.')</code>.</small></p>
+	</section>
+	<section id="ch1">
+		<h2>1 · the ferryman</h2>
+		<p>He cups a black coin in both hands and waits for the crossing fee to be decided.</p>
+		<div class="game" id="game-1">
+			<p class="idle">…the ferryman cups the coin…</p>
+		</div>
+		<script type="txt" event="view,skip">askGamble(1)</script>
+	</section>
+	<div class="spacer"></div>
+	<div class="spacer"></div>
+	<section id="ch2">
+		<h2>2 · the ice casino</h2>
+		<p>Two cards face down on a table of frozen lake. The same game, a second seat, a new key.</p>
+		<div class="game" id="game-2">
+			<p class="idle">…the croupier shuffles…</p>
+		</div>
+		<script type="txt" event="view,skip">askGamble(2)</script>
+	</section>
+	<div class="spacer"></div>
+	<div class="spacer"></div>
+	<section id="final">
+		<h2>tally</h2>
+		<p id="total">Your purse is waiting.</p>
+		<p><small>Multipliers are recorded like any other outcome: <code>live</code> when you call the coin,
+				<code>saved</code> when a later visit replays your own earlier call, <code>default</code> when you walked
+				past and the game's declared fallback paid. The purse is a pure function of the store —
+				<code>100 × product('mult.')</code> — so a re-pass that answers nothing changes nothing, and answering
+				again overwrites that seat's factor instead of stacking it. Jump over a seat with the numbers above to
+				keep it. Clearing the save at the top re-arms whatever stands on screen, so seat 1 offers the coin again
+				right away. This page only reads <code>product</code> and draws it.</small></p>
+		<script type="txt" event="center,end,skip">renderTotal()</script>
+	</section>
+	<output id="qa"></output>
+</div>
+<script src="snowfall.js?v=18"></script><script src="snowfall-games.js?v=18"></script><script src="games/gamble.js?v=18"></script><script>
+(function(){
+	var BASE = 100, SEATS = 2;
+	var ASK = {
+		1: 'The ferryman cups a black coin in both hands. Call it, and the purse follows.',
+		2: 'The croupier lays two cards face down. One doubles the purse, one halves it.'
+	};
+	var IDLE = { 1: '…the ferryman cups the coin…', 2: '…the croupier shuffles…' };
+	var values = {}, modes = {};            /* display cache of the last resolution per seat */
+	var mounts = 0;                         /* self-test: how many live coin UIs the page has drawn */
+	function hasGames(){ return !!(window.Snowfall && Snowfall.product && window.SnowfallGames && SnowfallGames.play); }
+	function byId(id){ return document.getElementById(id); }
+	function box(k){ return byId('game-' + k); }
+	function key(k){ return 'mult.g' + k; }
+	function purse(){ return BASE * Snowfall.product('mult.'); }
+	function fmt(n){ return String(Math.round(n * 100) / 100); }
+	function log(s){ if (window.Snowlog) Snowlog(s); }
+	function own(o, k){ return Object.prototype.hasOwnProperty.call(o, k); }
+
+	/* One call per seat, two events: on `view` the runner leaves the slot
+	   pending and the game paints its buttons; on `skip` the engine resolves
+	   synchronously (saved or default) and the runner paints no UI at all —
+	   `play` returns false and the buttons never exist. */
+	window.askGamble = function(k){
+		if (!hasGames()) return;
+		if (SnowfallGames.play('gamble', {
+			el: box(k), key: key(k), opts: { ask: ASK[k] },
+			done: function(v, mode){ mark(k, v, mode); }
+		})) mounts++;
+	};
+
+	/* Display only. The engine recorded the outcome before this ran. */
+	function mark(k, v, mode){
+		values[k] = v; modes[k] = mode;
+		renderTotal();
+		log('seat ' + k + ' pays ×' + v + ' (' + mode + ')');
+	}
+	function cell(k){ return modes[k] ? 'g' + k + '=×' + values[k] + ' ' + modes[k] : 'g' + k + '=idle'; }
+	function cells(){ var k, out = []; for (k = 1; k <= SEATS; k++) out.push(cell(k)); return out.join(' · '); }
+	function chain(){ var k, out = []; for (k = 1; k <= SEATS; k++) if (modes[k]) out.push('×' + values[k]); return out.length ? out.join(' ') : '×1'; }
+	function renderTotal(){
+		if (!hasGames()) return;
+		byId('purse').textContent = fmt(purse());
+		byId('breakdown').textContent = cells();
+		byId('total').textContent = 'The purse holds ' + fmt(purse()) + ' gold — ' + BASE + ' ' + chain() + '. ' + cells();
+		byId('persist').textContent = Snowfall.store.persistent ? 'saved ✓' : 'memory only';
+	}
+	window.renderTotal = renderTotal;
+
+	/* Show what the store already holds: a reload or a load ↑ brings a save
+	   whose seats have not resolved yet on this pass. Display only. */
+	function hydrate(){
+		if (!hasGames()) return;
+		var data;
+		try { data = JSON.parse(Snowfall.exportJSON()); } catch (e) { return; }
+		var keys = data.keys || {}, defaults = data.defaults || {}, k;
+		for (k = 1; k <= SEATS; k++){
+			if (modes[k] || !own(keys, key(k))) continue;
+			values[k] = keys[key(k)];
+			modes[k] = own(defaults, key(k)) ? 'default' : 'saved';
+		}
+		renderTotal();
+	}
+
+	function resetView(){
+		for (var k = 1; k <= SEATS; k++){
+			delete values[k]; delete modes[k];
+			box(k).innerHTML = '<p class="idle">' + IDLE[k] + '</p>';
+			box(k).classList.remove('snow-game-live');
+			box(k).classList.remove('snow-game-done');
+		}
+		renderTotal();
+	}
+
+	/* Clear-save recipe; the order is load-bearing — reset and re-measure at
+	   the top, or refresh(true) anywhere else skip-resolves everything above. */
+	function clearSave(){
+		window.scrollTo(0, 0);
+		if (!hasGames()) return;
+		Snowfall.reset();
+		resetView();
+		Snowfall.refresh(true);
+		renderTotal();
+	}
+
+	function download(){
+		if (!hasGames()) return;
+		var a = document.createElement('a');
+		a.href = URL.createObjectURL(new Blob([Snowfall.exportJSON()], { type: 'application/json' }));
+		a.download = 'demo-minigame-save.json';
+		a.click();
+	}
+
+	/* ---- in-GUI gate: frames driven by Snowfall.step(y) at simulated
+	   positions, so the sequence cannot race the page's own scroll events ---- */
+	var qaFails = 0, pageY = 0;
+	function qaLine(s){ byId('qa').textContent += s + '\n'; }
+	function qaCheck(name, cond, note){
+		if (!cond) qaFails++;
+		qaLine((cond ? 'PASS ' : 'FAIL ') + name + (note ? ' — ' + note : ''));
+	}
+	function allMode(m){ for (var k = 1; k <= SEATS; k++) if (modes[k] !== m) return false; return true; }
+	function bottom(){ return Math.max(0, document.documentElement.scrollHeight - window.innerHeight); }
+	function frame(y){ pageY = y; Snowfall.step(y); }
+	function coinBtn(k, v){ return box(k).querySelector('button[data-v="' + v + '"]'); }
+	function drawCoin(){ return !!document.querySelector('.game button'); }
+	function answerAll(v){
+		for (var k = 1; k <= SEATS; k++){
+			var b = coinBtn(k, v);
+			if (b) b.click();
+		}
+	}
+	function walk(step, v){
+		var max = bottom(), y;
+		for (y = 0; y < max; y += step){ frame(y); answerAll(v); }
+		frame(max); answerAll(v);
+	}
+	function walkUp(step){ for (var y = bottom(); y > 0; y -= step) frame(y); frame(0); }
+	function play(k, v){
+		var max = bottom(), y, b;
+		for (y = pageY; y < max; y += 200){
+			frame(y);
+			b = coinBtn(k, v);
+			if (b){ b.click(); return true; }
+		}
+		frame(max);
+		b = coinBtn(k, v);
+		if (b){ b.click(); return true; }
+		return false;
+	}
+	function restart(){ mounts = 0; clearSave(); frame(0); }
+
+	function t1(){
+		restart();
+		walk(200, 0.5);
+		qaCheck('slow read calling ×0.5 twice: 100 × 0.5 × 0.5', fmt(purse()) === '25', 'purse=' + fmt(purse()) + ' — ' + cells());
+		qaCheck('both seats resolved live', allMode('live'), cells());
+		qaCheck('each seat painted its coin exactly once', mounts === SEATS, 'coins painted: ' + mounts);
+	}
+	function t2(){
+		restart();
+		var painted = mounts;                  /* seat 1 fired its view at load */
+		frame(bottom());
+		qaCheck('a flick pays the game default ×2 at both seats', fmt(purse()) === '400', 'purse=' + fmt(purse()) + ' — ' + cells());
+		qaCheck('both seats resolved default', allMode('default'), cells());
+		qaCheck('the flick itself painted no coin', mounts === painted, 'coins painted during the flick: ' + (mounts - painted));
+		qaCheck('no coin is left waiting for a click', !drawCoin(), 'buttons left in a game box');
+	}
+	function t3(){
+		restart();
+		qaCheck('seat 1 is playable on a cold load', play(1, 0.5), cells());
+		frame(byId('ch2').offsetTop);
+		qaCheck('the landed seat still offers the coin', play(2, 2), cells());
+		qaCheck('one ×0.5 and one ×2 leave the purse at 100', fmt(purse()) === '100', 'purse=' + fmt(purse()) + ' — ' + cells());
+	}
+	function t4(){
+		restart();
+		walk(200, 0.5);
+		var was = purse();
+		walkUp(200);
+		walk(200, 0.5);
+		qaCheck('re-reading overwrites each factor, never stacks', purse() === was && was === 25, 'purse=' + fmt(purse()) + ' — ' + cells());
+		walkUp(200);
+		walk(200);
+		qaCheck('re-passing without answering replays the record', purse() === 25, 'purse=' + fmt(purse()) + ' — ' + cells());
+	}
+	function t5(){
+		restart();
+		play(1, 2);
+		window.scrollTo(0, 0);
+		Snowfall.refresh(true);                /* a fresh visit: save kept, latches re-armed */
+		pageY = 0;
+		frame(bottom());
+		qaCheck('a skipped seat replays the recorded call', modes[1] === 'saved' && values[1] === 2, cells());
+		qaCheck('a never-played seat pays the default', modes[2] === 'default' && values[2] === 2, cells());
+		qaCheck('both factors still land in the purse', fmt(purse()) === '400', 'purse=' + fmt(purse()) + ' — ' + cells());
+	}
+	function t6(){
+		var before = purse(), json = Snowfall.exportJSON();
+		Snowfall.reset();
+		var ok = Snowfall.importJSON(json) && purse() === before;
+		qaCheck('store export → reset → import round-trips the purse', ok, 'purse=' + fmt(purse()) + ' — ' + cells());
+	}
+
+	/* the layout contract, measured where it matters — the fake DOM cannot see
+	   a box grow: dealing and resolving must not change the mount's flow
+	   height, or every anchor below it shifts by that much */
+	function t7(){
+		restart();
+		var h1 = box(1).offsetHeight, h2 = box(2).offsetHeight;
+		play(1, 2);
+		qaCheck('dealing the coin does not change the mount height', Math.abs(box(1).offsetHeight - h1) <= 2,
+			h1 + 'px → ' + box(1).offsetHeight + 'px');
+		frame(bottom());
+		qaCheck('and neither does resolving a seat', Math.abs(box(2).offsetHeight - h2) <= 2,
+			h2 + 'px → ' + box(2).offsetHeight + 'px');
+	}
+	function runSelfTest(){
+		if (!hasGames()){ qaLine('SKIP engine or minigame runtime absent — readable prose with idle placeholders'); return; }
+		var keep = Snowfall.exportJSON();
+		byId('qa').textContent = 'self-test (frames driven by Snowfall.step)\n';
+		qaFails = 0;
+		t1(); t2(); t3(); t4(); t5(); t6(); t7();
+		qaLine(qaFails ? qaFails + ' check(s) FAILED' : 'all checks passed');
+		Snowfall.importJSON(keep);             /* the reader's save survives the test */
+		window.scrollTo(0, 0);
+		resetView();
+		Snowfall.refresh(true);
+		hydrate();
+	}
+
+	/* The first frame fires whatever stands in the load viewport, so seat 1 is
+	   live from the first paint. The engine's own boot defers that frame to
+	   DOMContentLoaded, by which time every classic <script> above has run. */
+	byId('saveBtn').onclick = download;
+	byId('loadBtn').onclick = function(){ byId('loadFile').click(); };
+	byId('loadFile').onchange = function(e){
+		var f = e.target.files[0];
+		e.target.value = '';                   /* the same file may be picked twice */
+		if (!f) return;
+		var r = new FileReader();
+		r.onload = function(){
+			if (!hasGames() || !Snowfall.importJSON(r.result)) return;
+			resetView();
+			hydrate();
+			Snowfall.refresh(true);
+		};
+		r.readAsText(f);
+	};
+	byId('clearBtn').onclick = clearSave;
+	byId('selfBtn').onclick = runSelfTest;
+	window.demoMinigame = { purse: purse, cells: cells, mounts: function(){ return mounts; } };
+	hydrate();
+})();
+</script></body></html>

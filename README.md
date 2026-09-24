@@ -6,6 +6,9 @@ early development stage
 * paged as typical VN
 * without js fallback to readable html
 * compatible with epub syntax for easy convert
+* minigames as one `.js` file plus an optional `.css` — `games/gamble.js` is
+  the example, `0.6-plan-minigames.md` the contract, `demo-minigame.html` the
+  playable page
 
 No strict syntax, don't force author to write in specific notation - just place backgrounds and scripts in text.
 

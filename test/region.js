@@ -270,7 +270,7 @@ function restAxis(name, boxPos, boxLen, regPos, regLen, win, counts) {
 	delete require.cache[require.resolve('../snowfall.js')];
 	const S2 = require('../snowfall.js');
 	ok(S2.default, 'engine auto-booted under fake DOM');
-	ok(S2.version === '0.5.5', 'version bumped');
+	ok(S2.version === '0.5.6', 'version bumped');
 	/* subscriber sees clientWidth, NOT innerWidth */
 	let got = null, measuredWagons = false;
 	S2.default.use({
@@ -856,7 +856,8 @@ lateRun([2, 1, 0], 'loads out of order', false);
 		/* the demo and QA pages load the same runtime files, so they carry the
 		   same token — a page left behind keeps a stale copy of one script next
 		   to the new ones, and the only symptom is a crop that never appears */
-		const RUNTIME = ['hdregion.js', 'snowfall.js', 'snowfall-region.js', 'harness.js'];
+		const RUNTIME = ['hdregion.js', 'snowfall.js', 'snowfall-region.js', 'harness.js',
+			'snowfall-games.js', 'gamble.js'];
 		const pages = fs.readdirSync(root).filter(f => /\.html$/.test(f))
 			.concat(fs.readdirSync(path.join(root, 'test/browser')).filter(f => /\.html$/.test(f)).map(f => 'test/browser/' + f));
 		const stale = [], order = [];
@@ -882,6 +883,12 @@ lateRun([2, 1, 0], 'loads out of order', false);
 				order.push(rel + ': adapter before its dependencies');
 			if (at['harness.js'] !== undefined && (at['snowfall.js'] === undefined || at['snowfall.js'] > at['harness.js']))
 				order.push(rel + ': harness.js before snowfall.js');
+			/* the minigame runtime registers games into the namespace the engine
+			   owns, and a game file registers itself into the runtime */
+			if (at['snowfall-games.js'] !== undefined && (at['snowfall.js'] === undefined || at['snowfall.js'] > at['snowfall-games.js']))
+				order.push(rel + ': snowfall-games.js before snowfall.js');
+			if (at['gamble.js'] !== undefined && (at['snowfall-games.js'] === undefined || at['snowfall-games.js'] > at['gamble.js']))
+				order.push(rel + ': a game file before the minigame runtime');
 		}
 		ok(refs >= 15, 'the demo/QA pages load the runtime too (' + refs + ' refs)');
 		eqv(stale.length, 0, 'every page shares index.html\'s ?v=' + vers[0] + ' — stale: ' + stale.join(', '));

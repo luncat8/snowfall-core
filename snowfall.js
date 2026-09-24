@@ -1,5 +1,6 @@
 /* snowfall.js — visual novella scroll engine: core + wagons (0.2) + style/theme morph (0.3) + script events (0.4)
-	+ choices, save slots and recorded ask outcomes (0.4.1) + cached viewport & parent-bottom clamp (0.5.5).
+	+ choices, save slots and recorded ask outcomes (0.4.1) + cached viewport & parent-bottom clamp (0.5.5)
+	+ product() over recorded outcomes, the multiplicative twin of sum() (0.6).
 	Sticky park (compositor) + JS push chain (sync scroll handler).
 	Classic script, no modules; require()-able under node with zero DOM at load. */
 (function(global) {
@@ -1079,7 +1080,9 @@ function createCore(opts) {
 	function coreFrame(sY, vh, vw) {
 		if (inst.destroyed || !inst.enabled) return;
 		const subs = inst.subs;
-		for (let i = 0; i < subs.length; i++) subs[i].frame(sY, vh, vw);
+		/* frame is optional: a measure-only subscriber (0.6's minigame runner)
+		   has nothing to do per frame and must not be forced to fake one */
+		for (let i = 0; i < subs.length; i++) if (subs[i].frame) subs[i].frame(sY, vh, vw);
 		if (inst.onFrame) inst.onFrame(inst);
 	}
 	inst.refresh = function(replay) {
@@ -1087,7 +1090,7 @@ function createCore(opts) {
 		measureViewport();
 		inst.stamp++;
 		const subs = inst.subs;
-		for (let i = 0; i < subs.length; i++) subs[i].measure(replay);
+		for (let i = 0; i < subs.length; i++) if (subs[i].measure) subs[i].measure(replay);
 		coreFrame(window.scrollY || 0, vp.height, vp.width);
 	};
 	/* step() defaults reuse the cached viewport, so a gesture-triggered manual
@@ -1145,7 +1148,7 @@ function createCore(opts) {
 const Snowfall = {
 	create: createCore,
 	default: null,
-	version: '0.5.5',
+	version: '0.6.0',
 	chain: chain,
 	stickyShown: stickyShown,
 	dirCode: dirCode,
@@ -1201,6 +1204,29 @@ Snowfall.sum = function(prefix) {
 		if (k.indexOf(prefix) === 0) {
 			const val = m[k];
 			if (typeof val === 'number') total += val;
+		}
+	}
+	return total;
+};
+/* The same read as sum(), folded multiplicatively: a minigame that pays a
+   factor (a purse doubled or halved) is recorded exactly like an additive
+   one, and the total stays a pure function of the store. No match is 1, the
+   identity, so a purse with nothing resolved is unchanged rather than 0. */
+Snowfall.product = function(prefix) {
+	if (prefix === undefined || prefix === null) prefix = '';
+	let total = 1;
+	const v = storeData.vars;
+	for (const k in v) {
+		if (k.indexOf(prefix) === 0) {
+			const val = v[k];
+			if (typeof val === 'number') total *= val;
+		}
+	}
+	const m = storeData.keys;
+	for (const k in m) {
+		if (k.indexOf(prefix) === 0) {
+			const val = m[k];
+			if (typeof val === 'number') total *= val;
 		}
 	}
 	return total;
