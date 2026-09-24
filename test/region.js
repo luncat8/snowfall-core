@@ -840,27 +840,20 @@ lateRun([2, 1, 0], 'loads out of order', false);
 			'the JS rule is more specific than the fallback (' + cls(fb.sel) + ' class(es) to beat)');
 		ok(/min-height:0/.test(adapterCss), 'the wagon min-height fallback is neutralised too');
 	}
-	/* every local asset in index.html must carry a version token: the preview is
-	   served over http, and one stale file next to a new one is a page of hidden
-	   crops with no error line — the failure mode that ate a whole round here */
+	/* strict load order on every page: the adapter reads globals set by the two
+	   files before it, the harness drives both, and a game registers itself into
+	   the minigame runtime. the ?v= tokens on these urls are not checked here —
+	   they are derived and owned by tools/version.js / test/version.js */
 	{
-		const page = fs.readFileSync(path.join(root, 'index.html'), 'utf8');
-		const tags = page.match(/<(?:script[^>]*src|link[^>]*href)="([^"]+)"/g) || [];
-		const local = tags.filter(t => t.indexOf('http') < 0);
+		const indexPage = fs.readFileSync(path.join(root, 'index.html'), 'utf8');
+		const local = (indexPage.match(/<(?:script[^>]*src|link[^>]*href)="([^"]+)"/g) || [])
+			.filter(t => t.indexOf('http') < 0);
 		ok(local.length >= 5, 'index.html loads its local files (' + local.length + ')');
-		const bare = local.filter(t => t.indexOf('?v=') < 0);
-		eqv(bare.length, 0, 'every local asset carries ?v= — stale: ' + bare.join(' '));
-		const vers = local.map(t => /(\d+)"/.exec(t)).filter(Boolean).map(m => +m[1]);
-		ok(vers.length === local.length && vers.every(v => v === vers[0]),
-			'one shared ?v= token, so nothing can half-update');
-		/* the demo and QA pages load the same runtime files, so they carry the
-		   same token — a page left behind keeps a stale copy of one script next
-		   to the new ones, and the only symptom is a crop that never appears */
 		const RUNTIME = ['hdregion.js', 'snowfall.js', 'snowfall-region.js', 'harness.js',
 			'snowfall-games.js', 'gamble.js'];
 		const pages = fs.readdirSync(root).filter(f => /\.html$/.test(f))
 			.concat(fs.readdirSync(path.join(root, 'test/browser')).filter(f => /\.html$/.test(f)).map(f => 'test/browser/' + f));
-		const stale = [], order = [];
+		const order = [];
 		let refs = 0;
 		for (const rel of pages) {
 			const text = fs.readFileSync(path.join(root, rel), 'utf8');
@@ -871,11 +864,7 @@ lateRun([2, 1, 0], 'loads out of order', false);
 				if (!file || RUNTIME.indexOf(file[1]) < 0) continue;
 				refs++;
 				at[file[1]] = text.indexOf(tag);
-				const tok = /\?v=(\d+)/.exec(tag);
-				if (!tok || +tok[1] !== vers[0]) stale.push(rel + ' ' + file[1] + (tok ? ' v=' + tok[1] : ' no token'));
 			}
-			/* the adapter reads globals set by the two files before it, and the
-			   harness drives both: order is part of the contract */
 			if (at['hdregion.js'] !== undefined && at['snowfall.js'] !== undefined && at['hdregion.js'] > at['snowfall.js'])
 				order.push(rel + ': snowfall.js before hdregion.js');
 			if (at['snowfall-region.js'] !== undefined && (at['hdregion.js'] === undefined || at['snowfall.js'] === undefined
@@ -883,15 +872,12 @@ lateRun([2, 1, 0], 'loads out of order', false);
 				order.push(rel + ': adapter before its dependencies');
 			if (at['harness.js'] !== undefined && (at['snowfall.js'] === undefined || at['snowfall.js'] > at['harness.js']))
 				order.push(rel + ': harness.js before snowfall.js');
-			/* the minigame runtime registers games into the namespace the engine
-			   owns, and a game file registers itself into the runtime */
 			if (at['snowfall-games.js'] !== undefined && (at['snowfall.js'] === undefined || at['snowfall.js'] > at['snowfall-games.js']))
 				order.push(rel + ': snowfall-games.js before snowfall.js');
 			if (at['gamble.js'] !== undefined && (at['snowfall-games.js'] === undefined || at['snowfall-games.js'] > at['gamble.js']))
 				order.push(rel + ': a game file before the minigame runtime');
 		}
 		ok(refs >= 15, 'the demo/QA pages load the runtime too (' + refs + ' refs)');
-		eqv(stale.length, 0, 'every page shares index.html\'s ?v=' + vers[0] + ' — stale: ' + stale.join(', '));
 		eqv(order.length, 0, 'load order holds on every page — broken: ' + order.join(', '));
 	}
 	/* brace-match the adapter's frame() body so the scan is scoped to it */

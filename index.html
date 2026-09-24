@@ -4,10 +4,12 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Snowfall — story editor</title>
-<!-- every local asset carries ?v=: the preview is served over http, and a stale
-     harness.js or hdregion.js next to a new snowfall-region.js is a page of hidden
-     crops with no error line. Bump the token with every change to these files. -->
-<link rel="stylesheet" href="harness.css?v=18">
+<!-- every local asset carries one shared ?v= token derived from the asset contents:
+     the preview is served over http, and a stale harness.js or hdregion.js next to
+     a new snowfall-region.js is a page of hidden crops with no error line. Never
+     bump by hand — after editing a shared .js/.css run `node tools/version.js`;
+     test/version.js fails the suite while any page drifts from the token. -->
+<link rel="stylesheet" href="harness.css?v=9f05ec74c7">
 </head>
 <body>
 <button id="panelTab" type="button" title="Story controls (p)">controls</button>
@@ -85,6 +87,6 @@
 </form>
 <div id="diag"><pre id="dstats">…</pre><div id="qa"></div><pre id="estatePre"></pre></div>
 <div id="app"></div><div id="rail" aria-hidden="true"></div><div id="mark" aria-hidden="true"></div><div id="wires" aria-hidden="true"></div>
-<script src="hdregion.js?v=18"></script><script src="snowfall.js?v=18"></script><script src="snowfall-region.js?v=18"></script><script src="harness.js?v=18"></script>
+<script src="hdregion.js?v=9f05ec74c7"></script><script src="snowfall.js?v=9f05ec74c7"></script><script src="snowfall-region.js?v=9f05ec74c7"></script><script src="harness.js?v=9f05ec74c7"></script>
 </body>
 </html>
