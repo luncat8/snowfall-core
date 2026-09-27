@@ -70,6 +70,40 @@ module.exports = async function(page, base, ok) {
 	await geometry(page, 'source round trip', ok, true);
 	await page.evaluate(() => { Snowfall.setEnabled(false); Snowfall.setEnabled(true); });
 	await geometry(page, 'disable/enable', ok, true);
+	/* prose survives the editor: an inspector edit re-serializes the whole
+	   page, and text standing next to an <em> must come back byte-identical */
+	const prose = await page.evaluate(() => {
+		const before = $('src').value;
+		const para = '<p class="ln">Hello <em>world</em>, and <b>more</b> text!<br>second line</p>';
+		$('src').value = before.replace(/<p class="ln">[^<]*<\/p>/, para);
+		applySource();
+		mutatePreview(() => {});
+		const once = $('src').value;
+		mutatePreview(() => {});
+		return { kept: once.indexOf(para) >= 0, stable: once === $('src').value, once: once.match(/<p class="ln">Hello[\s\S]*?<\/p>/) };
+	});
+	ok(prose.kept, 'mixed prose is serialized inline, verbatim', String(prose.once));
+	ok(prose.stable, 'and a second round trip changes nothing');
+	/* the background inspector follows its target: size only for a fixed/auto
+	   box, the region hint only for a region wagon */
+	const fieldKeys = () => page.evaluate(() => Array.from($('backgroundFields').querySelectorAll('[data-key]'), c => c.dataset.key).join());
+	await page.evaluate(() => renderBackgroundFields(wagons().find(w => w.classList.contains('snow-hd'))));
+	ok(await fieldKeys() === 'source,mode,dir,gap' && await page.$eval('#backgroundHint', el => /region/i.test(el.textContent)),
+		'a region wagon gets the region hint and no size field');
+	await page.evaluate(c => { setControls(c); build(); }, { ...defaults, regions: 0, mode: 'cover' });
+	await settled(page);
+	await page.evaluate(() => { selectedBg = wagons()[0]; renderBackgroundFields(selectedBg); });
+	ok(await fieldKeys() === 'source,mode,dir,gap' && await page.$eval('#backgroundHint', el => /^Background settings/.test(el.textContent)),
+		'a cover wagon shows no size field and the plain hint');
+	const fixed = await page.evaluate(() => {
+		const mode = $('backgroundFields').querySelector('[data-key=mode]');
+		mode.value = 'fixed';
+		applyInspector({ target: mode });
+		return selectedBg.dataset.mode;
+	});
+	ok(fixed === 'fixed' && await fieldKeys() === 'source,mode,size,dir,gap', 'switching it to fixed reveals size');
+	await page.evaluate(c => { setControls(c); build(); }, defaults);
+	await settled(page);
 	ok(await page.evaluate(() => SnowfallRegion.arrays().base.every(b => getComputedStyle(b).position === 'absolute')),
 		're-enable restores region CSS, not just inline sizes');
 	await page.evaluate(() => { applyPreset('tight'); applyPreset('mixed'); });

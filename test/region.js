@@ -270,7 +270,10 @@ function restAxis(name, boxPos, boxLen, regPos, regLen, win, counts) {
 	delete require.cache[require.resolve('../snowfall.js')];
 	const S2 = require('../snowfall.js');
 	ok(S2.default, 'engine auto-booted under fake DOM');
-	ok(S2.version === '0.5.6', 'version bumped');
+	/* 0.5.5 shipped as 0.5.6; later releases only move forward */
+	const semverNum = v => String(v).split('.').reduce((acc, part) => acc * 1000 + Number(part), 0);
+	ok(/^\d+\.\d+\.\d+$/.test(S2.version) && semverNum(S2.version) >= semverNum('0.5.6'),
+		'version bumped past 0.5.5 (' + S2.version + ')');
 	/* subscriber sees clientWidth, NOT innerWidth */
 	let got = null, measuredWagons = false;
 	S2.default.use({

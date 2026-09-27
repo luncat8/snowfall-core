@@ -53,10 +53,10 @@ function rng32(seed) {
 
 /* ---------------- stickyShown mirror ---------------- */
 {
-	eq(S.stickyShown(10, 900, 5000, 1000, -890), 10, 'sticky rides at flow');
-	eq(S.stickyShown(-5, 900, 5000, 1000, -890), 0, 'sticky parks at 0');
-	eq(S.stickyShown(-5, 900, 5, 1000, -890), 5 - 900 + 890, 'sticky caps at parent bottom');
-	eq(S.stickyShown(50, 2000, 800, 300, -1900), 50, 'taller-than-parent still parks (no shortcut)');
+	eq(S.stickyShown(10, 900, 5000, -890), 10, 'sticky rides at flow');
+	eq(S.stickyShown(-5, 900, 5000, -890), 0, 'sticky parks at 0');
+	eq(S.stickyShown(-5, 900, 5, -890), 5 - 900 + 890, 'sticky caps at parent bottom');
+	eq(S.stickyShown(50, 2000, 800, -1900), 50, 'taller-than-parent still parks (no shortcut)');
 }
 
 /* ---------------- parse helpers ---------------- */
@@ -121,7 +121,7 @@ function simFrame(L, sY, clampOn) {
 			const cap = L.pBot[i] - sY - e - L.mb[i];
 			if (p > cap) p = cap;
 		}
-		const sh = S.stickyShown(fr, e, L.pBot[i] - sY, L.pH[i], L.mb[i]);
+		const sh = S.stickyShown(fr, e, L.pBot[i] - sY, L.mb[i]);
 		const dir = L.dir[i] || 0;
 		let dx = 0, dy = p - sh;
 		if (dir === 1 || dir === 2) {
@@ -135,7 +135,7 @@ function simFrame(L, sY, clampOn) {
 }
 function layout(y, ext, pBot, gap, dir) {
 	return {
-		y: y, ext: ext, pBot: pBot, pH: pBot.map(() => 9999),
+		y: y, ext: ext, pBot: pBot,
 		mb: gap.map((g, i) => g - ext[i]),
 		dir: dir, vw: 1440, vh: 900
 	};

@@ -20,12 +20,13 @@ function chain(n, free, ext, pos) {
 /* what CSS position:sticky;top:0 shows without any transform.
 	CSS constrains the MARGIN box within the parent CONTENT box, so the
 	mirror needs content-box bottom and the (negative ok) marginBottom.
-	No ext>=pH shortcut: measured in Chrome, a wagon taller than its parent
-	still parks at top:0 while the parent is visible and releases to the cap
-	once the parent's content bottom passes (the margin box is what fits, and
-	with overlay flow it is tiny). The min(park,cap) clamp covers every case;
-	the old shortcut returned flow and misplaced tall wagons by -free. */
-function stickyShown(free, ext, pBotC, pH, mb) {
+	No taller-than-parent shortcut: measured in Chrome, a wagon taller than
+	its parent still parks at top:0 while the parent is visible and releases
+	to the cap once the parent's content bottom passes (the margin box is what
+	fits, and with overlay flow it is tiny). The min(park,cap) clamp covers
+	every case; the old shortcut returned flow and misplaced tall wagons by
+	-free. */
+function stickyShown(free, ext, pBotC, mb) {
 	const park = free > 0 ? free : 0;
 	const cap = pBotC - ext - mb;
 	return cap < park ? cap : park;
@@ -157,8 +158,7 @@ function parentPad(par, pads) {
 	for (let k = 0; k < pads.length; k++) if (pads[k].el === par) return pads[k];
 	const cs = getComputedStyle(par);
 	const pad = { el: par,
-		pt: parseFloat(cs.paddingTop) || 0, pb: parseFloat(cs.paddingBottom) || 0,
-		bt: parseFloat(cs.borderTopWidth) || 0, bb: parseFloat(cs.borderBottomWidth) || 0,
+		pb: parseFloat(cs.paddingBottom) || 0, bb: parseFloat(cs.borderBottomWidth) || 0,
 		cl: parseFloat(cs.paddingLeft) || 0, cb: parseFloat(cs.borderLeftWidth) || 0 };
 	pads.push(pad);
 	return pad;
@@ -259,7 +259,7 @@ function getStorage() {
 
 const storeData = {
 	v: 1,
-	story: deriveStoryId(),
+	story: '',
 	slot: 0,
 	at: Math.floor(Date.now() / 1000),
 	vars: {},
@@ -308,21 +308,25 @@ function loadFromStorage() {
 		const item = storage.getItem(k);
 		if (item) {
 			const parsed = JSON.parse(item);
-			if (parsed && typeof parsed === 'object') {
-				storeData.v = 1;
-				storeData.story = typeof parsed.story === 'string' ? parsed.story : storeData.story;
-				storeData.slot = typeof parsed.slot === 'number' ? parsed.slot : 0;
-				storeData.at = typeof parsed.at === 'number' ? parsed.at : Math.floor(Date.now() / 1000);
-				storeData.vars = (parsed.vars && typeof parsed.vars === 'object') ? parsed.vars : {};
-				storeData.keys = (parsed.keys && typeof parsed.keys === 'object') ? parsed.keys : {};
-				storeData.defaults = (parsed.defaults && typeof parsed.defaults === 'object') ? parsed.defaults : {};
-				storeData.fired = (parsed.fired && typeof parsed.fired === 'object') ? parsed.fired : {};
-				isDirty = false;
-			}
+			if (parsed && typeof parsed === 'object') adoptDoc(parsed);
 		}
 	} catch (e) {
 		console.warn('Snowfall store read error', e);
 	}
+}
+
+/* Take a save document's CONTENT. `story` and `slot` are the page's own
+   coordinates (they name the localStorage key this page reads at boot), so a
+   file exported under another id is loaded into this page's slot rather than
+   redirecting every later autosave to a key the next visit never opens. */
+function adoptDoc(parsed) {
+	storeData.v = 1;
+	storeData.at = typeof parsed.at === 'number' ? parsed.at : Math.floor(Date.now() / 1000);
+	storeData.vars = (parsed.vars && typeof parsed.vars === 'object') ? parsed.vars : {};
+	storeData.keys = (parsed.keys && typeof parsed.keys === 'object') ? parsed.keys : {};
+	storeData.defaults = (parsed.defaults && typeof parsed.defaults === 'object') ? parsed.defaults : {};
+	storeData.fired = (parsed.fired && typeof parsed.fired === 'object') ? parsed.fired : {};
+	isDirty = false;
 }
 
 if (typeof window !== 'undefined') {
@@ -405,9 +409,9 @@ function createCore(opts) {
 	const W = {
 		els: [], y: new Float64Array(0), free: new Float64Array(0),
 		pos: new Float64Array(0), ext: new Float64Array(0),
-		pBot: new Float64Array(0), pH: new Float64Array(0), mb: new Float64Array(0),
+		pBot: new Float64Array(0), mb: new Float64Array(0),
 		gap: new Float64Array(0), dir: new Uint8Array(0),
-		box: new Float64Array(0), parL: new Float64Array(0), lastMl: new Float64Array(0),
+		box: new Float64Array(0), parL: new Float64Array(0),
 		lastX: new Float64Array(0), lastY: new Float64Array(0), n: 0
 	};
 	const rootEl = hasDOM ? document.documentElement : null;
@@ -503,18 +507,15 @@ function createCore(opts) {
 		if (W.y.length < n) {
 			W.y = new Float64Array(n); W.free = new Float64Array(n);
 			W.pos = new Float64Array(n); W.ext = new Float64Array(n);
-			W.pBot = new Float64Array(n); W.pH = new Float64Array(n);
-			W.mb = new Float64Array(n); W.gap = new Float64Array(n);
-			W.dir = new Uint8Array(n);
+			W.pBot = new Float64Array(n); W.mb = new Float64Array(n);
+			W.gap = new Float64Array(n); W.dir = new Uint8Array(n);
 			W.box = new Float64Array(n); W.parL = new Float64Array(n);
-			W.lastMl = new Float64Array(n);
 			W.lastX = new Float64Array(n); W.lastY = new Float64Array(n);
 		}
 		W.els = els; W.n = n;
 		let rem = 16;
 		try { rem = parseFloat(getComputedStyle(document.documentElement).fontSize) || 16; }
 		catch (e) { rem = 16; }
-		const sY = window.scrollY || 0;
 		for (let i = 0; i < n; i++) {
 			const el = els[i], ds = el.dataset;
 			const mode = ds.mode || 'cover';
@@ -560,8 +561,7 @@ function createCore(opts) {
 			   then starts at viewport 0 whatever column it was authored in.
 			   Explicit boxes (fixed/auto) are centred in the page instead. */
 			const box = W.box[i];
-			const ml = (box > 0 ? (spanW - box) / 2 : 0) - W.parL[i];
-			if (ml !== W.lastMl[i]) { el.style.marginLeft = ml + 'px'; W.lastMl[i] = ml; }
+			el.style.marginLeft = ((box > 0 ? (spanW - box) / 2 : 0) - W.parL[i]) + 'px';
 			if (el.style.marginRight !== '0px') el.style.marginRight = '0px';
 		}
 		/* the margin writes above change the page height, and a browser clamps
@@ -576,10 +576,8 @@ function createCore(opts) {
 			const par = el.parentElement, pad = parentPad(par, pads);
 			const pr = par.getBoundingClientRect();
 			W.pBot[i] = pr.bottom + sYNow - pad.pb - pad.bb;
-			const ch = pr.height - pad.pt - pad.pb - pad.bt - pad.bb;
-			W.pH[i] = ch > 0 ? ch : 0;
 		}
-		W.lastX.fill(NaN); W.lastY.fill(NaN); W.lastMl.fill(NaN);
+		W.lastX.fill(NaN); W.lastY.fill(NaN);
 		inst.wagons = { n: n, els: els, y: W.y, free: W.free, pos: W.pos, ext: W.ext, dir: W.dir };
 		inst.debug.n = n;
 	}
@@ -601,7 +599,7 @@ function createCore(opts) {
 			const p = W.pos[i] > cap ? cap : W.pos[i];
 			W.pos[i] = p;
 			const d = park - p;
-			const sh = stickyShown(fr, e, W.pBot[i] - sY, W.pH[i], W.mb[i]);
+			const sh = stickyShown(fr, e, W.pBot[i] - sY, W.mb[i]);
 			/* exits diverge only past the edge (pos<0): while riding, every wagon
 			   respects the chain ceiling exactly like a top exit, so lateral and
 			   bottom wagons stay glued to their text until they park. Both
@@ -1319,15 +1317,9 @@ Snowfall.importJSON = function(text) {
 	try {
 		const parsed = JSON.parse(text);
 		if (!parsed || typeof parsed !== 'object') return false;
-		storeData.v = 1;
-		storeData.story = typeof parsed.story === 'string' ? parsed.story : deriveStoryId();
-		storeData.slot = typeof parsed.slot === 'number' ? parsed.slot : 0;
-		storeData.at = typeof parsed.at === 'number' ? parsed.at : Math.floor(Date.now() / 1000);
-		storeData.vars = (parsed.vars && typeof parsed.vars === 'object') ? parsed.vars : {};
-		storeData.keys = (parsed.keys && typeof parsed.keys === 'object') ? parsed.keys : {};
-		storeData.defaults = (parsed.defaults && typeof parsed.defaults === 'object') ? parsed.defaults : {};
-		storeData.fired = (parsed.fired && typeof parsed.fired === 'object') ? parsed.fired : {};
-		isDirty = false;
+		if (typeof parsed.story === 'string' && parsed.story !== storeData.story)
+			console.warn('Snowfall.importJSON: save from story "' + parsed.story + '" loaded into "' + storeData.story + '"');
+		adoptDoc(parsed);
 		const storage = getStorage();
 		if (storage) {
 			try {
@@ -1364,6 +1356,8 @@ Snowfall.reset = function(mask) {
 Object.defineProperty(Snowfall, 'store', {
 	get: function() {
 		return {
+			story: storeData.story,
+			slot: storeData.slot,
 			persistent: persistent,
 			dirty: isDirty,
 			counts: {

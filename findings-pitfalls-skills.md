@@ -546,3 +546,52 @@ implementation, on the reference's own images and rects.
   a re-pass can legitimately leave the first screen's seat holding its earlier
   call. Assert the store (`counts.keys`, one factor per seat), not the total,
   when testing "overwrite, never stack".
+
+## review pass after 0.6 — idempotence, prose, save identity
+
+- **A `view` re-fires; a second `ask` for a pending key is silently ignored;
+  the caller cannot tell the two apart.** Scroll a live game's trigger out
+  below the window and back in: the anchor re-arms (that is the documented
+  events contract), the snippet calls `play()` again, `ask` warns and returns
+  nothing, and the runner — which cannot see that its ask was refused —
+  painted a second game over the first. The first mount's buttons then
+  answered a slot the runner no longer tracked and `refresh()` left the
+  second mount's DOM behind. Any layer that turns `ask` into a session must
+  own idempotence per key itself: `play()` now looks up its own `live` list
+  and returns `true` untouched for a key that is still on screen.
+  (Skill: when an engine primitive deliberately returns nothing, every caller
+  that keeps state around it needs its own "already open" check, and the gate
+  for it is the enter → leave → re-enter scroll, not a single fire.)
+- **A layout newline inside prose is a text edit.** The source serializer
+  indented every element child on its own line, so `<p>Hello <em>world</em>!</p>`
+  came back as `Hello \n\t\t<em>world</em>!\n\t` after one inspector edit —
+  and grew again on each of the following ones, since every `mutatePreview`
+  re-serializes the page. The generator never emits text next to an inline
+  element, so the round-trip QA was blind to it; only hand-written author
+  markup showed it. A node with real text among its children (or `pre`,
+  `textarea`) is now written inline, verbatim, and the browser gate feeds the
+  editor a mixed paragraph and expects it back byte-identical after two
+  round trips.
+  (Skill: a "round-trip stable" claim about a serializer is only as strong
+  as the corpus it was checked with — include the shapes the generator
+  cannot produce, especially mixed content.)
+- **`story`/`slot` in a save file are an address, not content.** `importJSON`
+  and the boot-time load adopted them from the parsed document, so importing
+  a file exported by another page redirected every later autosave to
+  `snowfall:<other>:<n>` — a key this page never reads on the next visit,
+  which looks like "the save vanished". The page's own id (from
+  `data-story`/`<meta name=story>`/the path) now stays put; a mismatching
+  import warns and loads into this page's slot. `Snowfall.store` exposes
+  `story` and `slot` so the harness names its download after the real id.
+- **A dead parameter in the hot loop is a review finding, not a nit.**
+  `stickyShown` took `pH` and the measure kept a whole `Float64Array` of
+  parent content heights for it, plus a `lastMl` cache that was reset to NaN
+  at the end of the same measure that filled it — every read cost per frame,
+  no effect. Removed, with the test callers; `node test/math.js` is the
+  guard for the arity.
+- **Running the browser gate in a sandbox**: `npm i puppeteer-core@23
+  @sparticuz/chromium@131` in `/tmp/browsertest`, `executablePath()` extracts
+  `/tmp/chromium`, and its NSS/NSPR libs come from `bin/al2023.tar.br`
+  (brotli → tar → `lib/`) on `LD_LIBRARY_PATH` (`/tmp/al2023/x/lib` is where
+  `check.js` looks). `require('puppeteer')` is satisfied by a two-line
+  `node_modules/puppeteer/index.js` that re-exports `puppeteer-core`.

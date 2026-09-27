@@ -285,18 +285,35 @@ function serializeText(tag, value) {
 	const text = String(value);
 	return RAW_TEXT[tag] ? text.replace(/<\/(script|style)/gi, '<\\/$1') : escapeHTML(text);
 }
+function openTag(node) {
+	let open = '<' + node.tagName.toLowerCase();
+	for (const a of Array.from(node.attributes)) open += ' ' + a.name + '="' + escapeHTML(a.value) + '"';
+	return open + '>';
+}
+/* Prose is text standing next to elements — "Hello <em>world</em>!" — where a
+   layout newline is a text edit: it would grow the paragraph on every
+   serialize/apply round trip. Such a subtree is written verbatim, inline. */
+const VERBATIM_TAGS = { pre: 1, textarea: 1 };
+function hasProse(node) {
+	for (const child of node.childNodes) if (child.nodeType === 3 && child.nodeValue.trim()) return true;
+	return false;
+}
+function serializeInline(node) {
+	const tag = node.tagName.toLowerCase();
+	let text = openTag(node);
+	if (VOID_TAGS[tag]) return text;
+	for (const child of node.childNodes) {
+		if (child.nodeType === 3) text += serializeText(tag, child.nodeValue);
+		else if (child.nodeType === 1) text += serializeInline(child);
+	}
+	return text + '</' + tag + '>';
+}
 function serializeNode(node, depth) {
 	const tag = node.tagName.toLowerCase(), pad = '\t'.repeat(depth);
-	let open = '<' + tag;
-	for (const a of Array.from(node.attributes)) open += ' ' + a.name + '="' + escapeHTML(a.value) + '"';
-	open += '>';
-	if (VOID_TAGS[tag]) return pad + open;
-	if (!node.children.length) return pad + open + serializeText(tag, node.textContent) + '</' + tag + '>';
-	let text = pad + open;
-	for (const child of Array.from(node.childNodes)) {
-		if (child.nodeType === 3 && child.nodeValue.trim()) text += serializeText(tag, child.nodeValue);
-		else if (child.nodeType === 1) text += '\n' + serializeNode(child, depth + 1);
-	}
+	if (VOID_TAGS[tag]) return pad + openTag(node);
+	if (!node.children.length || VERBATIM_TAGS[tag] || hasProse(node)) return pad + serializeInline(node);
+	let text = pad + openTag(node);
+	for (const child of node.children) text += '\n' + serializeNode(child, depth + 1);
 	return text + '\n' + pad + '</' + tag + '>';
 }
 function serializeTemplate() {
@@ -519,13 +536,17 @@ function addBackground() {
 		selectedBg = added;
 	});
 }
+const isFixedBox = el => /^(fixed|auto)$/.test(el.dataset.mode || '');
+const isRegionWagon = el => el.classList.contains('snow-hd');
 const BG_FIELDS = [
 	{ key:'source', label:'image URL', type:'text' },
 	{ key:'mode', label:'display mode', type:'select', values:['cover','contain','tiled','fixed','auto'] },
-	{ key:'size', label:'size', type:'text', placeholder:'512 or 800x600' },
+	{ key:'size', label:'size', type:'text', placeholder:'512 or 800x600', when: isFixedBox },
 	{ key:'dir', label:'exit direction', type:'select', values:['top','left','right','bottom'] },
 	{ key:'gap', label:'flow gap', type:'text', placeholder:'0, 120px, 4rem, 100vh' }
 ];
+const BG_HINT = 'Background settings affect only the currently parked visual.';
+const HD_HINT = 'Region wagon: the image URL is its key in REGIONS — an unknown URL paints the base alone, with no HD crop — and fixed/auto leave region management.';
 const SCENE_FIELDS = [
 	{ key:'bg', label:'page color', type:'color' },
 	{ key:'fg', label:'text color', type:'color' },
@@ -567,7 +588,7 @@ function chapterStick(el, side) {
 	return el.querySelector('.snow-stick[data-park^="' + side + '"]');
 }
 function fieldValue(el, key) {
-	if (key === 'source') return el.classList.contains('snow-hd')
+	if (key === 'source') return isRegionWagon(el)
 		? (el.querySelector('img') ? el.querySelector('img').getAttribute('src') : '')
 		: (el.dataset.source || '');
 	if (key === 'stickTop' || key === 'stickBottom') {
@@ -592,6 +613,7 @@ function makeEditorField(target, field) {
 	}
 	let value = fieldValue(target, field.key);
 	if (field.type === 'color' && !/^#[0-9a-f]{6}$/i.test(value)) value = field.key === 'bg' ? '#ffffff' : '#000000';
+	if (field.type === 'select' && !value) value = field.values[0];   /* an absent attribute is the first value: the engine default */
 	control.value = value; control.dataset.key = field.key; control._target = target;
 	label.appendChild(control); return label;
 }
@@ -659,10 +681,18 @@ function updateInspector() {
 		? 'chapter ' + heading.textContent.trim() + (named && named.textContent ? ' · ' + named.textContent : '')
 		: 'No scene at reading line';
 	$('backgroundTitle').textContent = bg ? 'background ' + (wagons().indexOf(bg) + 1) : 'No background at reading line';
-	$('sceneFields').replaceChildren(); $('backgroundFields').replaceChildren();
+	$('sceneFields').replaceChildren();
 	const scene = heading ? sceneTarget(heading) : null;
 	if (scene) for (const field of SCENE_FIELDS) $('sceneFields').appendChild(makeEditorField(scene, field));
-	if (bg) for (const field of BG_FIELDS) $('backgroundFields').appendChild(makeEditorField(bg, field));
+	renderBackgroundFields(bg);
+}
+/* size only means something for a fixed/auto box, so the field follows the
+   mode select; a region wagon gets the hint its fields need */
+function renderBackgroundFields(bg) {
+	$('backgroundFields').replaceChildren();
+	$('backgroundHint').textContent = bg && isRegionWagon(bg) ? HD_HINT : BG_HINT;
+	if (!bg) return;
+	for (const field of BG_FIELDS) if (!field.when || field.when(bg)) $('backgroundFields').appendChild(makeEditorField(bg, field));
 }
 function applyInspector(e) {
 	const input = e.target, el = input._target;
@@ -670,7 +700,7 @@ function applyInspector(e) {
 	mutatePreview(() => {
 		const key = input.dataset.key, value = input.value.trim();
 		if (key === 'source') {
-			if (el.classList.contains('snow-hd')) {
+			if (isRegionWagon(el)) {
 				const img = el.querySelector('img');
 				if (img) { if (value) img.setAttribute('src', value); else img.removeAttribute('src'); }
 				return;
@@ -696,6 +726,7 @@ function applyInspector(e) {
 		}
 		if (value) el.setAttribute('data-' + key, value); else el.removeAttribute('data-' + key);
 	});
+	if (input.dataset.key === 'mode' && el === selectedBg) renderBackgroundFields(el);
 }
 /* layout switches are pure body classes; the drawer ones never move #app, the
    gutter one does, so only that one needs an engine refresh */
@@ -1366,7 +1397,8 @@ async function qEvents() {
 		console.error = origErr;
 	}
 	if (bad.length) return row('events', 0, bad.slice(0, 6).join('; '));
-	return row('events', 1, expCh.length + ' chapter(s): slow 1×, reverse 0, re-arm ok, flick skip+end, thresholds ±2px (' + thChecked + ' checked), wagons0+alias ok, broken isolated');
+	return row('events', 1, expCh.length + ' chapter(s): slow 1×, reverse 0, re-arm ok, flick skip+end, thresholds ±2px (' + thChecked + ' checked'
+		+ (thSkipped ? ', ' + thSkipped + ' unreachable' : '') + '), wagons0+alias ok, broken isolated');
 }
 async function qChoices() {
 	if (!hasEng()) return row('choices', 1, 'no engine — choices inert');
@@ -1770,7 +1802,7 @@ async function qMorph() {
 	if (!n) return row('morph', -1, 'no anchors (style=off?)');
 	const vh = window.innerHeight, mx = maxY();
 	const root = document.documentElement;
-	const Ay = Array.from(M0.ay), Rg = Array.from(M0.range);
+	const Ay = Array.from(M0.ay);
 	const Sbg = Array.from(M0.sbg), Sfg = Array.from(M0.sfg);
 	const bad = [];
 	const bgNow = () => cssRGBA(getComputedStyle(root).backgroundColor);

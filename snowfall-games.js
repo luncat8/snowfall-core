@@ -90,6 +90,11 @@ function dropAll() {
 	}
 }
 
+function liveFor(key) {
+	for (let i = 0; i < live.length; i++) if (live[i].key === key) return live[i];
+	return null;
+}
+
 function subscribe(S) {
 	if (subscribed || !S.default || typeof S.use !== 'function') return;
 	subscribed = true;
@@ -127,7 +132,12 @@ function add(spec) {
    exactly once per resolution, in every mode, which is the page's only hook
    into the outcome — the same contract as Snowfall.ask's continuation.
    `fallback` is what a skipped or abandoned slot pays: the page's if given,
-   else the game's own, because walking away is part of a game's rules. */
+   else the game's own, because walking away is part of a game's rules.
+   A `view` anchor re-fires whenever its trigger scrolls back into the window,
+   and the engine ignores a second ask for a pending key without saying so —
+   so a key whose session is still live is the runner's to recognise: it keeps
+   that session (the mounted UI, its cleanup, the first done) and reports it
+   still live instead of painting a second game over the first. */
 function play(id, o) {
 	const spec = games[id];
 	o = o || {};
@@ -147,6 +157,7 @@ function play(id, o) {
 	}
 	const S = engine();
 	if (!S || !o.key) return false;            /* no engine, no key: stay idle */
+	if (liveFor(o.key)) return true;           /* the re-fired view of a game still on screen */
 	subscribe(S);
 	if (el.classList) el.classList.add('snow-game');
 

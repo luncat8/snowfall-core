@@ -156,7 +156,7 @@ eq(Snowfall.store.counts.fired, 0, 'initial fired count 0');
 	Snowfall.set('v1', 10);
 	// simulate a key and a fired entry via import
 	const doc = {
-		v: 1, story: 'test-story', slot: 0, at: 1000,
+		v: 1, at: 1000,
 		vars: { 'v1': 10 },
 		keys: { 'k1': 20 },
 		fired: { 's1': 1 }
@@ -204,6 +204,24 @@ eq(Snowfall.store.counts.fired, 0, 'initial fired count 0');
 	ok(keys.length === 1, 'storage has 1 item');
 	ok(keys[0].indexOf('snowfall:') === 0, 'key starts with snowfall: prefix');
 	ok(!storageMap['fileKey'], 'key is never bare');
+
+	// a save exported under another story/slot loads into THIS page's slot:
+	// the next autosave must land on the key the next visit reads
+	{
+		const own = keys[0];
+		const warnBefore = console.warn;
+		let crossWarned = false;
+		console.warn = msg => { if (typeof msg === 'string' && msg.indexOf('other-story') >= 0) crossWarned = true; };
+		ok(SLocal.importJSON(JSON.stringify({ v: 1, story: 'other-story', slot: 3, at: 5, vars: { foreign: 1 }, keys: {}, defaults: {}, fired: {} })),
+			'a foreign-story save imports');
+		console.warn = warnBefore;
+		ok(crossWarned, 'and says which story it came from');
+		eq(SLocal.get('foreign'), 1, 'its content is in the store');
+		eq(SLocal.store.story + ':' + SLocal.store.slot, own.slice('snowfall:'.length), 'store.story/slot stay the page\'s own');
+		SLocal.save();
+		eq(Object.keys(storageMap).join(), own, 'and the save went to the page\'s own key, not snowfall:other-story:3');
+		eq(JSON.parse(storageMap[own]).story, SLocal.store.story, 'the persisted document carries the page\'s story id');
+	}
 
 	// Injected localStorage throw test
 	fakeStorage.setItem = () => { throw new Error('QuotaExceeded'); };

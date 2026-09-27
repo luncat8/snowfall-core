@@ -231,7 +231,29 @@ const G = () => global.SnowfallGames;
 	eq(G().live, 1, 'one session waits again');
 }
 
-/* 2.7 misuse is diagnosed, never thrown */
+/* 2.7 a `view` that re-fires while its game is still on screen keeps the
+   session: no second mount, no lost cleanup, the first click still lands */
+{
+	const p = open();
+	const y2 = p.S.events.y[1];
+	p.S.step(y2 - VH + 100);                        /* seat 2 enters from below */
+	eq(p.win.seats.done[1], '2 default', 'seat 1 was skipped on the way');
+	eq(p.win.seats.runs, 2, 'seat 2 mounted');
+	p.S.step(y2 - VH - 200);                        /* back above it, past hysteresis */
+	eq(G().live, 1, 'the session stays live while its anchor is out of the window');
+	quiet(() => p.S.step(y2 - VH + 100));           /* and in again: view re-fires */
+	eq(p.win.seats.calls, 3, 'the re-entry fired the seat snippet again');
+	eq(p.win.seats.runs, 2, 'but the runner mounted nothing on top of the live game');
+	eq(p.win.seats.live[2], true, 'and still reports the game live');
+	eq(warned.length, 0, 'without a pending-key warning from the engine: ' + warned.join('|'));
+	eq(p.byId['m2'].querySelectorAll('button').length, 2, 'the first mount\'s two buttons are the only UI');
+	p.byId['m2'].querySelector('button[data-v="2"]').click();
+	eq(p.win.seats.done[2], '2 live', 'the first mount\'s click resolves the seat');
+	eq(p.win.seats.cleans, 2, 'each mount cleaned up exactly once');
+	eq(G().live, 0, 'nothing is left waiting');
+}
+
+/* 2.8 misuse is diagnosed, never thrown */
 {
 	const p = open();
 	eq(quiet(() => G().play('nope', { el: p.byId['m1'], key: 'mult.x' })), false,
@@ -249,7 +271,7 @@ const G = () => global.SnowfallGames;
 	eq(G().get('absent'), undefined, 'and undefined for one that is not there');
 }
 
-/* 2.8 a game that grows its mount is told, once, because every anchor below
+/* 2.9 a game that grows its mount is told, once, because every anchor below
    the mount was measured once at load */
 {
 	const p = open();
@@ -258,7 +280,7 @@ const G = () => global.SnowfallGames;
 	ok(warned.join().indexOf('flow height') >= 0, 'growing the mount warns: ' + warned.join('|'));
 }
 
-/* 2.9 the runtime alone, with no engine on the page, is inert */
+/* 2.10 the runtime alone, with no engine on the page, is inert */
 {
 	const p = FD.buildPage('<!doctype html><html data-story="games-noengine"><head></head><body>'
 		+ '<div id="app"><div class="game" id="m1"><p class="idle">idle</p></div></div>'
@@ -271,7 +293,7 @@ const G = () => global.SnowfallGames;
 	eq(p.byId['m1'].querySelectorAll('button').length, 0, 'it paints no UI');
 }
 
-/* 2.10 stylesheets: inline and external, injected once per game */
+/* 2.11 stylesheets: inline and external, injected once per game */
 {
 	const p = FD.buildPage('<!doctype html><html data-story="games-css"><head></head><body>'
 		+ '<div id="app"><div class="game" id="m1"><p class="idle">idle</p></div></div>'
