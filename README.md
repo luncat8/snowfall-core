@@ -3,11 +3,13 @@
 early development stage
 
 * scroll as book
-* paged as typical VN
+* paged as typical VN — `0.7-plan-paged-mode.md` is the plan: a tap reveals
+  the next portion up to the author's own `p` / `section` / `br`, everything
+  else works as in book mode
 * without js fallback to readable html
 * compatible with epub syntax for easy convert
 * minigames as one `.js` file plus an optional `.css` — `games/gamble.js` is
-  the example, `0.6-plan-minigames.md` the contract, `demo-minigame.html` the
+  the example, `archive/0.4.3-plan-minigames.md` the contract, `demo-minigame.html` the
   playable page
 
 No strict syntax, don't force author to write in specific notation - just place backgrounds and scripts in text.
