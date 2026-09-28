@@ -1,4 +1,4 @@
-/* snowfall-games.js — 0.6 minigame runtime: the registry plus the session
+/* snowfall-games.js — 0.4.3 minigame runtime: the registry plus the session
    runner that turns one Snowfall.ask slot into a playable game.
 
    A game is a plain descriptor table, not a class — {id, css, run, result}.

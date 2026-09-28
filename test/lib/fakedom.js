@@ -44,8 +44,9 @@ function parseHTML(src) {
 			last = re.lastIndex;
 			continue;
 		}
-		if (closing) { text(m.index); if (stack.length > 1) stack.pop(); continue; }
+		if (closing) { text(m.index); last = re.lastIndex; if (stack.length > 1) stack.pop(); continue; }
 		text(m.index);
+		last = re.lastIndex;            /* the slice above is prose, not markup */
 		const node = { tag, attrs: parseAttrs(raw), kids: [], parent: stack[stack.length - 1], text: '' };
 		node.parent.kids.push(node);
 		if (!VOID[tag]) stack.push(node);
@@ -95,10 +96,12 @@ function queryAll(rootEl, selector) {
 
 /* ---------------- fake elements ---------------- */
 let scrollY = 0;
+let docRef = null;                 /* set by buildPage: the document new nodes belong to */
 function fakeEl(tag) {
 	const el = {
 		tagName: (tag || 'div').toUpperCase(), isText: tag === '#text', id: '', _attrs: {}, _text: '', _html: '', _cls: new Set(),
 		kids: [], parentNode: null, dataset: {}, _listeners: {}, layoutY: 0, _h: 0, onclick: null,
+		nodeType: tag === '#text' ? 3 : 1, ownerDocument: docRef,
 		style: { setProperty: () => {}, removeProperty: () => {}, transform: '' },
 		classList: {
 			add: c => el._cls.add(c), remove: c => el._cls.delete(c),
@@ -133,7 +136,20 @@ function fakeEl(tag) {
 		own.forEach(f => f({ target: el }));
 		if (!own.length && el.parentNode && typeof el.parentNode.onclick === 'function') el.parentNode.onclick({ target: el });
 	};
-	el.getBoundingClientRect = () => ({ top: el.layoutY - scrollY, bottom: el.layoutY - scrollY, left: 0, right: 0, width: 0, height: 0 });
+	/* the element's real extent: a document-order walk and the story root's
+	   bottom edge both need a box, not a point */
+	el.getBoundingClientRect = () => ({ top: el.layoutY - scrollY, bottom: el.layoutY + el._h - scrollY, left: 0, right: 0, width: 0, height: el._h });
+	/* the traversal a document-order walk needs: no TreeWalker, no closest() */
+	Object.defineProperty(el, 'nodeValue', { get: () => el._text, set: v => { el._text = String(v); } });
+	Object.defineProperty(el, 'firstChild', { get: () => el.kids[0] || null });
+	Object.defineProperty(el, 'nextSibling', {
+		get: () => {
+			const p = el.parentNode;
+			if (!p || !p.kids) return null;
+			const i = p.kids.indexOf(el);
+			return i < 0 ? null : (p.kids[i + 1] || null);
+		}
+	});
 	Object.defineProperty(el, 'parentElement', { get: () => el.parentNode });
 	Object.defineProperty(el, 'offsetHeight', { get: () => el._h });
 	Object.defineProperty(el, 'offsetTop', { get: () => el.layoutY });
@@ -229,7 +245,9 @@ function buildPage(source, vh, opts) {
 		set scrollY(v) { scrollY = v; },
 		addEventListener: (t, fn) => { (win._listeners[t] = win._listeners[t] || []).push(fn); },
 		removeEventListener: () => {},
-		scrollTo: (x, yy) => { scrollY = yy; },
+		/* both scrollTo forms: scrollTo(x, y) and scrollTo({top, behavior}) —
+		   a controller that only ever uses the options object still lands here */
+		scrollTo: (a, b) => { scrollY = a && typeof a === 'object' ? (a.top || 0) : (b || 0); },
 		setScroll(v) { scrollY = v; (win._listeners['scroll'] || []).forEach(f => f({})); }
 	};
 	const docHandlers = {};
@@ -242,6 +260,17 @@ function buildPage(source, vh, opts) {
 		addEventListener: (t, fn) => { (docHandlers[t] = docHandlers[t] || []).push(fn); }
 	};
 	win.document = doc;
+	docRef = doc;
+	/* the engine reads styles for wagon parent padding and the paged controller
+	   for the story root's box: a page that needs real numbers installs its own */
+	const flat = {
+		paddingTop: '0px', paddingBottom: '0px', paddingLeft: '0px', paddingRight: '0px',
+		borderTopWidth: '0px', borderBottomWidth: '0px', borderLeftWidth: '0px', borderRightWidth: '0px',
+		marginTop: '0px', marginBottom: '0px', marginLeft: '0px', marginRight: '0px',
+		boxSizing: 'content-box', fontSize: '16px'
+	};
+	win.getComputedStyle = () => flat;
+	global.getComputedStyle = win.getComputedStyle;
 	Object.defineProperty(htmlEl, 'scrollHeight', { get: () => docHeight });
 	global.window = win; global.document = doc;
 	global.URL = { createObjectURL: () => 'blob:x' };

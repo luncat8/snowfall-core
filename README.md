@@ -3,9 +3,11 @@
 early development stage
 
 * scroll as book
-* paged as typical VN — `0.7-plan-paged-mode.md` is the plan: a tap reveals
-  the next portion up to the author's own `p` / `section` / `br`, everything
-  else works as in book mode
+* paged as typical VN — `snowfall-paged.js` is the controller, one page is the
+  author's own portion up to the next `p` / `section` / `br` and a tap turns
+  to it, so the text you have read leaves the page; everything else works as
+  in book mode; `0.6.0-plan-paged-mode.md` is the plan, `demo-paged.html` the
+  playable page with a book/paged toggle
 * without js fallback to readable html
 * compatible with epub syntax for easy convert
 * minigames as one `.js` file plus an optional `.css` — `games/gamble.js` is

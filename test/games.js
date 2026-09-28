@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-/* test/games.js — 0.6 minigame gate: Snowfall.product() over recorded
+/* test/games.js — 0.4.3 minigame gate: Snowfall.product() over recorded
 	outcomes, the SnowfallGames registry and session runner, and the shipped
 	example game games/gamble.js.
 

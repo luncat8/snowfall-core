@@ -1,6 +1,7 @@
 /* snowfall.js — visual novella scroll engine: core + wagons (0.2) + style/theme morph (0.3) + script events (0.4)
 	+ choices, save slots and recorded ask outcomes (0.4.1) + cached viewport & parent-bottom clamp (0.5.5)
-	+ product() over recorded outcomes, the multiplicative twin of sum() (0.6).
+	+ product() over recorded outcomes, the multiplicative twin of sum() (0.4.3)
+	+ the story root as Snowfall.scope, for the paged controller (0.6.0).
 	Sticky park (compositor) + JS push chain (sync scroll handler).
 	Classic script, no modules; require()-able under node with zero DOM at load. */
 (function(global) {
@@ -433,6 +434,9 @@ function createCore(opts) {
 		return vp;
 	}
 	Object.defineProperty(inst, 'viewport', { get: function() { return vp; } });
+	/* the element the engine collects from — the story root an optional
+	   subscriber owns, not documentElement: the paged controller clamps it */
+	Object.defineProperty(inst, 'scope', { get: function() { return scope; } });
 
 	/* morph subscriber state (preallocated at measure, mutated in place) */
 	const M = {
@@ -1146,7 +1150,7 @@ function createCore(opts) {
 const Snowfall = {
 	create: createCore,
 	default: null,
-	version: '0.6.0',
+	version: '0.7.0',
 	chain: chain,
 	stickyShown: stickyShown,
 	dirCode: dirCode,
@@ -1167,6 +1171,7 @@ Snowfall.anchorY = function(el) { return Snowfall.default ? Snowfall.default.anc
 Snowfall.setEnabled = function(on) { if (Snowfall.default) Snowfall.default.setEnabled(on); };
 Object.defineProperty(Snowfall, 'wagons', { get: function() { return Snowfall.default ? Snowfall.default.wagons : undefined; } });
 Object.defineProperty(Snowfall, 'viewport', { get: function() { return Snowfall.default ? Snowfall.default.viewport : undefined; } });
+Object.defineProperty(Snowfall, 'scope', { get: function() { return Snowfall.default ? Snowfall.default.scope : undefined; } });
 Object.defineProperty(Snowfall, 'morph', { get: function() { return Snowfall.default ? Snowfall.default.morph : undefined; } });
 Object.defineProperty(Snowfall, 'events', { get: function() { return Snowfall.default ? Snowfall.default.events : undefined; } });
 Object.defineProperty(Snowfall, 'debug', { get: function() { return Snowfall.default ? Snowfall.default.debug : undefined; } });

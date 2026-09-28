@@ -488,7 +488,7 @@ implementation, on the reference's own images and rects.
   Story hit tests should ignore editor chrome but still catch story blockers.
   FPS is frame count divided by measured elapsed seconds, not timer ticks.
 
-## minigames (0.6)
+## minigames (0.4.3)
 
 - **An extension point with one implementation per plugin wants a table, not a
   base class.** `Snowfall.use({measure, frame, off})` set the precedent, and
@@ -547,7 +547,7 @@ implementation, on the reference's own images and rects.
   call. Assert the store (`counts.keys`, one factor per seat), not the total,
   when testing "overwrite, never stack".
 
-## review pass after 0.6 — idempotence, prose, save identity
+## review pass after 0.4.3 — idempotence, prose, save identity
 
 - **A `view` re-fires; a second `ask` for a pending key is silently ignored;
   the caller cannot tell the two apart.** Scroll a live game's trigger out
@@ -595,3 +595,141 @@ implementation, on the reference's own images and rects.
   (brotli → tar → `lib/`) on `LD_LIBRARY_PATH` (`/tmp/al2023/x/lib` is where
   `check.js` looks). `require('puppeteer')` is satisfied by a two-line
   `node_modules/puppeteer/index.js` that re-exports `puppeteer-core`.
+
+## paged mode (0.6.0)
+
+- **Measure the box the controller is about to change, with the controller
+  off.** The walk ends at the story root's bottom edge, and the root's
+  `getBoundingClientRect()` is the clamp's own output. Reading it while
+  `height` was applied fed the boundary list into itself: the story shrank a
+  little on every `refresh()` and never stopped. `measure()` unapplies first,
+  reads, walks, reapplies. The general form — *any measurement of a
+  container whose height you are deriving from its content's positions must
+  happen in the un-clamped state.*
+- **A "pending boundary" that is never cleared after the commit makes the
+  stop walk non-deterministic.** The first version kept `pending` after
+  `commit()`, so the next element with content re-committed the *previous*
+  stop's Y with a new element label. Symptoms: a boundary count that wobbled
+  11 → 10 → 9 between runs, and mislabelled boundaries (`EM`, `H2`, `OUTPUT`
+  showing up as stops). Two rules together fix it: a non-stop returns before
+  touching `pending`, and `pending = null` immediately after every commit.
+  (Skill: a one-element lookahead is a state machine; write down when the
+  state is cleared, not only when it is set.)
+- **`stopY()` returning null must not clear the pending slot.** A `return`
+  from the middle of a helper that was also responsible for resetting the
+  walk state silently reset it on the *no text* path, which is the path every
+  `<br>`-only paragraph takes. Keep the walk's mutable state in the walk.
+- **Growing a `Float64Array` of results by reallocating zeroes what was
+  already written.** `P.y = new Float64Array((n + 1) * 2)` is correct on a
+  steady-state page and wrong on the first walk that outgrows its initial
+  capacity — invisible in a browser, where a second walk rewrites every
+  slot, and a total loss of the page list in node, where the fake page is
+  measured once. `grow(need)` now copies. Same trap in any paged buffer.
+- **A stop's portion is only a page if it has content.** Empty `<p>`, the
+  first of two `<br>`, a trailing `<br>` before `</p>`, a `<section>` that
+  opens straight into its first `<p>`, and a blank opening page (a stop at
+  the very top) are all one page, not five. The rule is "commit a pending
+  stop only when text is found, then merge anything within a pixel". A wagon
+  (`.snow-bg`) counts as content — a picture-only portion is a real page —
+  which is why a section that opens with a picture keeps its boundary while
+  an empty one merges away.
+- **A `<br>` rect is not a line.** Its bottom is the content-area bottom, so
+  a boundary there shows the next line's half-leading. `Range` from the last
+  glyph before to the first glyph after, and take the midpoint: the browser
+  gate asserts the boundary is *strictly* inside the gap on both sides, which
+  is what makes the rule font-independent.
+- **Mark subtrees the engine owns.** A `.seat` div is a paragraph before
+  `SnowfallGames.play()` mounts and a game box after; adding `data-nopage`
+  keeps it out of the stop list in both states, so the page count cannot
+  change under a refresh. (Without it the page count wobbled by one and it
+  looked exactly like a measurement-feedback bug.)
+- **The page is kept by element, not index, and every path that moves the
+  index must set it.** `next()` and `prev()` updated `k` but not `kEl`, so a
+  source edit (the QA page's daily case) put the reader one page back. A
+  single `P.k = i` is a bug factory; `P.kEl = P.el[i]` next to it is the
+  contract.
+- **`prev()` cannot shrink before the scroll.** `scrollTo({behavior:'smooth'})`
+  plus a shorter document makes the browser clamp the scroll on the spot and
+  the page jumps. The height lands in a frame callback keyed on arrival —
+  one compare per frame, no listener, no rAF of its own.
+- **Full-window wagons back to back leave a one-pixel parking band.** With
+  `chain()`, a middle wagon is at `top: 0` only where `free[i] <= 0` *and*
+  `pos[i+1] − ext[i] >= 0`; with three 800px wagons that is a band about a
+  pixel wide, and Chromium's integer scroll lands at its edge (`pos −0.28`).
+  Gate it by scanning the allowed scroll range for `min|pos|`, not by
+  asserting `pos === 0` on a layout that never produces it.
+- **The fake DOM's parser left markup in the text stream.** `last` advanced
+  only in the `<script>`/`<style>` branch, so every inter-tag slice carried
+  the previous tag's source: a `<p></p>` was not empty (its "text" was
+  `"<p>"`), so an empty paragraph counted as content and every merge test
+  was wrong by one page. Existing gates never noticed because a stray text
+  node has zero height. (Skill: a fidelity gap in a shared fake is a finding
+  for *every* gate using it, not just the one that tripped over it.)
+- **A fake page is laid out once.** To test "an edit above the reader keeps
+  the page", the gate has to reflow by hand: shift every descendant at or
+  below the insertion *except the root itself* (the story root's box never
+  moves) and grow its `_h`. Moving the root too makes the controller
+  correctly report a blank opening page, which is a fine behaviour and a
+  useless fixture.
+- **`page.evaluate` callbacks are their own realm.** A `const TOL = 1.5` from
+  the gate module is a `ReferenceError` inside the page; pass tolerances as
+  arguments. Same for injected helper strings: a `function` declaration in a
+  string that is evaluated as an expression is not in scope for the object
+  literal that references it.
+
+- **To put a page's own start at the window's top, the document needs room
+  the page does not use — and a bottom margin is the only thing that gives
+  it without painting or touching the DOM.** A portion shorter than the
+  window cannot scroll to its own start: the document ends at the boundary.
+  Padding on the root is inside `overflow: clip`, so it would paint the
+  unrevealed text it is meant to hide; a spacer element is a DOM mutation the
+  controller does not do; a `translateY` moves the sticky scrollport and
+  breaks wagon parking; a negative top margin moves every anchor and forces
+  a `refresh()` per turn. Measured in Chromium: `margin-bottom` on the last
+  in-flow child *does* extend the scrollable area (doc height grew by
+  exactly the margin), the margin area paints the page background with no
+  story content in it, and `elementFromPoint` there returns `HTML`, not a
+  paragraph. Skill: *when a clip has to hide one side of a box, the other
+  side's space has to come from outside the clip.*
+- **Bottom-aligning a page is not "revealing a page".** The first version of
+  this mode clamped the root at the next stop and scrolled to the new
+  maximum, which put the boundary on the window's bottom edge — and therefore
+  left a windowful of already-read text on every page after the first. The
+  symptom looked like a feature ("text appears a bit at a time") and was the
+  opposite of the mode. When a reading mode has a position for the *new*
+  material, ask which edge the old material ends up behind.
+- **A step cap below one viewport makes every page turn two taps.** With
+  top-anchored pages, consecutive page starts are a full window apart, so
+  `stepMax = 0.9` meant: tap, move 0.9 of a window, tap again, arrive. The
+  cap exists to stop a jump from skipping an anchor, and a page turn is
+  provably never longer than a window (the reader is at the old page's spot;
+  the new page starts at most a window below), so `stepMax = 1` keeps the
+  guarantee *and* the one-tap turn. Skill: *check whether the cap is ever
+  the binding constraint before tuning it down; a cap that binds on the
+  common path is a bug wearing a safety hat.*
+- **A full-window art wagon is sliced by a page shorter than the window.**
+  The engine parks a `.snow-bg` at the window's top, and the page's clip ends
+  at its own boundary, so a short page cuts the cover in half with body
+  background below. Nothing in the controller can fix it without showing more
+  text than the author's stop — it is a page-rhythm rule: *a chapter with
+  full-window art wants full-window pages.* The demo teaches it by writing
+  its art chapters as full-window pages (cover, chapter card, full-window
+  paragraphs) and keeping a text-only chapter with genuinely short pages,
+  and the browser gate asserts that no wagon box straddles a page edge.
+- **Assert the model, not the boxes of the elements that happen to make it
+  up.** "Which portion is on the page" cannot be checked with
+  `getBoundingClientRect()` of the stop elements: a container legitimately
+  spans the page (its top is above the window when the page starts mid
+  paragraph), and the last boundary's element is the story root itself, 8000
+  pixels up. The assertions that mean something are geometric —
+  `scrollY − start(k) ≥ 0`, `|scrollY − spot(k)| ≤ 1.5`, `scrollHeight ==
+  round(y[k] + band(k))` — plus one paint-level check,
+  `elementFromPoint` outside the story root under a short page, which
+  distinguishes blank paper from text no amount of arithmetic can.
+- **A minigame seats itself the first time it is looked at, and the panel it
+  paints changes the height of the story below it.** A self-test that compared
+  engine anchors "before" and "after" a walk failed by 81px — exactly the
+  seat's growth — and the controller was innocent. Two `refresh()` calls at the
+  same scroll settle it (the first rebuilds, the second measures the rebuilt
+  layout); the same trick is the right answer anywhere a check reads a
+  measurement that content it does not control can still be changing.

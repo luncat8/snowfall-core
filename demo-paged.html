@@ -1,0 +1,419 @@
+<!doctype html>
+<html lang="en" data-story="demo-paged" data-paged>
+<head><meta charset="utf-8"><title>Snowfall · demo paged</title>
+<style>
+/* the story root is #app: it ends the document, carries no bottom margin of
+   its own, and keeps its box — paged mode changes its height and clips the
+   block axis, and nothing inside it moves */
+body{margin:0;background:#0d1117;color:#e9f1ff;font:17px/1.65 Georgia,'Iowan Old Style',serif}
+#bar{position:fixed;top:0;left:0;right:0;z-index:70;display:flex;gap:.45rem;align-items:center;flex-wrap:wrap;padding:.5rem .8rem;background:rgba(10,14,22,.9);border-bottom:1px solid #2b3a55}
+#bar b{color:#ffd166;font-size:1.1em;margin-right:.2rem}
+#bar button{background:#1b2740;color:#dce8ff;border:1px solid #3a4f75;border-radius:.4rem;padding:.35rem .7rem;cursor:pointer;font:14px/1.2 system-ui,sans-serif}
+#bar button:hover{background:#26365a}
+#bar button[aria-pressed=true]{background:#2f6f4f;border-color:#4fae7a;color:#fff}
+#bar .hint{font:13px/1.3 system-ui,sans-serif;color:#9fb4d4;margin-left:auto;text-align:right}
+#qa{position:fixed;left:0;right:0;bottom:0;z-index:71;max-height:52vh;overflow-y:auto;margin:0;padding:.7rem 1rem;background:rgba(6,10,18,.97);border-top:1px solid #2b3a55;font:12.5px/1.45 ui-monospace,monospace;white-space:pre-wrap;display:none}
+#qa.on{display:block}
+#qa .pass{color:#7ee2a8}#qa .fail{color:#ff8fa3}#qa .head{color:#ffd166}
+#app{position:relative;max-width:38rem;margin:0 auto;padding:5rem 1.2rem 2rem}
+section{padding:0}
+header.title{padding:2rem 0 1rem;border-bottom:1px solid #ffffff1f}
+h1{margin:0;font-size:2.1rem;letter-spacing:-.02em}
+h2{margin:0}
+.sub{margin:.5rem 0 0;color:#9fb4d4;font-size:.92rem}
+h2{font-size:1.2rem;color:#ffd166}
+p{margin:0;padding:3.4rem 0 .9rem;text-shadow:0 1px 3px #000c,0 0 12px #0009}
+em{color:#8dd7ff;font-style:italic}
+small{color:#a8bcd8;font-size:.85em}
+code{color:#8dd7ff;font-size:.85em}
+.seat{min-height:11rem;padding:.8rem 1rem;background:#141c2b;border:1px solid #2b3a55;border-radius:.5rem}
+.seat .idle{opacity:.6;margin:0}
+#log{display:block;margin-top:1.2rem;padding:.6rem .8rem;background:#0a0f18;border:1px solid #22304a;border-radius:.4rem;font:12px/1.5 ui-monospace,monospace;color:#8fa8c8;white-space:pre-wrap;min-height:1.6rem}
+/* Paged mode gives every page exactly the author's own portion between two
+   stops, so the page rhythm is the author's — and it is part of the demo. The
+   three art chapters are written as full-window pages: a chapter card, which
+   is also the whole of that chapter's art wagon, so a cover is never sliced
+   at a page edge, then paragraphs written to fill their window, and one
+   paragraph taller than the window, so a page too big to show at once is
+   walked down a screen at a time. The last chapter has no wagon, and its
+   pages are as small as the prose in them: that is the other half of the
+   contract, padded with blank paper instead of the text that came before.
+   The padding is the demo's own: a page's first line lands at the window's
+   top, and the toolbar above it is fixed. */
+h2.card{min-height:100vh;display:flex;align-items:center}
+h2.notes{padding:1.4rem 0 .6rem;color:#8fa8c8;font-size:1rem}
+.fill{min-height:calc(100vh - 4.3rem)}
+.tall{min-height:140vh}
+</style></head>
+<body>
+<div id="bar">
+	<b>book ⇄ paged</b>
+	<button id="mode" type="button" aria-pressed="true">paged on</button>
+	<button id="back" type="button" title="Backspace">◂ back</button>
+	<button id="fwd" type="button" title="Space">advance ▸</button>
+	<button id="restart" type="button">restart</button>
+	<button id="test" type="button">self-test</button>
+	<span class="hint" id="stat">…</span>
+</div>
+<output id="qa"></output>
+<div id="app">
+	<header class="title">
+		<h1>the last platform</h1>
+		<div class="sub">Read it as a book — the whole scroll at once — or as a
+			visual novel, where every tap or space turns to the next portion of
+			prose and the text you have read leaves the page. Same engine, same
+			wagons, same events: only the story root's height is clamped.
+			<small>Press <b>v</b> to switch, <b>Backspace</b> to go back, and run
+			the self-test for the proof.</small></div>
+	</header>
+
+	<section id="notes">
+		<h2 class="notes">before the train · pages without art</h2>
+		Raw text, with no paragraph tag around it, sitting directly inside the
+		section — the engine's free notation, and a stop of its own.
+		<p>This chapter has no art wagon, so its pages can be as small as the
+			prose in them.<br>The line break is a stop too: the tap that lands here
+			stops between the two lines, so the second is still a line away.<br>So
+			a tap does not only end a paragraph — it can end a sentence, or a
+			line, wherever the author put a stop.<br>And what is below a page this
+			short is not the text you have read: it is blank paper, as long as the
+			window needs to be able to reach the page.</p>
+		<p>A page is the author's own portion between two stops, and nothing else:
+			what came before is above the reader, not on the page, and what comes
+			next is below the paper's edge, not in the document at all.</p>
+		<div class="seat" id="seat-1" data-nopage><p class="idle">…the porter turns a coin over in his hand…</p></div>
+		<script type="txt" event="view,skip">seat1()</script>
+		<div class="seat" id="seat-2" data-nopage><p class="idle">…the ticket office is closed…</p></div>
+		<script type="txt" event="view,skip">askDoor()</script>
+		<output id="log">events: —</output>
+	</section>
+
+	<section id="ch1">
+		<div class="snow-bg" data-mode="cover" style="background-image:linear-gradient(155deg,#16233a 0%,#27476b 55%,#6b4a2e 100%)"></div>
+		<h2 class="card">1 · the announcement</h2>
+		<p class="fill">The lamp above the platform has been dead since the winter
+			began, and the porter keeps it lit anyway — one bulb, one chair, and a
+			rule nobody wrote down.</p>
+		<p class="fill">She reads the board the way other people read weather.
+			Nothing is coming. That is not the same as nothing being written down,
+			and the difference is the whole of your evening. <em>You have eleven
+			minutes before the barrier lifts.</em></p>
+		<script type="txt" event="view,skip">say('ch1', detail)</script>
+	</section>
+
+	<section id="ch2">
+		<div class="snow-bg" data-mode="cover" style="background-image:linear-gradient(200deg,#1b1330 0%,#3b2a5e 50%,#8a4a5a 100%)"></div>
+		<h2 class="card">2 · the crossing</h2>
+		<p class="fill">Two doors. The left one is warm and smells of wet wool; the
+			right opens on a stair that goes down for a long time and smells of
+			nothing at all. Pick one, or walk past: the engine records the answer
+			either way — a skipped answer replays your own, and one you never reach
+			pays the declared default.</p>
+		<p class="fill">The door you chose is <b id="door">unopened</b>, and the
+			porter has stopped pretending to look at the board.</p>
+		<script type="txt" event="view,parked,skip">say('ch2', detail)</script>
+	</section>
+
+	<section id="ch3">
+		<div class="snow-bg" data-mode="cover" style="background-image:linear-gradient(170deg,#0f2a26 0%,#1f5148 55%,#c2a15c 100%)"></div>
+		<h2 class="card">3 · the tally</h2>
+		<p class="tall">The train that does not come is still a train. It has a
+			number, a length, and a habit of arriving at four in the morning for
+			people who no longer live here.</p>
+		<p class="fill">The purse is <b id="purse">…</b>. It is a pure function of
+			the save: the engine records every outcome — live, saved or default —
+			and this page only draws it.</p>
+		<script type="txt" event="view,skip">tally()</script>
+	</section>
+
+</div>
+<script src="snowfall.js?v=cece2a74bc"></script>
+<script src="snowfall-paged.js?v=cece2a74bc"></script>
+<script src="snowfall-games.js?v=cece2a74bc"></script>
+<script src="games/gamble.js?v=cece2a74bc"></script>
+<script>
+/* The page is the switch: one button, one key, and a self-test that shows the
+   clamp never moves anything the engine knows about. Nothing here measures
+   layout to drive the story — the controller does that in its own measure(). */
+(function() {
+'use strict';
+var LOG = [], ASK = {
+	1: 'The porter turns the coin once and holds it out to you.',
+	2: 'The croupier lays two cards face down on frozen lake.'
+};
+var $ = function(id) { return document.getElementById(id); };
+var P = function() { return window.SnowfallPaged; };
+var docH = function() { return document.documentElement.scrollHeight; };
+/* the page model, restated here so the checks can read it: page k is its own
+   portion, the reader sits at the bottom of it, and a portion too short to
+   fill the window gets the rest of the window as blank paper underneath */
+var start = function(k) { return k > 0 ? P().y[k - 1] : 0; };
+var spot = function(k) { return Math.max(start(k), P().y[k] - window.innerHeight); };
+var band = function(k) { return Math.max(0, window.innerHeight - (P().y[k] - start(k))); };
+var portion = function(k) { return P().y[k] - start(k); };
+function log(s) { LOG.push(s); $('log').textContent = 'events: ' + (LOG.join(' · ') || '—'); }
+
+/* ---- story hooks, called from script[type=txt] bodies ---- */
+window.say = function(id, detail) { log(id + ':' + detail.event); };
+window.tally = function() {
+	if (!window.Snowfall) return;
+	var d = Snowfall.get('door', 'none');
+	$('purse').textContent = fmt(100 * Snowfall.product('mult.'));
+	$('door').textContent = d === 'warm' ? 'the warm one' : (d === 'cold' ? 'the stair down' : 'unopened');
+};
+window.askDoor = function() {
+	if (!window.Snowfall) return;
+	Snowfall.ask('door', 'warm', ['the warm one', 'the stair down'], window.tally);
+	seat(2);
+};
+/* the same one-file minigame as the minigame demo, played from a scroll event
+   exactly as in book mode: the runner owns the key, the skip branch, teardown */
+function seat(k) {
+	if (!window.SnowfallGames) return;
+	SnowfallGames.play('gamble', {
+		el: $('seat-' + k), key: 'mult.g' + k, opts: { ask: ASK[k] }, done: window.tally
+	});
+}
+window.seat1 = function() { seat(1); };
+function fmt(n) { return String(Math.round(n * 100) / 100); }
+
+/* the page number is the page's own business, not the engine's: one passive
+   listener, one string write, and only when the text really changes */
+var lastStat = '';
+
+/* ---- the switch ---- */
+function setMode(on, fromTop) {
+	if (!P()) return;
+	P().set(on, !!fromTop);
+	$('mode').textContent = on ? 'paged on' : 'book mode';
+	$('mode').setAttribute('aria-pressed', on ? 'true' : 'false');
+	stat();
+}
+function stat() {
+	if (!P()) return;
+	var s = P().get()
+		? 'paged · page ' + (P().index + 1) + '/' + P().count + ' · ' +
+			Math.round(portion(P().index)) + 'px of text on this page · tap or space'
+		: 'book · scroll freely · v for paged';
+	if (s === lastStat) return;
+	lastStat = s;
+	$('stat').textContent = s;
+}
+$('mode').onclick = function() { setMode(!P().get()); };
+$('restart').onclick = function() { window.scrollTo(0, 0); setMode(P().get(), true); };
+$('fwd').onclick = function() { if (P().get()) P().next(); };
+$('back').onclick = function() { if (P().get()) P().prev(); };
+$('test').onclick = run;
+document.addEventListener('keydown', function(e) {
+	if (e.key !== 'v' && e.key !== 'V' || e.metaKey || e.ctrlKey || e.altKey || e.repeat) return;
+	var t = e.target;
+	if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable)) return;
+	setMode(!P().get());
+});
+window.addEventListener('scroll', stat, { passive: true });
+/* the controller's taps stop at the bar, the self-test drawer and the engine's
+   own prompt, so the reader's own controls are never a page turn */
+if (P()) P().ignore = '#bar, #qa';
+
+/* ---- in-GUI gate: real layout, real scroll, the real controller ---- */
+var fails = 0;
+function line(cls, s) { var b = $('qa'); b.className = 'on ' + cls; b.textContent += s + '\n'; }
+function check(name, cond, note) {
+	if (!cond) fails++;
+	line(cond ? 'pass' : 'fail', (cond ? 'PASS  ' : 'FAIL  ') + name + (note ? '  — ' + note : ''));
+}
+function anchors() {
+	var w = Snowfall.wagons, e = Snowfall.events, out = [], i;
+	for (i = 0; i < (w ? w.n : 0); i++) out.push(w.y[i]);
+	for (i = 0; i < (e ? e.n : 0); i++) out.push(e.y[i]);
+	return out.join(',');
+}
+function rearm() { LOG.length = 0; $('log').textContent = 'events: —'; window.scrollTo(0, 0); Snowfall.refresh(true); }
+/* a minigame seats itself the first time it is looked at, and the panel it
+   paints changes the height of the story below it. Two refreshes at the same
+   scroll settle that, so a check never compares a laid-out page with one the
+   game is still building */
+function settle(y) {
+	window.scrollTo(0, y);
+	Snowfall.refresh(true);
+	Snowfall.step(y);
+	Snowfall.refresh(true);
+	Snowfall.step(y);
+}
+function walkBook(step) {
+	var max = Math.max(0, docH() - window.innerHeight), y;
+	for (y = 0; y <= max; y += step) { window.scrollTo(0, y); Snowfall.step(y); }
+	window.scrollTo(0, max);
+	Snowfall.step(max);
+	return LOG.join(' ');
+}
+function walkPaged() {
+	var p = P(), smooth = p.smooth, guard = p.count * 4, taps = 0, reveals = 0, at = [];
+	p.smooth = 0;
+	/* a tap scrolls synchronously but the engine hears about it in the scroll
+	   event, which the browser dispatches after this block: step the same frame
+	   the listener would, so both walks sample identical positions */
+	while (guard-- > 0 && p.next()) {
+		var before = p.index;
+		taps++;
+		Snowfall.step(window.scrollY);
+		at.push(window.scrollY);
+		if (p.index > before) reveals++;
+	}
+	p.smooth = smooth;
+	return { log: LOG.join(' '), taps: taps, reveals: reveals, at: at };
+}
+
+function t1() {
+	var p = P(), n = p.count, y = p.y, mono = true, i;
+	for (i = 1; i < n; i++) if (y[i] < y[i - 1]) mono = false;
+	check('portions are counted and non-decreasing', n > 3 && mono, n + ' pages, last y ' + y[n - 1].toFixed(1));
+	p.set(false);
+	settle(window.scrollY);
+	n = p.count;
+	var bottom = p.root.getBoundingClientRect().bottom + window.scrollY;
+	p.set(true);
+	check('the last boundary is the unclamped story root bottom', Math.abs(y[n - 1] - bottom) < 1.5,
+		'y ' + y[n - 1].toFixed(1) + ' vs root bottom ' + bottom.toFixed(1));
+	check('the clamp is height + overflow-y: clip, never both axes',
+		p.root.style.overflowY === 'clip' && p.root.style.overflowX !== 'clip' && /\d/.test(p.root.style.height),
+		'height ' + p.root.style.height + ', overflow-y ' + p.root.style.overflowY);
+	check('the reader is on a real page', p.index >= 0 && p.index < n, 'page ' + (p.index + 1) + '/' + n);
+}
+
+function t2() {
+	var p = P();
+	rearm();
+	settle(0);
+	settle(Math.round((docH() - window.innerHeight) * 0.5));
+	var at = anchors();
+	p.set(true);
+	check('set(true) at a position moves no anchor and no wagon', at === anchors(),
+		anchors().split(',').length + ' anchor Ys, byte-identical across the switch');
+	p.set(false);
+	p.set(true);
+	check('and toggling back lands on the page that position implies', p.get() === true, 'page ' + (p.index + 1) + '/' + p.count);
+}
+
+function t3() {
+	var p = P();
+	rearm();
+	p.set(true, true);
+	p.smooth = 0;
+	var over = 0, above = 0, short = 0, guard = p.count * 4, taps = 0, reveals = 0;
+	var min = 1e9, max = 0, shortest = -1, k, here, hit;
+	while (guard-- > 0) {
+		k = p.index;
+		here = window.scrollY;
+		/* the paper is this page and nothing else: the root ends at the
+		   portion's end, plus at most one window of blank underneath */
+		if (Math.abs(docH() - Math.round(p.y[k] + band(k))) > 1.5) over++;
+		/* the reader is on this page: never past its bottom, never above its
+		   own portion, so the text before it is off the page */
+		if (here > spot(k) + 1.5) over++;
+		if (here < start(k) - 1.5) above++;
+		/* arrived on a page shorter than the window: paper below, not text */
+		if (Math.abs(here - spot(k)) < 1.5 && portion(k) < window.innerHeight - 1.5) {
+			hit = document.elementFromPoint(Math.round(window.innerWidth / 2), window.innerHeight - 4);
+			if (hit && p.root.contains(hit)) short++;
+			if (shortest < 0) shortest = k;
+		}
+		if (portion(k) < min) min = portion(k);
+		if (portion(k) > max) max = portion(k);
+		if (!p.next()) break;
+		taps++;
+		if (p.index > k) reveals++;
+	}
+	p.smooth = 1;
+	check('every page is its own portion, and the paper is exactly that page', over === 0,
+		taps + ' taps, ' + over + ' off by >1.5px, ' + Math.round(min) + '–' + Math.round(max) + 'px a page');
+	check('no page ever shows text from before its portion', above === 0, above + ' pages with earlier text still on them');
+	check('a page shorter than the window is padded with blank paper, not old text', short === 0,
+		shortest < 0 ? 'no page shorter than the window' : Math.round(portion(shortest)) +
+		'px of text, ' + Math.round(band(shortest)) + 'px of blank paper under it');
+	check('one tap per portion, and the end of the story says stop', reveals === p.count - 1 && p.next() === false,
+		reveals + ' taps' + (taps > reveals ? ' + ' + (taps - reveals) + ' walking a page taller than the window' : '') +
+		' for ' + p.count + ' pages');
+	var fired = LOG.join(' ');
+	check('nothing was skipped: no anchor jumped the window', fired.indexOf(':skip') < 0, fired);
+}
+
+function t4() {
+	var p = P();
+	p.set(true, true);
+	p.smooth = 0;
+	while (p.next()) { }
+	var atEnd = p.index;
+	var page = docH();
+	p.set(false);
+	var book = docH();
+	p.set(true);
+	check('the paper is this page in paged mode, and the whole story in book mode',
+		Math.abs(page - Math.round(p.y[atEnd] + band(atEnd))) < 1.5 && book > p.y[atEnd] - 1.5 && docH() === page,
+		book + 'px in book, ' + page + 'px on page ' + (atEnd + 1));
+	var back = 0;
+	while (p.prev()) back++;
+	check('back walks the same pages in reverse', p.index === 0 && back >= atEnd,
+		back + ' back taps from page ' + (atEnd + 1) + ' to page ' + (p.index + 1) + '/' + p.count);
+	p.smooth = 1;
+}
+
+function t5() {
+	P().set(false);
+	rearm();
+	var book = walkBook(24);
+	P().set(true, true);
+	rearm();
+	var paged = walkPaged();
+	check('stepping fires the same events as a slow scroll over the same page', book === paged.log,
+		'book: ' + book + '  |  paged: ' + paged.log);
+}
+
+/* what the controller must never touch: the author's markup. The minigame
+   seats are excluded — the runner owns those, not the page mode. */
+function markup() {
+	var c = $('app').cloneNode(true), seats = c.querySelectorAll('.seat'), i;
+	for (i = 0; i < seats.length; i++) seats[i].innerHTML = '<p class="idle">…</p>';
+	return c.innerHTML;
+}
+function t6() {
+	var p = P(), before = markup();
+	p.set(true, true);
+	var k = p.index;
+	function tap(el) {
+		el.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, clientX: 12, clientY: 12, button: 0, isPrimary: true }));
+		el.dispatchEvent(new PointerEvent('pointerup', { bubbles: true, clientX: 12, clientY: 12, button: 0, isPrimary: true }));
+	}
+	tap($('bar'));
+	check('a tap on the toolbar never turns the page', p.index === k, 'page ' + (p.index + 1));
+	tap(document.querySelector('#app p'));
+	check('a tap on the prose does', p.index === k + 1, 'page ' + (p.index + 1) + ' of ' + p.count);
+	for (var i = 0; i < 3; i++) p.next();
+	check('paging rewrote nothing of the author\'s markup', markup() === before, '#app identical after 4 more taps');
+}
+
+function run() {
+	if (!window.Snowfall || !P() || !P().get()) {
+		$('qa').className = 'on';
+		$('qa').textContent = 'self-test needs the engine and paged mode — press v first\n';
+		return;
+	}
+	var keep = Snowfall.exportJSON();
+	fails = 0;
+	$('qa').className = 'on';
+	$('qa').textContent = '';
+	line('head', 'self-test · ' + P().count + ' pages · engine ' + Snowfall.version + ' · paged ' + P().version);
+	t1(); t2(); t3(); t4(); t5(); t6();
+	line('head', fails ? fails + ' check(s) FAILED' : 'all checks passed');
+	Snowfall.reset();
+	Snowfall.importJSON(keep);
+	rearm();
+	window.tally();
+	setMode(true, true);
+}
+setMode(true, true);
+window.demoPaged = { run: run, setMode: setMode, log: LOG };
+})();
+</script>
+</body>
+</html>

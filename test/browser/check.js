@@ -194,6 +194,7 @@ function verify(label, g, entry) {
 
 	await require('./harness.js')(page, BASE, ok);
 	await require('./diagnostics.js')(page, BASE, ok);
+	await require('./paged.js')(page, BASE, ok);
 
 	if (errors.length) { for (const e of errors) { fails++; checks++; console.log('FAIL  page error — ' + e.split('\n')[0]); } }
 	await browser.close();

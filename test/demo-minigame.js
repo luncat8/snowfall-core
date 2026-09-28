@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-/* test/demo-minigame.js — gate for demo-minigame.html, the 0.6 page. Parses
+/* test/demo-minigame.js — gate for demo-minigame.html, the 0.4.3 page. Parses
 	the page's real markup into the shared fake DOM, loads the page's own
 	<script src> chain (engine → runtime → games/gamble.js) in its own order,
 	runs its author script and drives real scroll positions through the reader
