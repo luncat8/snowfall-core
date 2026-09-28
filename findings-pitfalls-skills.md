@@ -733,3 +733,53 @@ implementation, on the reference's own images and rects.
   same scroll settle it (the first rebuilds, the second measures the rebuilt
   layout); the same trick is the right answer anywhere a check reads a
   measurement that content it does not control can still be changing.
+
+## paged mode — the story that changes its own height (0.7 fix pass)
+
+- **A gate that asserts the model against itself cannot see the model drift
+  from the document.** The paged gates compared `scrollY` against the
+  controller's own `y` list — perfectly green while the reader sat 163px off
+  the real stop, because the reader and the stale list agreed with each
+  other. Every step needs at least one assertion against ground the
+  controller does not produce: at an arrival, the window top must equal the
+  page's own stop element's measured `getBoundingClientRect().top`.
+- **A height clamp hides inner layout changes from every document-level
+  signal.** With `height` pinned on the story root, a minigame seating
+  itself inside it changes neither `scrollHeight` nor any doc-level
+  observable — the only witnesses are the elements' own rects, and only
+  when the clamp is off. So "compare scrollHeight to detect drift" is
+  blind exactly when it matters; watch the subtree (childList) instead, and
+  re-measure with the clamp off.
+- **Subscribers measure in registration order; a subscriber that mutates
+  the tree in its own `measure` (games `dropAll`) poisons every list
+  measured before it in the same refresh.** The paged controller measured
+  first, the games runner unmounted its sessions after — so every
+  game-dropping refresh left the boundary list one tick stale, and a
+  synchronous walk could never see the correction. The fix is not an
+  ordering rule but a policy: measure at the moment of use (every turn,
+  every toggle), and let the observer's tick cover the parked reader.
+- **Scroll anchoring cancels a travelling programmatic smooth scroll.** A
+  game unmounting above the viewport mid-glide makes the browser compensate
+  scrollY, and the compensation kills the animation — a controller waiting
+  for "arrival" to apply a deferred correction waits forever, one page
+  behind. Never wait for your own smooth scroll to arrive to correct
+  state; re-target it (a second `scrollTo` restarts the glide from the
+  current position).
+- **`P.k = i` without `P.kEl = P.el[i]` is a bug factory — and "every
+  path" means every branch.** `prev()`'s smooth branch decremented `k`
+  alone; it was harmless while `measure()` only ran on engine refresh, and
+  became an infinite loop the day a turn re-measured (the measure restored
+  the page from the stale element, the decrement never stuck, `while
+  (prev())` never ended). The rule has to be checked per branch, not per
+  function.
+- **A synchronous QA walk cannot see anything that lives on a timer.** The
+  demo's self-test walked pages in one JS task: no microtask checkpoints,
+  no timers — so an observer-scheduled re-measure never ran between taps
+  and the walk "passed" on a reader path no human experiences. A walk that
+  claims to prove reader-visible behaviour must `await` a tick per step.
+- **Puppeteer/Chromium in a locked-down sandbox**: `npm i puppeteer` pulls
+  the browser through the npm proxy, but `~/.cache` does not survive
+  between commands — extract a chromium once (e.g. `@sparticuz/chromium`'s
+  `.br` archives: binary + `al2023.tar.br` libs + fonts) into `/tmp`, point
+  `CHROME_PATH`/`LD_LIBRARY_PATH`/`FONTCONFIG_PATH` at it, and the repo's
+  own `test/browser/check.js` runs unmodified.

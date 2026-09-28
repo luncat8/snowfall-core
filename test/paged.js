@@ -13,7 +13,10 @@
                        box-sizings, two style writes, the inline axis untouched
      stepping        — one portion a tap, the stepMax cap, hurry, prev's
                        deferred shrink, the end of the story
-     re-measure      — the page is kept by element, not by index
+     re-measure      — the page is kept by element, not by index; a story that
+                       changes its own height (a minigame seating itself) is
+                       re-measured on the next tick and the reader re-anchored
+                       onto the page that moved
      input           — a tap on prose turns the page; on a button, a link or
                        the host's own UI it does not
      no engine       — quiet false, no throw, no style write
@@ -362,6 +365,70 @@ function mono(p) {
 	ok(SP.y[SP.index] > keepY, 'which moved down with the text', SP.y[SP.index] + ' vs ' + keepY);
 }
 
+/* ---------------- 5b. the story changes its own height ---------------- */
+{
+	/* A game seats itself when its anchor is looked at and unseats when the
+	   reader walks away: the story grows and shrinks under the reader, and a
+	   boundary list measured once turns every page after it. The seam a
+	   browser provides is the subtree observer and the timer it schedules;
+	   the gate owns both, so the real controller runs the real path. */
+	let mo = null;
+	global.MutationObserver = function(cb) { this.cb = cb; mo = this; };
+	global.MutationObserver.prototype.observe = function() {};
+	global.MutationObserver.prototype.disconnect = function() {};
+	const p = openPage(para('one') + para('two') + para('three') + para('four'));
+	const ticks = [];
+	p.win.setTimeout = fn => { ticks.push(fn); return 1; };
+	const SP = p.SP;
+	ok(!!mo, 'the controller watches the story root for changes');
+	SP.set(true, true);
+	SP.next();
+	SP.next();
+	eq(SP.index, 2, 'on page three');
+	const stop = SP.at(SP.index), wasStart = SP.y[SP.index - 1], wasY = p.win.scrollY;
+	/* a minigame seats itself above the reader: 100px more story */
+	const app = p.el('app');
+	const seated = para_el('a game seats itself above the reader');
+	seated._h = 100;
+	seated.layoutY = app.querySelector('p').layoutY;
+	reflow(app, seated.layoutY, seated._h);
+	app.insertBefore(seated, app.querySelector('p'));
+	mo.cb([], mo);
+	mo.cb([], mo);
+	eq(ticks.length, 1, 'a burst of mutations schedules one coalesced measure');
+	ticks[0]();
+	ok(SP.at(SP.index) === stop, 'the reader is still on their page, kept by element');
+	eq(SP.y[SP.index - 1], wasStart + 100, 'its boundary moved down with the story');
+	eq(p.win.scrollY, wasY + 100, 'and the reader moved with it: no earlier text on the page');
+	ok(p.win.scrollY >= SP.y[SP.index - 1], 'never above the portion own start');
+
+	/* the reader who wheeled up to re-read, then the story moved: the page
+	   own new start, not the text before it */
+	p.win.setScroll(SP.y[SP.index - 1] - 20);
+	const grew = para_el('another growth above the reader');
+	grew._h = 50;
+	grew.layoutY = seated.layoutY;
+	reflow(app, grew.layoutY, grew._h);
+	app.insertBefore(grew, seated);
+	mo.cb([], mo);
+	ticks[ticks.length - 1]();
+	eq(p.win.scrollY, SP.y[SP.index - 1], 'a reader above their page is put on its new start');
+
+	/* a burst the tick has not run yet still cannot stale a turn */
+	const more = para_el('one more paragraph above the reader');
+	more._h = 30;
+	more.layoutY = grew.layoutY;
+	reflow(app, more.layoutY, more._h);
+	app.insertBefore(more, grew);
+	mo.cb([], mo);                            /* dirty, timer scheduled, not run */
+	const at = SP.index;
+	SP.next();
+	eq(SP.index, at + 1, 'the turn came from a fresh list');
+	eq(p.win.scrollY, SP.y[SP.index - 1], 'and landed on the moved page, not the stale one');
+	ticks[ticks.length - 1]();                /* leave nothing pending */
+	delete global.MutationObserver;
+}
+
 /* ---------------- 6. input ---------------- */
 {
 	const p = openPage(para('one') + para('two') + para('three') + para('four') + para('five') + '<a href="#x" id="link">go</a>');
@@ -459,6 +526,7 @@ function mono(p) {
 /* ---------------- 8. the source keeps the engine's contracts ---------------- */
 {
 	const src = fs.readFileSync(path.join(ROOT, 'snowfall-paged.js'), 'utf8');
+	ok(src.indexOf('MutationObserver') > 0, 'the story root is watched for story-side changes');
 	ok(src.indexOf("addEventListener('scroll'") < 0, 'the controller adds no scroll listener');
 	ok(src.indexOf('requestAnimationFrame') < 0, 'and runs no rAF');
 	ok(src.indexOf("overflowY = 'clip'") > 0, 'the clamp writes overflow-y');
@@ -485,6 +553,9 @@ function mono(p) {
 	ok(!layout.test(fn('frame')), 'frame() reads no layout at all');
 	ok(!layout.test(fn('next')) && !layout.test(fn('prev')), 'next() and prev() read no layout');
 	ok(!layout.test(fn('onUp')) && !layout.test(fn('onKey')), 'the input handlers read no layout');
+	ok(!layout.test(fn('onMutate')) && !layout.test(fn('onTick')) && !layout.test(fn('anchor')),
+		'the change watch and the re-anchor read no layout (measure does the reading)');
+	ok(fn('onMutate') !== '' && fn('onTick') !== '' && fn('anchor') !== '', 'the watch, its tick and the re-anchor are there');
 }
 
 console.log('paged: ' + (checks - fails) + '/' + checks + ' checks, ' + fails + ' failed');

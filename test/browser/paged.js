@@ -9,8 +9,10 @@
      3  a `<br>` boundary really is the gap between two lines, not a glyph
         edge and not the br's own rect bottom;
      4  every page is exactly one portion, the previous text off the page, one
-        portion a tap, and no
-        step scrolls more than stepMax·vh;
+        portion a tap, no step scrolls more than stepMax·vh, and every
+        arrival measured against the live document, not the controller's own
+        list (a game that seats itself above the reader moves the story after
+        the list was measured);
      5  keys turn the page; the toolbar, prompt buttons, game seats and
         links do not;
      6  the page's own self-test is green;
@@ -302,6 +304,15 @@ module.exports = async function paged(page, BASE, ok) {
 			if (window.scrollY > spot + tol) over.push('tap ' + taps + ': scrolled past the page by ' + (window.scrollY - spot).toFixed(1));
 			if (window.scrollY - sY > window.innerHeight + tol) over.push('tap ' + taps + ': scrolled ' + (window.scrollY - sY).toFixed(1) + 'px');
 			if (window.scrollY < sY - tol) over.push('tap ' + taps + ': scrolled backwards');
+			/* ground truth, not the model agreeing with itself: an arrival on a
+			   page that fits the window sits on the page's own real stop element
+			   — a list that drifted from the document (a game seated above)
+			   still agrees with itself, so measure the document instead */
+			const gt = k > 0 ? P.at(k - 1) : null;
+			if (advanced && k > 0 && Math.abs(window.scrollY - spot) <= tol && Math.abs(spot - start) <= tol &&
+				gt && gt.tagName && gt.tagName.toLowerCase() !== 'br' && gt !== P.root &&
+				Math.abs(gt.getBoundingClientRect().top) > tol + 1)
+				over.push('tap ' + taps + ': window top ' + Math.round(window.scrollY) + ' is not the page\'s real stop top');
 			if (advanced) rows.push(P.y[k]);
 			else walks++;
 		}
@@ -389,10 +400,17 @@ module.exports = async function paged(page, BASE, ok) {
 	ok(keys.prose, 'a tap on the prose does');
 
 	/* ---- 6 · the page's own self-test ---- */
-	const qa = await page.evaluate(() => {
+	/* the walk in t5 gives every tap a tick, the way a reader does, so the
+	   self-test finishes a moment after run() returns: wait for its verdict */
+	const qa = await page.evaluate(() => new Promise(resolve => {
 		window.demoPaged.run();
-		return document.getElementById('qa').textContent;
-	});
+		const t0 = Date.now();
+		(function poll() {
+			const t = document.getElementById('qa').textContent;
+			if (/all checks passed|FAILED/.test(t) || Date.now() - t0 > 90000) return resolve(t);
+			setTimeout(poll, 100);
+		})();
+	}));
 	const bad = qa.split('\n').filter(l => /FAIL/.test(l));
 	ok(bad.length === 0, 'demo-paged self-test is green', bad.join(' | '));
 	ok(/all checks passed/.test(qa), 'and says so', qa.split('\n').filter(l => /passed|FAILED/.test(l)).join(' | '));

@@ -127,10 +127,10 @@ h2.notes{padding:1.4rem 0 .6rem;color:#8fa8c8;font-size:1rem}
 	</section>
 
 </div>
-<script src="snowfall.js?v=cece2a74bc"></script>
-<script src="snowfall-paged.js?v=cece2a74bc"></script>
-<script src="snowfall-games.js?v=cece2a74bc"></script>
-<script src="games/gamble.js?v=cece2a74bc"></script>
+<script src="snowfall.js?v=9057e71878"></script>
+<script src="snowfall-paged.js?v=9057e71878"></script>
+<script src="snowfall-games.js?v=9057e71878"></script>
+<script src="games/gamble.js?v=9057e71878"></script>
 <script>
 /* The page is the switch: one button, one key, and a self-test that shows the
    clamp never moves anything the engine knows about. Nothing here measures
@@ -247,21 +247,33 @@ function walkBook(step) {
 	Snowfall.step(max);
 	return LOG.join(' ');
 }
-function walkPaged() {
-	var p = P(), smooth = p.smooth, guard = p.count * 4, taps = 0, reveals = 0, at = [];
+/* a tap scrolls synchronously but the engine hears about it in the scroll
+   event, which the browser dispatches after this block: step the same frame
+   the listener would, so both walks sample identical positions. Then a tick
+   passes — the same tick a human reader gives the controller between taps —
+   in which a game that just seated itself is re-measured and the reader
+   re-anchored, and the ground truth below compares the window with the
+   document the reader is actually looking at, not with the controller's own
+   list (a list that drifted from the document still agrees with itself) */
+async function walkPaged() {
+	var p = P(), smooth = p.smooth, guard = p.count * 4, taps = 0, reveals = 0, truth = 0, checked = 0;
 	p.smooth = 0;
-	/* a tap scrolls synchronously but the engine hears about it in the scroll
-	   event, which the browser dispatches after this block: step the same frame
-	   the listener would, so both walks sample identical positions */
 	while (guard-- > 0 && p.next()) {
 		var before = p.index;
 		taps++;
 		Snowfall.step(window.scrollY);
-		at.push(window.scrollY);
+		await new Promise(function(r) { setTimeout(r, 0); });
+		var k = p.index, at = window.scrollY, a = p.at(k - 1);
+		var lo = k > 0 ? p.y[k - 1] : 0, spot = Math.max(lo, p.y[k] - window.innerHeight);
+		if (k > 0 && Math.abs(at - spot) < 2 && Math.abs(spot - lo) < 2 &&
+			a && a.tagName && a.tagName.toLowerCase() !== 'br' && a !== p.root) {
+			checked++;
+			if (Math.abs(a.getBoundingClientRect().top) > 2.5) truth++;
+		}
 		if (p.index > before) reveals++;
 	}
 	p.smooth = smooth;
-	return { log: LOG.join(' '), taps: taps, reveals: reveals, at: at };
+	return { log: LOG.join(' '), taps: taps, reveals: reveals, truth: truth, checked: checked };
 }
 
 function t1() {
@@ -301,7 +313,7 @@ function t3() {
 	p.set(true, true);
 	p.smooth = 0;
 	var over = 0, above = 0, short = 0, guard = p.count * 4, taps = 0, reveals = 0;
-	var min = 1e9, max = 0, shortest = -1, k, here, hit;
+	var min = 1e9, max = 0, shortest = -1, k, here, hit, truth = 0, checked = 0;
 	while (guard-- > 0) {
 		k = p.index;
 		here = window.scrollY;
@@ -312,6 +324,16 @@ function t3() {
 		   own portion, so the text before it is off the page */
 		if (here > spot(k) + 1.5) over++;
 		if (here < start(k) - 1.5) above++;
+		/* ground truth, not the model agreeing with itself: at an arrival on a
+		   page that fits the window, the page's own stop element is measured
+		   live — the window top must be its real top, or the list has drifted
+		   from the document it clamps (a game seated above does exactly that) */
+		var gt = k > 0 ? p.at(k - 1) : null;
+		if (k > 0 && Math.abs(here - spot(k)) < 2 && Math.abs(spot(k) - start(k)) < 2 &&
+			gt && gt.tagName && gt.tagName.toLowerCase() !== 'br' && gt !== p.root) {
+			checked++;
+			if (Math.abs(gt.getBoundingClientRect().top) > 2.5) truth++;
+		}
 		/* arrived on a page shorter than the window: paper below, not text */
 		if (Math.abs(here - spot(k)) < 1.5 && portion(k) < window.innerHeight - 1.5) {
 			hit = document.elementFromPoint(Math.round(window.innerWidth / 2), window.innerHeight - 4);
@@ -328,6 +350,8 @@ function t3() {
 	check('every page is its own portion, and the paper is exactly that page', over === 0,
 		taps + ' taps, ' + over + ' off by >1.5px, ' + Math.round(min) + '–' + Math.round(max) + 'px a page');
 	check('no page ever shows text from before its portion', above === 0, above + ' pages with earlier text still on them');
+	check('every arrival sits on the page\'s own real stop element', truth === 0,
+		checked + ' arrivals measured against the live document, ' + truth + ' off by >2.5px');
 	check('a page shorter than the window is padded with blank paper, not old text', short === 0,
 		shortest < 0 ? 'no page shorter than the window' : Math.round(portion(shortest)) +
 		'px of text, ' + Math.round(band(shortest)) + 'px of blank paper under it');
@@ -343,6 +367,10 @@ function t4() {
 	p.set(true, true);
 	p.smooth = 0;
 	while (p.next()) { }
+	/* a game the reader walked past drops its panel a tick after the last tap:
+	   settle before measuring, or the paper is compared with a story that is
+	   still shrinking */
+	settle(window.scrollY);
 	var atEnd = p.index;
 	var page = docH();
 	p.set(false);
@@ -364,9 +392,12 @@ function t5() {
 	var book = walkBook(24);
 	P().set(true, true);
 	rearm();
-	var paged = walkPaged();
-	check('stepping fires the same events as a slow scroll over the same page', book === paged.log,
-		'book: ' + book + '  |  paged: ' + paged.log);
+	return walkPaged().then(function(paged) {
+		check('stepping fires the same events as a slow scroll over the same page', book === paged.log,
+			'book: ' + book + '  |  paged: ' + paged.log);
+		check('and every page opens on its own real stop element, never on the text before it',
+			paged.truth === 0, paged.checked + ' arrivals measured against the live document');
+	});
 }
 
 /* what the controller must never touch: the author's markup. The minigame
@@ -403,13 +434,17 @@ function run() {
 	$('qa').className = 'on';
 	$('qa').textContent = '';
 	line('head', 'self-test · ' + P().count + ' pages · engine ' + Snowfall.version + ' · paged ' + P().version);
-	t1(); t2(); t3(); t4(); t5(); t6();
-	line('head', fails ? fails + ' check(s) FAILED' : 'all checks passed');
-	Snowfall.reset();
-	Snowfall.importJSON(keep);
-	rearm();
-	window.tally();
-	setMode(true, true);
+	t1(); t2(); t3(); t4();
+	/* t5 gives every tap a tick, the way a reader does, so it finishes async */
+	t5().then(function() {
+		t6();
+		line('head', fails ? fails + ' check(s) FAILED' : 'all checks passed');
+		Snowfall.reset();
+		Snowfall.importJSON(keep);
+		rearm();
+		window.tally();
+		setMode(true, true);
+	});
 }
 setMode(true, true);
 window.demoPaged = { run: run, setMode: setMode, log: LOG };

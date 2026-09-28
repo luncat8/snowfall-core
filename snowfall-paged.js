@@ -17,6 +17,14 @@
    exactly as in book mode, and morph, events, prompts and minigames never
    learn that the mode changed.
 
+   The story is allowed to change its own height while the reader is on it —
+   a minigame seats itself the first time its anchor is looked at and unseats
+   when the reader walks away — so the boundary list is not measured once: the
+   root's subtree is watched (childList only), a change re-measures on the next
+   tick, and the reader is re-anchored onto the page that moved under them.
+   Without that, every page after a seat mounts lands on a stale boundary and
+   the text that came before stays on the page.
+
    The inline axis is deliberately left alone: the engine pulls each art wagon
    out of the text column with a negative margin so it spans the page, and
    `overflow: clip` on both axes would cut a centred story column down to its
@@ -48,7 +56,8 @@ const P = {
 	n: 0, k: -1, kEl: null, el: [],
 	y: new Float64Array(0), tags: null, tagKey: '',
 	padBoxTop: 0, padTop: 0, padBottom: 0, borderTop: 0, borderBottom: 0, borderBox: false, endY: 0, contentTop: 0,
-	pendingH: -1, pendingAt: 0, band: -1, flowWarn: 0
+	pendingH: -1, pendingEl: null, pendingAt: 0, band: -1, flowWarn: 0,
+	timer: 0, mo: null, going: -1
 };
 const scrollOpts = { top: 0, left: 0, behavior: 'auto' };
 let down = null, pointers = 0;
@@ -289,10 +298,38 @@ function smooth() {
 	try { return !global.matchMedia('(prefers-reduced-motion: reduce)').matches; }
 	catch (e) { return true; }
 }
-function scrollTo(y) {
+function scrollTo(y, jump) {
 	scrollOpts.top = y;
-	scrollOpts.behavior = smooth() ? 'smooth' : 'auto';
+	scrollOpts.behavior = jump || !smooth() ? 'auto' : 'smooth';
 	global.scrollTo(scrollOpts);
+	/* a smooth scroll that already landed (the fake window, an instant
+	   browser, a target one pixel away) is not in flight; one that still has
+	   ground to cover is, and the re-anchor corrects it by re-targeting
+	   rather than snapping the glide dead */
+	P.going = scrollOpts.behavior === 'smooth' && Math.abs((global.scrollY || 0) - y) > 1 ? y : -1;
+}
+
+/* ---------------- the story moves: the boundary list must follow ---------------- */
+/* A minigame seats itself the first time its anchor is looked at and unseats
+   when the reader walks away, a script writes content, a choice resolves into
+   text — the story changes its own flow height after the controller measured,
+   and a boundary list that no longer matches the document turns every page
+   after it: the text before the portion stays on top of the window, the paper
+   cuts the portion early. Two guards keep the list on the document: every
+   turn and every toggle re-measures (a tap is rare, the walk is cheap, and a
+   refresh that drops a game mutates the tree after the controller's own
+   measure ran — subscription order — so no tick may be waited for), and the
+   root's subtree is watched (childList only: the engine paints its wagons
+   with style writes and the clamp is a style write too) so a reader parked on
+   a page when a game seats itself is re-anchored on the next tick. */
+function onMutate() {
+	if (P.timer) return;
+	P.timer = 1;
+	global.setTimeout(onTick, 0);
+}
+function onTick() {
+	P.timer = 0;
+	if (P.on || P.touched) measure();
 }
 
 /* ---------------- public surface ---------------- */
@@ -303,20 +340,23 @@ function ready() {
 	const root = S.scope || (document.getElementById && document.getElementById('app'));
 	if (!root || !root.getBoundingClientRect) return false;
 	P.root = root;
+	if (!P.mo && typeof MutationObserver === 'function') {
+		P.mo = new MutationObserver(onMutate);
+		P.mo.observe(root, { childList: true, subtree: true });
+	}
 	if (!P.subs) {
 		P.subs = true;
 		S.use({
 			measure: measure,
 			frame: frame,
-			off: function() { P.on = false; P.pendingH = -1; unapply(); }
+			off: function() { P.on = false; P.pendingH = -1; P.pendingEl = null; P.going = -1; unapply(); }
 		});
 	}
 	return true;
 }
 function ensure() {
-	if (P.root && P.n > 0) return true;
 	if (!ready()) return false;
-	if (P.n === 0) measure();
+	measure();                    /* a toggle never turns from a stale list */
 	return P.n > 0;
 }
 function firstAt(v) {
@@ -333,6 +373,8 @@ function set(on, fromTop) {
 		if (!ready()) return false;
 		P.on = false;
 		P.pendingH = -1;
+		P.pendingEl = null;
+		P.going = -1;
 		unapply();
 		return true;
 	}
@@ -346,7 +388,9 @@ function set(on, fromTop) {
 }
 function next() {
 	if (!P.on || P.n === 0) return false;
+	measure();                     /* a tap is rare: the list it turns from is the document's own */
 	P.pendingH = -1;
+	P.pendingEl = null;
 	const sY = global.scrollY || 0, vh = viewH(), here = pageSpot(P.k);
 	if (sY < here - 1) {          /* this page is not all read yet: hurry down, reveal nothing */
 		scrollTo(Math.min(here, sY + STEP_MAX * vh));
@@ -361,23 +405,31 @@ function next() {
 }
 function prev() {
 	if (!P.on || P.k <= 0) return false;
+	measure();                     /* a tap is rare: the list it turns from is the document's own */
 	P.pendingH = -1;
+	P.pendingEl = null;
+	if (P.k <= 0) return false;             /* the re-measure may have ended on page one */
 	P.k--;
+	P.kEl = P.el[P.k];                      /* every path that sets k sets kEl */
 	const at = pageSpot(P.k);
 	if (smooth()) {
 		/* shrinking first would let the browser clamp the scroll instantly and
 		   the page would jump: travel up, and cut the tail once we arrive */
 		P.pendingH = P.k;
+		P.pendingEl = P.kEl;              /* the pending page is kept by element too */
 		P.pendingAt = at;
-	} else { P.kEl = P.el[P.k]; apply(); }
+	} else apply();
 	scrollTo(at);
 	return true;
 }
 function frame(sY) {
+	if (P.going >= 0 && Math.abs(sY - P.going) <= 1) P.going = -1;
 	if (P.pendingH < 0) return;                 /* the only per-frame work: one compare */
 	if (sY > P.pendingAt + 1) return;
-	const k = P.pendingH;
+	let k = P.pendingEl ? indexOf(P.pendingEl) : -1;
+	if (k < 0) k = firstAt(P.pendingAt);        /* the stop is gone: the nearest boundary at its Y */
 	P.pendingH = -1;
+	P.pendingEl = null;
 	P.k = k;
 	P.kEl = P.el[k];
 	apply();
@@ -393,12 +445,14 @@ function measure() {
 	/* the root's own box is the one thing the clamp changes, so it is read
 	   with the clamp OFF: measuring a clamped root would feed the boundary
 	   list back into itself and the story would shrink on every refresh */
-	if (P.on) unapply();
+	const wasOn = P.on;
+	if (wasOn) unapply();
 	readBox();
 	const keepEl = P.kEl, keepY = P.k >= 0 && P.k < P.n ? P.y[P.k] : -1;
+	const oldLo = wasOn && P.k >= 0 ? pageStart(P.k) : -1;
 	walk();
-	if (!P.on && !P.touched && boot()) { set(true, (global.scrollY || 0) < 1); return; }
-	if (!P.on) return;
+	if (!wasOn && !P.touched && boot()) { set(true, (global.scrollY || 0) < 1); return; }
+	if (!wasOn) return;
 	/* the page is kept by element, not by index: a source edit above the
 	   reader must not move the frontier. If the stop itself is gone, the
 	   nearest boundary at or after the old one takes over. */
@@ -407,6 +461,26 @@ function measure() {
 	P.k = k;
 	P.kEl = P.el[k];
 	apply();
+	anchor(k, oldLo);
+}
+/* A re-measure that moved this page moves the reader with it: a story that
+   grew above the reader (a game seating itself when its anchor is looked at)
+   otherwise leaves them looking at the text before their portion, and the
+   browser's own scroll anchoring — which cancels a travelling smooth scroll
+   when it compensates — can land them anywhere in between. The reading place
+   inside the page is kept; a reader above the page's old start is re-reading,
+   and is taken to the page's new start. A settled reader is snapped (the
+   layout under them already jumped); a turn still travelling is re-targeted,
+   which restarts the glide from wherever the browser left it. */
+function anchor(k, oldLo) {
+	if (oldLo < 0 || P.pendingH >= 0) return;
+	const at = global.scrollY || 0;
+	const lo = pageStart(k), hi = pageSpot(k);
+	const shift = lo - oldLo;
+	if (!shift) return;
+	const to = at < oldLo - 1 ? lo : Math.min(hi, Math.max(lo, at + shift));
+	if (Math.abs(to - at) <= 1) return;
+	scrollTo(to, P.going < 0);
 }
 
 /* ---------------- input: claimed only while paged ---------------- */
