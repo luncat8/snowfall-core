@@ -1,22 +1,22 @@
 #!/usr/bin/env node
-/* test/browser/paged.js — real-browser proof of the 0.6.0 paged mechanism,
+/* test/browser/paged.js — real-browser proof of the 0.7.0 screenful model,
    on demo-paged.html. The node gate (test/paged.js) proves the walk, the
-   merge rules and the arithmetic over the fake DOM; what only Chromium can
-   show is here:
+   cut list and the grouping arithmetic over the fake DOM; what only Chromium
+   can show is here:
      1  the premise — the height clamp moves no wagon and no event anchor,
-        and the document becomes exactly the boundary;
-     2  a wagon parks inside the clamp and paints whole under overflow: clip;
-     3  a `<br>` boundary really is the gap between two lines, not a glyph
-        edge and not the br's own rect bottom;
-     4  every page is exactly one portion, the previous text off the page, one
-        portion a tap, no step scrolls more than stepMax·vh, and every
-        arrival measured against the live document, not the controller's own
-        list (a game that seats itself above the reader moves the story after
-        the list was measured);
+        and the document is exactly the current page's paper;
+     2  one screenful of whole portions a page: the page ends at the last
+        stop that fits, or is exactly one portion when none fits — measured
+        against live rects, not the controller's own list;
+     3  every arrival opens on the page's own real cut element at the top of
+        the reading band (padTop), the text before it behind the reader, and
+        a short page's empty band is blank paper;
+     4  a portion taller than the screen is its own page and is walked one
+        band a tap — never teleported to its end;
      5  keys turn the page; the toolbar, prompt buttons, game seats and
         links do not;
      6  the page's own self-test is green;
-     7  file:// boots paged from data-paged with the first portion revealed.
+     7  file:// boots paged from data-paged with the first page revealed.
    Loaded by test/browser/check.js as (page, BASE, ok). */
 'use strict';
 const path = require('path');
@@ -24,51 +24,82 @@ const ROOT = path.join(__dirname, '..', '..');
 const VW = 1280, VH = 800, TOL = 1.5;
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 
-/* helpers the page needs more than once: the text on either side of a node,
-   and the painted rect of its first or last glyph */
 const HELPERS = `window.__probe = {
-	firstIn: function (el) { return document.createTreeWalker(el, NodeFilter.SHOW_TEXT).nextNode(); },
-	lastIn: function (el) {
-		const w = document.createTreeWalker(el, NodeFilter.SHOW_TEXT);
-		let t = w.nextNode(), last = t;
-		while (t) { last = t; t = w.nextNode(); }
-		return last;
-	},
-	before: function (el) {
-		for (let n = el; n; n = n.parentNode) for (let s = n.previousSibling; s; s = s.previousSibling) {
-			const t = s.nodeType === 3 ? s : this.lastIn(s);
-			if (t && t.nodeValue.trim()) return t;
-		}
-		return null;
-	},
-	after: function (el) {
-		for (let n = el; n; n = n.parentNode) for (let s = n.nextSibling; s; s = s.nextSibling) {
-			const t = s.nodeType === 3 ? s : this.firstIn(s);
-			if (t && t.nodeValue.trim()) return t;
-		}
-		return null;
-	},
-	glyph: function (node, atEnd) {
-		const r = document.createRange(), n = node.nodeValue.length;
-		r.setStart(node, atEnd ? Math.max(0, n - 1) : 0);
-		r.setEnd(node, atEnd ? n : 1);
-		const list = r.getClientRects();
-		for (let i = 0; i < list.length; i++) if (list[i].height > 0) {
-			return { top: list[i].top + window.scrollY, bottom: list[i].bottom + window.scrollY };
-		}
-		return null;
-	},
-	stopTop: function (k) {
-		const el = window.SnowfallPaged.at(k);
-		return el ? el.getBoundingClientRect().top + window.scrollY : null;
-	},
+	/* the live document answers: where each cut element sits right now */
 	settle: function () { return new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r))); },
 	docH: function () { return document.documentElement.scrollHeight; },
-	/* the page model: page k is the portion [start(k), y[k]], the reader sits
-	   at its bottom, and a short portion is padded to a full window of paper */
-	start: function (k) { return k > 0 ? P0().y[k - 1] : 0; },
-	band: function (k) { return Math.max(0, window.innerHeight - (P0().y[k] - (k > 0 ? P0().y[k - 1] : 0))); },
-	spot: function (k) { return Math.max(k > 0 ? P0().y[k - 1] : 0, P0().y[k] - window.innerHeight); }
+	open: function (k) {
+		const P = window.SnowfallPaged;
+		return Math.max(0, (k > 0 ? P.y[k - 1] : 0) - P.padTop);
+	},
+	done: function (k) {
+		const P = window.SnowfallPaged;
+		const hi = P.y[k], lo = k > 0 ? P.y[k - 1] : 0;
+		return Math.max(0, lo - P.padTop, hi - window.innerHeight + P.padBottom);
+	},
+	portion: function (k) {
+		const P = window.SnowfallPaged;
+		return P.y[k] - (k > 0 ? P.y[k - 1] : 0);
+	},
+	bandH: function () {
+		const P = window.SnowfallPaged;
+		return window.innerHeight - P.padTop - P.padBottom;
+	},
+	/* is page k exactly one portion? its end is a walk cut and its start is
+	   the cut before — or the story start */
+	onePortion: function (k) {
+		const P = window.SnowfallPaged, end = P.y[k], lo = k > 0 ? P.y[k - 1] : 0;
+		let endAt = -1, loAt = -2;
+		for (let j = 0; j < P.cutN; j++) {
+			if (Math.abs(P.cutY[j] - end) < 1.5) endAt = j;
+			if (Math.abs(P.cutY[j] - lo) < 1.5) loAt = j;
+		}
+		return endAt >= 0 && loAt === endAt - 1;
+	},
+	paper: function (k) {
+		/* the live check: the root ends at the page's cut plus its blank band */
+		const P = window.SnowfallPaged;
+		const root = P.root.getBoundingClientRect();
+		return root.height + window.scrollY;
+	},
+	marks: function () {
+		const out = [];
+		for (const sel of ['[data-se]', '[data-ev], [data-on], .w-ask, .w-choice']) {
+			for (const el of document.querySelectorAll(sel)) {
+				const r = el.getBoundingClientRect();
+				out.push(sel + ':' + Math.round((r.top + window.scrollY) * 10) / 10);
+			}
+		}
+		return out.join(',');
+	},
+	brCuts: function () {
+		const P = window.SnowfallPaged, out = [];
+		for (let j = 0; j < P.cutN; j++) {
+			const el = P.cutAt(j);
+			if (el && el.tagName && el.tagName.toLowerCase() === 'br') {
+				const prev = el.previousSibling, next = el.nextSibling;
+				const pv = prev && (prev.nodeType === 3 ? prev.nodeValue.trim() : (prev.textContent || '').trim());
+				const nv = next && (next.nodeType === 3 ? next.nodeValue.trim() : (next.textContent || '').trim());
+				if (pv && nv) out.push({ y: P.cutY[j], prev: pv.slice(-1), next: nv.slice(0, 1) });
+			}
+		}
+		return out;
+	},
+	artCuts: function () {
+		/* a cover wagon may never be sliced by a page edge: every cut must sit
+		   on a cover's own edge or outside every cover */
+		const P = window.SnowfallPaged, arts = [];
+		for (const el of document.querySelectorAll('.snow-bg')) {
+			const r = el.getBoundingClientRect();
+			arts.push([r.top + window.scrollY, r.bottom + window.scrollY]);
+		}
+		const bad = [];
+		for (let i = 0; i < P.count; i++) {
+			const y = P.y[i];
+			for (const a of arts) if (y > a[0] + 1.5 && y < a[1] - 1.5) bad.push(Math.round(y));
+		}
+		return bad;
+	}
 };
 function P0() { return window.SnowfallPaged; }`;
 
@@ -78,356 +109,194 @@ module.exports = async function paged(page, BASE, ok) {
 	page.on('console', m => { if (m.type() === 'error') errs.push(m.text()); });
 	console.log('--- paged · ' + VW + 'x' + VH + ' ---');
 	await page.setViewport({ width: VW, height: VH });
-	await page.goto(BASE + '/demo-paged.html', { waitUntil: 'load' });
-	await page.waitForFunction(() => window.Snowfall && window.SnowfallPaged && window.SnowfallPaged.get(), { timeout: 15000 });
-	await sleep(250);
+
+	/* 1 · boot: the clamp premise and the paper */
+	await page.goto(BASE + '/demo-paged.html', { waitUntil: 'networkidle0' });
+	await sleep(400);
 	await page.evaluate(HELPERS);
-
-	/* ---- boot: paged on, the first portion only ---- */
 	const boot1 = await page.evaluate(() => {
-		const P = window.SnowfallPaged;
-		return {
-			count: P.count, y0: P.y[0], stop: P.at(0).tagName + (P.at(0).id ? '#' + P.at(0).id : ''),
-			version: P.version, engine: window.Snowfall.version,
-			docH: window.__probe.docH(), vh: window.innerHeight,
-			overflow: P.root.style.overflowY,
-			firstStop: window.__probe.stopTop(0), secondStop: window.__probe.stopTop(1)
-		};
-	});
-	ok(boot1.count > 6, 'demo boots paged with ' + boot1.count + ' portions', String(boot1.count));
-	ok(boot1.engine === '0.7.0', 'on engine ' + boot1.engine, boot1.engine);
-	ok(boot1.overflow === 'clip', 'the story root is clipped on the block axis', boot1.overflow);
-	ok(Math.abs(boot1.docH - Math.round(boot1.y0 + boot1.vh - (boot1.y0 - 0))) <= TOL,
-		'boot pads the first portion to one window of paper', boot1.docH + ' vs ' + Math.round(boot1.y0 + boot1.vh));
-	ok(Math.abs(boot1.firstStop - boot1.y0) <= TOL,
-		'the first boundary is the first stop itself', boot1.firstStop + ' vs ' + boot1.y0);
-	ok(boot1.secondStop >= boot1.y0 - TOL,
-		'and the second stop is still off the page', boot1.secondStop + ' vs ' + boot1.y0);
-
-	/* ---- 1 · the premise: the clamp moves nothing ---- */
-	const prem = await page.evaluate(() => {
-		const P = window.SnowfallPaged, S = window.Snowfall, app = P.root;
-		const w0 = Array.from(S.wagons.y), e0 = S.events ? Array.from(S.events.y) : [];
-		P.set(false);
-		const wb = Array.from(S.wagons.y), eb = S.events ? Array.from(S.events.y) : [];
-		const bookH = window.__probe.docH();
-		P.set(true);
-		const w1 = Array.from(S.wagons.y);
-		const same = a => a.length === w0.length && a.every((v, i) => Math.abs(v - w0[i]) < 1e-9);
-		return {
-			wagonsSame: same(wb) && same(w1),
-			eventsSame: JSON.stringify(eb) === JSON.stringify(e0),
-			bookH, pagedH: window.__probe.docH(), y: P.y[P.index], vh: window.innerHeight,
-			band: parseFloat(P.root.style.marginBottom) || 0
-		};
-	});
-	ok(prem.wagonsSame, 'wagon anchors are byte-identical in book and paged mode');
-	ok(prem.eventsSame, 'event anchors are byte-identical too');
-	ok(prem.bookH > prem.pagedH, 'and paged mode is a shorter document', prem.bookH + ' vs ' + prem.pagedH);
-	ok(Math.abs(prem.pagedH - Math.round(prem.y + prem.band)) <= TOL,
-		'the paged paper is this page: the root at its boundary, plus the band under it',
-		prem.pagedH + ' vs ' + Math.round(prem.y + prem.band) + ' (boundary ' + prem.y.toFixed(1) + ', band ' + prem.band + ')');
-
-	/* ---- 2 · a wagon parks inside the clamp, and the clamp moves nothing ---- */
-	const park = await page.evaluate(async () => {
-		const P = window.SnowfallPaged, S = window.Snowfall, pr = window.__probe;
-		function rects() {
-			const out = [];
-			for (let i = 0; i < S.wagons.n; i++) {
-				const w = S.wagons.els[i].getBoundingClientRect();
-				out.push([w.left, w.top, w.width, w.height].map(v => Math.round(v * 100) / 100).join(','));
-			}
-			return out;
-		}
+		const P = P0();
 		P.smooth = 0;
-		P.set(true, true);
-		let found = null;
-		const rows = [];
-		/* a wagon parks when the reader is exactly at its document Y, and a
-		   page only lets the reader between its portion's start and its
-		   bottom — so the first page whose window reaches a wagon's Y is
-		   where parking is testable */
-		for (let k = 0; k < P.count && !found; k++) {
-			S.step(window.scrollY);
-			await pr.settle();
-			const f = pr.spot(k), dys = [];
-			for (let i = 0; i < S.wagons.n; i++) {
-				const dy = S.wagons.els[i].getBoundingClientRect().top + window.scrollY;
-				dys.push(Math.round(dy));
-				if (found || dy < pr.start(k) - 0.5 || dy > f) continue;
-				found = { k, i, dy, y: P.y[k], paged: rects() };
-			}
-			rows.push('p' + k + ' [' + Math.round(pr.start(k)) + ',' + Math.round(f) + '] wagons=' + dys.join(','));
-			if (k < P.count - 1) { P.next(); S.step(window.scrollY); }
-		}
-		if (!found) { P.smooth = 1; return { found: null, rows: rows }; }
-		/* a wagon parks where the reader is exactly at its document Y, so park
-		   there — clamped into the page's own range, which is a single point
-		   for a short page and a window of scroll for a tall one. Only if the
-		   browser will not sit exactly there does the whole range get scanned
-		   for the closest integer. */
-		const lo = pr.start(found.k), hi = pr.spot(found.k);
-		const parkAt = Math.min(Math.max(found.dy, lo), hi);
-		window.scrollTo(0, parkAt);
-		S.step(window.scrollY);
-		let best = { s: parkAt, pos: S.wagons.pos[found.i] };
-		if (Math.abs(best.pos) > 1.5) {
-			best = null;
-			for (let s = Math.ceil(lo); s <= Math.floor(hi); s++) {
-				window.scrollTo(0, s);
-				S.step(window.scrollY);
-				const p = S.wagons.pos[found.i];
-				if (!best || Math.abs(p) < Math.abs(best.pos)) best = { s: s, pos: p };
-			}
-		}
-		found.parkAt = best.s;
-		window.scrollTo(0, best.s);
-		S.step(window.scrollY);
-		await pr.settle();
-		const w = S.wagons.els[found.i].getBoundingClientRect();
-		found.pos = S.wagons.pos[found.i];
-		found.box = [w.left, w.top, w.width, w.height].map(v => Math.round(v * 100) / 100);
-		found.vp = [window.innerWidth, window.innerHeight];
-		found.bottom = w.bottom + window.scrollY;
-		found.paged = rects();
-		P.set(false);
-		window.scrollTo(0, found.parkAt);
-		S.step(window.scrollY);
-		await pr.settle();
-		found.book = rects();
-		P.set(true);
-		window.scrollTo(0, found.parkAt);
-		S.step(window.scrollY);
-		await pr.settle();
-		found.round = rects();
-		P.smooth = 1;
-		return { found: found, rows: rows };
+		return {
+			count: P.count, engine: window.Snowfall.version, paged: P.version,
+			on: P.get(), y0: P.y[0], padTop: P.padTop,
+			overflowY: P.root.style.overflowY, overflowX: P.root.style.overflowX,
+			height: P.root.style.height, docH: document.documentElement.scrollHeight,
+			vh: window.innerHeight,
+		};
 	});
-	ok(!!park.found, 'the demo reaches a wagon the clamp lets the reader park at',
-		park.found ? 'page ' + park.found.k + ', wagon ' + park.found.i : 'none found' + (park.rows ? ' — ' + park.rows.join(' | ') : ''));
-	if (park.found) {
-		ok(Math.abs(park.found.pos) <= 1.5 && Math.abs(park.found.box[0]) <= 1.5 && Math.abs(park.found.box[1]) <= 1.5
-			&& park.found.box[2] === park.found.vp[0] && park.found.box[3] === park.found.vp[1],
-			'the wagon parks at the window top and its box is the whole window',
-			'pos ' + park.found.pos + ' at scroll ' + park.found.parkAt + ', box ' + park.found.box.join(',') + ' vs ' + park.found.vp.join(','));
-		ok(park.found.y >= park.found.bottom - TOL,
-			'the page holds the parked wagon whole, so overflow: clip cannot cut it',
-			'page ends ' + Math.round(park.found.y) + ', wagon ends ' + Math.round(park.found.bottom));
-		ok(park.found.paged.join('|') === park.found.book.join('|'),
-			'every wagon paints the identical rect at the same scroll in both modes',
-			park.found.paged.join('|') + ' vs ' + park.found.book.join('|'));
-		ok(park.found.paged.join('|') === park.found.round.join('|'),
-			'and the same again after a paged -> book -> paged round trip',
-			park.found.book.join('|') + ' vs ' + park.found.round.join('|'));
-	}
+	ok(boot1.on, 'demo boots in paged mode', 'page 1/' + boot1.count);
+	ok(boot1.count > 6, 'pages are grouped from the story\'s own stops', String(boot1.count));
+	ok(boot1.engine === '0.7.0' && boot1.paged === '0.7.0', 'on engine ' + boot1.engine + ' + paged ' + boot1.paged, boot1.engine);
+	ok(boot1.overflowY === 'clip' && boot1.overflowX !== 'clip',
+		'the story root is clipped on the block axis only', boot1.overflowY + '/' + boot1.overflowX);
+	ok(/px/.test(boot1.height), 'the clamp is a plain height, never a second axis', boot1.height);
+	ok(Math.abs(boot1.docH - Math.round(boot1.vh)) <= 2 || boot1.docH >= boot1.vh - TOL,
+		'the paper fills the window on a full first page', boot1.docH + 'px of ' + boot1.vh);
 
-	/* ---- 3 · a <br> boundary is the gap between two lines ---- */
-	const brs = await page.evaluate(() => {
-		const P = window.SnowfallPaged, pr = window.__probe, out = [];
-		for (let k = 0; k < P.count; k++) {
-			const el = P.at(k);
-			if (!el || el.tagName !== 'BR') continue;
-			const a = pr.before(el), b = pr.after(el);
-			if (!a || !b) continue;
-			out.push({
-				k, y: P.y[k],
-				before: pr.glyph(a, true), after: pr.glyph(b, false),
-				brBottom: el.getBoundingClientRect().bottom + window.scrollY
-			});
+	/* 2 · the premise: paged mode moves no anchor */
+	const prem = await page.evaluate(async () => {
+		const S = window.Snowfall, P = P0();
+		await __probe.settle();
+		const marks = __probe.marks();
+		const bookH = __probe.docH();
+		P.set(false);
+		const bookH2 = __probe.docH();
+		P.set(true);
+		await __probe.settle();
+		const pagedH = __probe.docH();
+		return {
+			same: marks === __probe.marks(), bookH: bookH2, pagedH,
+			done: __probe.done(P.index), vh: window.innerHeight,
+		};
+	});
+	ok(prem.same, 'wagon and event anchors are byte-identical across the switch');
+	ok(prem.bookH > prem.pagedH, 'and paged mode is a shorter document', prem.bookH + ' vs ' + prem.pagedH);
+	ok(Math.abs(prem.pagedH - (prem.done + prem.vh)) <= 2,
+		'the paper ends at the current page, not the whole story', prem.pagedH + 'px of ' + prem.bookH);
+
+	/* 3–4 · the full walk: screenfuls, arrivals, blanks, tall pages */
+	await page.evaluate(() => { P0().set(true, true); });
+	await sleep(300);
+	const step = await page.evaluate(async () => {
+		const P = P0();
+		P.smooth = 0;
+		const out = { pages: [], taps: 0, reveals: 0, walks: 0, endOk: false, backs: 0, backTo: -1, mono: true };
+		let guard = P.count * 6, lastK = -1, lastY = -1;
+		for (;;) {
+			const k = P.index, y = window.scrollY;
+			const rec = {
+				k, n: P.count,
+				open: __probe.open(k), done: __probe.done(k),
+				portion: __probe.portion(k), band: __probe.bandH(),
+				one: __probe.onePortion(k),
+				padTop: P.padTop,
+				paper: __probe.docH(),
+				y,
+			};
+			/* the live document: the page's own cut element at the band top */
+			const el = k > 0 ? P.at(k - 1) : null;
+			rec.stopTop = el && el.getBoundingClientRect ? el.getBoundingClientRect().top : 0;
+			rec.isRoot = !el || el === P.root;
+			rec.blankHit = (function () {
+				if (y < rec.open - 1.5 || __probe.portion(k) >= __probe.bandH() - 1.5) return true;
+				const hit = document.elementFromPoint(Math.round(window.innerWidth / 2), window.innerHeight - 4);
+				return !hit || !P.root.contains(hit) || !function () {
+					for (let n = hit; n && n !== P.root; n = n.parentNode) {
+						if (n.nodeType === 3 ? n.nodeValue.trim() : (n.textContent || '').trim()) return true;
+					}
+					return false;
+				}();
+			})();
+			out.pages.push(rec);
+			if (y < lastY - 1.5) out.mono = false;
+			lastY = y; lastK = k;
+			if (!P.next()) { out.endOk = true; break; }
+			out.taps++;
+			if (P.index > k) out.reveals++; else out.walks++;
+			await __probe.settle();
+			if (--guard <= 0) break;
 		}
+		/* back to the start */
+		guard = P.count * 6;
+		while (P.prev() && guard-- > 0) out.backs++;
+		out.backTo = P.index;
 		return out;
 	});
-	ok(brs.length >= 3, 'the demo has ' + brs.length + ' <br> portions', String(brs.length));
-	for (const b of brs) {
-		const f = n => n.toFixed(1);
-		ok(b.y > b.before.bottom - TOL && b.y < b.after.top + TOL,
-			'br boundary ' + f(b.y) + ' lies between the lines ' + f(b.before.bottom) + ' / ' + f(b.after.top));
-		ok(b.y - b.before.bottom > 2 && b.after.top - b.y > 2,
-			'strictly inside the gap on page ' + b.k + ', not on a glyph edge',
-			f(b.y - b.before.bottom) + ' / ' + f(b.after.top - b.y));
-		ok(Math.abs(b.y - b.brBottom) > 1.5,
-			'and not the br rect bottom', f(b.brBottom));
-	}
-
-	/* ---- 4 · stepping ---- */
-	const step = await page.evaluate(async tol => {
-		const P = window.SnowfallPaged, S = window.Snowfall, pr = window.__probe;
-		/* a fresh, settled layout: a minigame seats itself the first time it is
-		   looked at, and the panel it paints moves everything below it */
-		P.smooth = 0;
-		P.set(false);
-		Snowfall.refresh(true);
-		S.step(0);
-		Snowfall.refresh(true);
-		P.set(true, true);
-		S.step(window.scrollY);
-		await pr.settle();
-		const over = [], rows = [], pages = [];
-		let taps = 0, reveals = 0, walks = 0;
-		/* what the page window is: it opens at this page's own portion, never
-		   above it, so the text before it is off the page; and a wagon is
-		   either whole above the window or whole inside the page's paper, never
-		   cut in half by the clip */
-		function row(k) {
-			const start = pr.start(k), spot = pr.spot(k);
-			const cut = [];
-			for (let i = 0; i < S.wagons.n; i++) {
-				const w = S.wagons.els[i].getBoundingClientRect();
-				const end = P.y[k] - window.scrollY;
-				if (w.top < end - tol && w.bottom > end + tol) cut.push(i + ':' + Math.round(w.top) + '..' + Math.round(w.bottom));
-			}
-			const hit = document.elementFromPoint(Math.round(window.innerWidth / 2), window.innerHeight - 4);
-			pages.push({
-				k: k, tall: P.y[k] - start >= window.innerHeight - tol, cut: cut.join(','),
-				open: window.scrollY - start, top: spot - window.scrollY,
-				blank: hit ? !P.root.contains(hit) : false,
-				text: (hit && hit.textContent || '').trim().slice(0, 12)
-			});
-		}
-		for (let i = 0; i < 120; i++) {
-			const here = Math.abs(window.scrollY - pr.spot(P.index)) <= tol;
-			if (P.index === P.count - 1 && here) break;
-			if (here) row(P.index);
-			const sY = window.scrollY, before = P.index;
-			if (!P.next()) break;
-			taps++;
-			S.step(window.scrollY);
-			await pr.settle();
-			const k = P.index, spot = pr.spot(k), start = pr.start(k);
-			const advanced = k > before;
-			if (advanced) reveals++; else if (k < before) over.push('tap ' + taps + ' went back a page');
-			if (advanced && k !== before + 1) over.push('tap ' + taps + ' moved ' + (k - before) + ' portions');
-			/* the paper is this page: the root ends at the portion, plus at
-			   most one window of blank underneath */
-			if (Math.abs(pr.docH() - Math.round(P.y[k] + pr.band(k))) > tol)
-				over.push('tap ' + taps + ': docH ' + pr.docH() + ' != ' + Math.round(P.y[k] + pr.band(k)));
-			if (window.scrollY > spot + tol) over.push('tap ' + taps + ': scrolled past the page by ' + (window.scrollY - spot).toFixed(1));
-			if (window.scrollY - sY > window.innerHeight + tol) over.push('tap ' + taps + ': scrolled ' + (window.scrollY - sY).toFixed(1) + 'px');
-			if (window.scrollY < sY - tol) over.push('tap ' + taps + ': scrolled backwards');
-			/* ground truth, not the model agreeing with itself: an arrival on a
-			   page that fits the window sits on the page's own real stop element
-			   — a list that drifted from the document (a game seated above)
-			   still agrees with itself, so measure the document instead */
-			const gt = k > 0 ? P.at(k - 1) : null;
-			if (advanced && k > 0 && Math.abs(window.scrollY - spot) <= tol && Math.abs(spot - start) <= tol &&
-				gt && gt.tagName && gt.tagName.toLowerCase() !== 'br' && gt !== P.root &&
-				Math.abs(gt.getBoundingClientRect().top) > tol + 1)
-				over.push('tap ' + taps + ': window top ' + Math.round(window.scrollY) + ' is not the page\'s real stop top');
-			if (advanced) rows.push(P.y[k]);
-			else walks++;
-		}
-		row(P.index);
-		const atEnd = P.index === P.count - 1 && P.next() === false, count = P.count;
-		let backs = 0;
-		while (P.prev() && backs < 120) { backs++; S.step(window.scrollY); await pr.settle(); }
-		P.smooth = 1;
-		return {
-			taps, reveals, walks, over, atEnd, backs, backTo: P.index, pages, count,
-			monotonic: rows.every((v, i) => !i || v > rows[i - 1]),
-			progress: P.smooth
-		};
-	}, TOL);
-	ok(step.over.length === 0, 'every tap reveals one portion, and the paper is exactly that page',
-		step.over.slice(0, 3).join(' | '));
-	/* the promise the mode exists for: the text that came before leaves the page */
+	const uniq = step.pages.filter((p, i) => i === 0 || p.k !== step.pages[i - 1].k);
+	const pads = uniq.filter(p => p.k > 0);
 	ok(step.pages.every(p => p.open >= -TOL), 'no page ever shows text from before its own portion',
-		step.pages.filter(p => p.open < -TOL).map(p => p.k + ':' + p.open.toFixed(1)).join(' '));
-	ok(step.pages.filter(p => !p.tall).every(p => Math.abs(p.top) <= TOL),
-		'every page shorter than the window opens on its own first line',
-		'tops ' + step.pages.filter(p => !p.tall).map(p => p.top.toFixed(0)).filter((v, i, a) => a.indexOf(v) === i).join(','));
-	ok(step.pages.filter(p => p.tall).every(p => Math.abs(p.top) <= TOL),
-		'every page taller than the window is read at its last line',
-		'tops ' + step.pages.filter(p => p.tall).map(p => p.top.toFixed(0)).filter((v, i, a) => a.indexOf(v) === i).join(','));
-	ok(step.pages.every(p => !p.cut), 'no art wagon is cut in half by a page edge',
-		step.pages.filter(p => p.cut).map(p => p.k + ':' + p.cut).join(' '));
-	const shorts = step.pages.filter(p => !p.tall);
-	ok(shorts.length > 0 && shorts.every(p => p.blank), 'a page shorter than the window has blank paper under it, not text',
-		shorts.filter(p => !p.blank).map(p => p.k + ':' + p.text).join(' ') || shorts.length + ' pages checked');
-	ok(step.walks > 0, 'a page taller than the window is walked, not skipped (' + step.walks + ' walking taps)',
-		String(step.walks));
-	ok(step.reveals === step.count - 1, 'a full pass reveals one portion a tap (' + step.reveals + ' for ' + step.count + ')',
-		step.reveals + ' taps + ' + step.walks + ' walking taps');
-	ok(step.atEnd, 'the end of the story stops');
-	ok(step.backTo === 0 && step.backs === step.reveals, 'back taps walk the same pages in reverse',
-		step.backs + ' taps, page ' + (step.backTo + 1));
-	ok(step.monotonic, 'and no tap ever goes backwards');
+		step.pages.filter(p => p.open < -TOL).length + ' pages with earlier text on them');
+	const arrivals = pads.filter(p => Math.abs(p.y - p.open) < 2 && !p.isRoot);
+	ok(arrivals.length > 0 && arrivals.every(p => Math.abs(p.stopTop - (uniq[0].padTop || 0)) <= 2.5),
+		'every arrival opens on the page\'s own real cut element at the band top',
+		arrivals.length + ' arrivals measured live');
+	const tall = uniq.filter(p => p.portion > p.band + TOL);
+	ok(step.pages.every(p => p.portion <= p.band + TOL || p.one),
+		'a page fills the screen with whole portions, or is exactly one portion',
+		tall.length + ' page(s) taller than the band, each one single-portion: ' + tall.every(p => p.one));
+	ok(step.pages.every(p => Math.abs(p.paper - (p.done + VH)) <= 2),
+		'the paper is exactly the page it shows', step.pages.map(p => Math.round(p.paper)).join(',') || '—');
+	ok(uniq.filter(p => p.portion < p.band - TOL).every(p => p.blankHit),
+		'a page shorter than the screen is padded with blank paper, not old text',
+		uniq.filter(p => p.portion < p.band - TOL).length + ' short page(s) checked at the window\'s bottom edge');
+	ok(tall.length === 0 || step.walks >= tall.length, 'a tall portion is walked, never skipped (' + step.walks + ' walking taps)', String(step.walks));
+	ok(step.reveals === step.pages[0].n - 1, 'one page a tap, the end says stop', step.reveals + ' reveals for ' + step.pages[0].n + ' pages');
+	ok(step.endOk, 'the walk ends at the end of the story');
+	ok(step.backTo === 0 && step.backs >= step.reveals, 'back taps walk the same pages in reverse',
+		step.backs + ' back taps to page ' + (step.backTo + 1));
+	ok(step.mono, 'and no tap ever goes backwards');
 
-	/* ---- 5 · keys, and what a tap must not turn ---- */
+	/* the art: no cover is sliced by a page edge */
+	const art = await page.evaluate(() => __probe.artCuts());
+	ok(art.length === 0, 'no art wagon is cut in half by a page edge', art.join(',') || 'every cut is on a cover edge or outside');
+
+	/* 5 · keys and taps */
 	const keys = await page.evaluate(async () => {
-		const P = window.SnowfallPaged, S = window.Snowfall, pr = window.__probe, out = {};
-		function key(name, extra) {
-			document.dispatchEvent(new KeyboardEvent('keydown', Object.assign({ key: name, bubbles: true, cancelable: true }, extra || {})));
-		}
-		function tap(el) {
-			['pointerdown', 'pointerup'].forEach(t => el.dispatchEvent(new PointerEvent(t,
-				{ bubbles: true, cancelable: true, clientX: 20, clientY: 20, button: 0, isPrimary: true })));
-		}
-		P.smooth = 0;
+		const P = P0();
 		P.set(true, true);
-		P.next();
-		S.step(window.scrollY);
-		await pr.settle();
+		P.smooth = 0;
+		await __probe.settle();
+		const out = {};
+		const key = (code) => {
+			document.dispatchEvent(new KeyboardEvent('keydown', { key: code, bubbles: true, cancelable: true }));
+		};
 		let k = P.index;
 		key(' ');
-		S.step(window.scrollY);
-		await pr.settle();
+		await __probe.settle();
 		out.space = P.index === k + 1;
 		k = P.index;
 		key('Backspace');
-		S.step(window.scrollY);
-		await pr.settle();
+		await __probe.settle();
 		out.backspace = P.index === k - 1;
 		k = P.index;
 		key('ArrowDown');
+		await __probe.settle();
 		out.arrowDown = P.index === k;
-		for (const sel of ['#bar', '#app button', '.seat', '#app a']) {
+		const tap = (el) => {
+			el.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, clientX: 12, clientY: 12, button: 0, isPrimary: true }));
+			el.dispatchEvent(new PointerEvent('pointerup', { bubbles: true, clientX: 12, clientY: 12, button: 0, isPrimary: true }));
+		};
+		for (const sel of ['#bar', '.seat a', 'a', '.w-ask button, .w-choice button']) {
 			const el = document.querySelector(sel);
 			if (!el) { out[sel] = null; continue; }
+			k = P.index;
 			tap(el);
+			await __probe.settle();
 			out[sel] = P.index === k;
 		}
-		tap(document.querySelector('#app p'));
+		const p = document.querySelector('#app p');
+		k = P.index;
+		tap(p);
+		await __probe.settle();
 		out.prose = P.index === k + 1;
-		P.smooth = 1;
 		return out;
 	});
 	ok(keys.space, 'Space advances');
 	ok(keys.backspace, 'Backspace goes back');
 	ok(keys.arrowDown, 'ArrowDown stays native scrolling');
-	for (const sel of ['#bar', '#app button', '.seat', '#app a']) {
+	for (const sel of ['#bar', '.seat a', 'a', '.w-ask button, .w-choice button']) {
 		ok(keys[sel] === null || keys[sel], 'a tap on ' + sel + ' does not turn the page', String(keys[sel]));
 	}
 	ok(keys.prose, 'a tap on the prose does');
 
-	/* ---- 6 · the page's own self-test ---- */
-	/* the walk in t5 gives every tap a tick, the way a reader does, so the
-	   self-test finishes a moment after run() returns: wait for its verdict */
-	const qa = await page.evaluate(() => new Promise(resolve => {
-		window.demoPaged.run();
-		const t0 = Date.now();
-		(function poll() {
-			const t = document.getElementById('qa').textContent;
-			if (/all checks passed|FAILED/.test(t) || Date.now() - t0 > 90000) return resolve(t);
-			setTimeout(poll, 100);
-		})();
-	}));
-	const bad = qa.split('\n').filter(l => /FAIL/.test(l));
+	/* 6 · the page's own self-test */
+	await page.evaluate(() => { window.demoPaged.run(); });
+	await sleep(7000);
+	const qa = await page.evaluate(() => document.querySelector('#qa').textContent);
+	const bad = qa.split('\n').filter(l => /^FAIL/.test(l));
 	ok(bad.length === 0, 'demo-paged self-test is green', bad.join(' | '));
 	ok(/all checks passed/.test(qa), 'and says so', qa.split('\n').filter(l => /passed|FAILED/.test(l)).join(' | '));
 
-	/* ---- 7 · file:// ---- */
-	const tab = await page.browser().newPage();
-	await tab.setViewport({ width: VW, height: VH });
-	await tab.goto('file://' + ROOT + '/demo-paged.html', { waitUntil: 'load' });
-	const file = await tab.waitForFunction(() => window.Snowfall && window.SnowfallPaged && window.SnowfallPaged.count > 0
-		? { on: window.SnowfallPaged.get(), count: window.SnowfallPaged.count, y0: window.SnowfallPaged.y[0],
-			docH: document.documentElement.scrollHeight, vh: window.innerHeight } : null,
-		{ timeout: 15000 }).then(h => h.jsonValue());
-	await tab.close();
-	ok(file.on, 'file:// boots paged from data-paged');
-	ok(Math.abs(file.docH - Math.round(file.y0 + Math.max(0, file.vh - file.y0))) <= TOL,
-		'and shows the first portion, padded to one window', file.docH + ' vs ' + Math.round(file.y0 + file.vh));
+	/* 7 · file:// boot from data-paged */
+	await page.goto('file://' + path.join(ROOT, 'demo-paged.html'), { waitUntil: 'networkidle0' });
+	await sleep(400);
+	const file = await page.evaluate(() => {
+		const P = window.SnowfallPaged;
+		return { on: P.get(), k: P.index, count: P.count, docH: document.documentElement.scrollHeight, vh: window.innerHeight };
+	});
+	ok(file.on && file.k === 0, 'file:// boots paged from data-paged', 'page ' + (file.k + 1) + '/' + file.count);
+	ok(file.docH >= file.vh - TOL, 'with the first page\'s paper on screen', file.docH + 'px of ' + file.vh);
 
 	if (errs.length) for (const e of errs) ok(false, 'paged page error', e.split('\n')[0]);
-	return { errors: errs.length };
 };

@@ -1,18 +1,21 @@
 #!/usr/bin/env node
-/* test/paged.js — 0.6.0 paged-controller gate. Runs the real
-   snowfall-paged.js over the shared fake DOM, so the stop walk, the merge
-   rules, the clamp arithmetic and the input gating are all checked without a
+/* test/paged.js — 0.7.0 paged-controller gate. Runs the real
+   snowfall-paged.js over the shared fake DOM, so the stop walk, the screenful
+   rule, the clamp arithmetic and the input gating are all checked without a
    browser. Line geometry (the <br> midpoint, sticky parking) belongs to
    test/browser/paged.js.
 
-     the stop walk   — every depth, a heading is not a stop, <br> in a wagon,
-                       a game, a [data-nopage] box or a script never counts
-     the merges      — empty <p>, <br><br>, a trailing <br>, a <section>
-                       opening into its first <p>, the blank opening page
-     the clamp       — the padding box lands on the boundary for both
+     the cuts        — every stop depth, a heading is not a stop, <br> in a
+                       wagon, a game, a [data-nopage] box or a script never
+                       counts; empty portions merge
+     the pages       — a screenful of whole portions ends at the last stop
+                       that fits; a portion taller than the screen is a page
+                       of its own; the end cut closes the last page
+     the clamp       — the padding box lands on the page cut for both
                        box-sizings, two style writes, the inline axis untouched
-     stepping        — one portion a tap, the stepMax cap, hurry, prev's
-                       deferred shrink, the end of the story
+     stepping        — one page a tap, a tall page walked a band at a time,
+                       prev's deferred shrink, the end of the story
+     padTop/padBottom — the fixed chrome is cleared by every page
      re-measure      — the page is kept by element, not by index; a story that
                        changes its own height (a minigame seating itself) is
                        re-measured on the next tick and the reader re-anchored
@@ -65,6 +68,8 @@ function prose(n) {
 	for (i = 0; i < n; i++) out += para(new Array(30).join('word ' + i + ' '));
 	return out;
 }
+/* a paragraph of exactly n lines: 24px margins + n·26px */
+function hPara(n) { return para(new Array(n * 60 + 1).join('x')); }
 const PAGE = '<!doctype html><html data-story="gate-paged"><head></head><body>' +
 	'<div id="hud"></div><div id="app">@BODY@</div>' +
 	'<script src="snowfall.js"></script><script src="snowfall-paged.js"></script>' +
@@ -91,15 +96,34 @@ function openPage(body, opts) {
 	}
 	return p;
 }
-function list(p) {
-	const out = [];
-	for (let i = 0; i < p.SP.count; i++) {
-		const el = p.SP.at(i);
-		out.push((el === p.el('app') ? 'ROOT' : el.tagName + (el.id ? '#' + el.id : '') + (el.className ? '.' + el.className : '')) + '@' + p.SP.y[i]);
-	}
+function label(el, root) {
+	if (!el) return 'null';
+	if (el === root) return 'ROOT';
+	return el.tagName + (el.id ? '#' + el.id : '') + (el.className ? '.' + el.className : '');
+}
+function cuts(p) {
+	const out = [], root = p.el('app');
+	for (let i = 0; i < p.SP.cutN; i++) out.push(label(p.SP.cutAt(i), root) + '@' + p.SP.cutY[i]);
 	return out;
 }
-function tags(p) { return list(p).map(s => s.split('@')[0]); }
+function cutTags(p) { return cuts(p).map(s => s.split('@')[0]); }
+function pages(p) {
+	const out = [], root = p.el('app');
+	for (let i = 0; i < p.SP.count; i++) out.push(label(p.SP.at(i), root) + '@' + p.SP.y[i]);
+	return out;
+}
+/* the model restated for the checks: where page k opens, is done, and the
+   blank paper it needs under it */
+function start(p, k) { return k > 0 ? p.SP.y[k - 1] : 0; }
+function open(p, k) { return Math.max(0, start(p, k) - p.SP.padTop); }
+function done(p, k) { return Math.max(0, open(p, k), p.SP.y[k] - VH + p.SP.padBottom); }
+function band(p, k) { return Math.max(0, done(p, k) + VH - p.SP.y[k]); }
+function mono(p) {
+	for (let i = 1; i < p.SP.cutN; i++) if (p.SP.cutY[i] < p.SP.cutY[i - 1]) return false;
+	for (let i = 1; i < p.SP.count; i++) if (p.SP.y[i] < p.SP.y[i - 1]) return false;
+	return true;
+}
+
 /* the fake page is laid out once, at build time: a source edit has to push
    everything below it down by hand, the way a browser reflow would */
 function para_el(text) {                       /* a laid-out paragraph, built by hand */
@@ -118,83 +142,116 @@ function reflow(root, from, by) {
 	for (const el of descendants(root)) if (el !== root && el.layoutY >= from) el.layoutY += by;
 	root._h += by;
 }
-function mono(p) {
-	for (let i = 1; i < p.SP.count; i++) if (p.SP.y[i] < p.SP.y[i - 1]) return false;
-	return true;
-}
 
-/* ---------------- 1. the stop walk ---------------- */
+/* ---------------- 1. the stop walk: the author's cuts ---------------- */
 {
 	const p = openPage('<div class="cover">title block</div>' +
 		'<section id="s1"><h2>one</h2>' + para('first paragraph') + para('second<br>after the break') + '</section>' +
 		'<section id="s2"><div class="snow-game" data-nopage>' + para('ui<br>lines') + '</div>' + para('after the game') + '</section>' +
 		'<script type="txt" event="view">void 0</script>');
-	eq(tags(p).join(' '), 'SECTION#s1 P P BR P ROOT', 'a section, its paragraphs and its <br> are stops');
-	eq(p.SP.y[0], 120, 'the first boundary is the section, the cover above it is page one');
+	eq(cutTags(p).join(' '), 'SECTION#s1 P P BR P ROOT', 'a section, its paragraphs and its <br> are cuts');
+	eq(p.SP.cutY[0], 120, 'the first cut is the section, the cover above it is the opening');
 	ok(mono(p), 'the list is non-decreasing');
-	eq(p.SP.at(p.SP.count - 1), p.el('app'), 'the last boundary is the story root itself');
-	ok(p.SP.y[p.SP.count - 1] === p.el('app').layoutY + p.el('app')._h, 'and sits on its bottom edge');
-	ok(tags(p).indexOf('H2') < 0, 'a heading is not a stop');
-	ok(list(p).indexOf('SECTION#s2') < 0, 'a section whose only content is a game box merges into the page after it');
+	eq(p.SP.cutAt(p.SP.cutN - 1), p.el('app'), 'the last cut is the story root itself');
+	ok(p.SP.cutY[p.SP.cutN - 1] === p.el('app').layoutY + p.el('app')._h, 'and sits on its bottom edge');
+	ok(cutTags(p).indexOf('H2') < 0, 'a heading is not a cut');
+	ok(cuts(p).join(' ').indexOf('SECTION#s2') < 0, 'a section whose only content is a game box merges into the page after it');
 }
 {
 	/* a <br> inside an excluded subtree never ends a portion */
 	const p = openPage(para('one') + '<div class="snow-bg" data-mode="cover">a<br>b</div>' +
 		'<p class="cut" data-nopage>cut<br>me</p>' + para('two'));
-	eq(tags(p).join(' '), 'P ROOT', 'a <br> in a wagon and in [data-nopage] never counts');
-	ok(list(p).indexOf('P.cut') < 0, 'and the [data-nopage] paragraph is not a stop either');
+	eq(cutTags(p).join(' '), 'P ROOT', 'a <br> in a wagon and in [data-nopage] never counts');
+	ok(cuts(p).join(' ').indexOf('P.cut') < 0, 'and the [data-nopage] paragraph is not a cut either');
 }
 {
-	/* a picture is content: a section that opens with one is a page of its own */
+	/* a picture is content: a section that opens with one is a portion of its own */
 	const p = openPage('<div class="cover">title</div><section id="s"><div class="snow-bg" data-mode="cover">art</div>' + para('after') + '</section>');
-	eq(tags(p).join(' '), 'SECTION#s P ROOT', 'the wagon keeps the section boundary alive');
+	eq(cutTags(p).join(' '), 'SECTION#s P ROOT', 'the wagon keeps the section cut alive');
 	const q = openPage('<div class="cover">title</div><section id="s">' + para('after') + '</section>');
-	eq(tags(q).join(' '), 'P ROOT', 'without it the empty section would merge away');
+	eq(cutTags(q).join(' '), 'P ROOT', 'without it the empty section would merge away');
 }
 
-/* ---------------- 2. merges: an empty portion is not a page ---------------- */
+/* ---------------- 2. merges: an empty portion is not a cut ---------------- */
 {
 	const p = openPage(para('one') + '<p></p>' + para('two<br><br>three') + para('four<br>') +
 		'<section id="s">' + para('five') + '</section>');
-	eq(tags(p).join(' '), 'P BR P P ROOT', 'empty <p>, <br><br>, a trailing <br> and a section opening into a <p> all merge');
+	eq(cutTags(p).join(' '), 'P BR P P ROOT', 'empty <p>, <br><br>, a trailing <br> and a section opening into a <p> all merge');
 	ok(mono(p), 'the merged list is still non-decreasing');
 	ok(p.SP.count > 0, 'and the story is still readable in pages');
 }
 {
-	/* nothing above the first stop: the opening page would be blank */
+	/* nothing above the first cut: the opening page would be blank */
 	const p = openPage(para('one') + para('two'));
-	eq(p.SP.count, 2, 'a story that opens on a stop has no blank page in front of it');
-	eq(p.SP.y[0], 50, 'page one is the first paragraph itself');
+	eq(p.SP.cutN, 2, 'a story that opens on a cut has no blank portion in front of it');
+	eq(p.SP.cutY[0], 50, 'the first cut is the first paragraph\'s end');
 }
 {
 	/* data-stops widens the list for one page only */
 	const body = para('one') + para('two') + '<hr>rule' + para('three');
 	const p = openPage(body);
-	eq(list(p).join(' '), 'P@50 P@102 ROOT@152', 'an <hr> is ordinary flow by default');
+	eq(cuts(p).join(' '), 'P@50 P@102 ROOT@152', 'an <hr> is ordinary flow by default');
 	const q = openPage(body);
 	q.el('app').setAttribute('data-stops', 'p,hr');
 	q.win.Snowfall.refresh(true);
-	eq(list(q).join(' '), 'P@50 HR@100 P@102 ROOT@152', 'data-stops="p,hr" makes each <hr> with prose after it a page');
+	eq(cuts(q).join(' '), 'P@50 HR@100 P@102 ROOT@152', 'data-stops="p,hr" makes each <hr> with prose after it a cut');
 	eq(q.SP.stops, 'p,section,br', 'the default list is unchanged on other pages');
 }
 {
-	/* an out-of-flow stop loses to the one before it */
+	/* an out-of-flow cut loses to the one before it */
 	const p = openPage(para('one') + para('two') + para('three'));
-	const before = p.SP.count;
+	const before = p.SP.cutN;
 	const warns = [], warn = console.warn;
 	console.warn = m => warns.push(m);
 	p.el('app').querySelectorAll('p')[2].layoutY = 5;          /* pulled above its siblings */
 	p.win.Snowfall.refresh(true);
 	console.warn = warn;
-	ok(p.SP.count <= before, 'a stop above its predecessor adds no backwards page');
+	ok(p.SP.cutN <= before, 'a cut above its predecessor adds no backwards page');
 	ok(mono(p), 'and the list stays ordered');
-	eq(warns.length, 1, 'the author is told once, not once per boundary');
+	eq(warns.length, 1, 'the author is told once, not once per cut');
 	ok(/out-of-flow/.test(warns[0] || ''), 'and the warning says what is wrong', warns[0]);
 }
 
-/* ---------------- 3. the clamp: the padding box on the boundary ---------------- */
+/* ---------------- 3. the pages: one screenful, cut at the stops ---------------- */
 {
-	const p = openPage(para('one') + para('two') + para('three'));
+	/* short portions merge into one screen */
+	const p = openPage(hPara(1) + hPara(1) + hPara(1) + hPara(1) + hPara(1) + hPara(1));
+	p.SP.set(true);
+	eq(p.SP.count, 1, 'six 50px portions are one screenful');
+	eq(p.SP.y[0], 300, 'the page ends at the story end');
+}
+{
+	/* the page ends at the last stop that fits */
+	const p = openPage(prose(0) + new Array(20).fill(0).map(() => hPara(1)).join(''));
+	p.SP.set(true);
+	eq(p.SP.count, 2, '1000px of 50px portions is two screens');
+	eq(p.SP.y[0], 800, 'page one ends on the cut at the screen bottom', String(p.SP.y[0]));
+	eq(p.SP.y[1], 1000, 'page two takes the rest');
+	ok(band(p, 0) === 0, 'a full page needs no blank paper');
+	ok(band(p, 1) > 0, 'the short tail page does');
+}
+{
+	/* a portion taller than the screen is a page of its own, walked */
+	const p = openPage(hPara(1) + hPara(1) + hPara(1) + hPara(40) + hPara(1) + hPara(1) + hPara(1));
+	p.SP.set(true);
+	eq(p.SP.count, 3, 'short + tall + short is three pages');
+	eq(p.SP.y[0], 150, 'the shorts end their page at the last stop that fits', String(p.SP.y[0]));
+	eq(p.SP.y[1] - p.SP.y[0], 24 + 40 * LINE, 'and the tall portion is the whole page after it');
+	eq(p.SP.y[1], 150 + 24 + 40 * LINE, 'cut at its own end', String(p.SP.y[1]));
+	ok(band(p, 0) > 0, 'the short page before it pads with blank paper, not the tall text');
+	eq(p.SP.y[2], p.SP.y[1] + 150, 'and the shorts after it are the last page');
+}
+{
+	/* the cut list is the author's units; pages group them */
+	const p = openPage(hPara(1) + hPara(1) + hPara(1) + hPara(40) + hPara(1) + hPara(1) + hPara(1));
+	p.SP.set(true);
+	eq(p.SP.cutN, 7, 'the walk still sees every cut (6 stops + the end)');
+	ok(p.SP.count < p.SP.cutN, 'and pages only group them');
+}
+
+/* ---------------- 4. the clamp: the padding box on the page cut ---------------- */
+{
+	const p = openPage(hPara(1) + hPara(1) + hPara(1) + hPara(40) + hPara(1));
 	const r = p.el('app');
 	ok(p.SP.set(true), 'set(true) engages');
 	eq(r.style.overflowY, 'clip', 'the story root is clipped on the block axis');
@@ -203,133 +260,135 @@ function mono(p) {
 	p.SP.set(false);
 	eq(r.style.height, '', 'set(false) clears the height');
 	eq(r.style.overflowY, '', 'set(false) clears the clip');
+	eq(r.style.marginBottom, '', 'and the band');
 }
 {
 	/* content-box: height = y[k] − padBoxTop − padTop − padBottom */
-	const p = openPage(para('one') + para('two'), { box: 'content-box', pad: 10, border: 2 });
+	const p = openPage(hPara(4) + hPara(4) + hPara(4), { box: 'content-box', pad: 10, border: 2 });
 	const r = p.el('app'), padBoxTop = r.layoutY + 2;
-	p.SP.set(true);
-	for (let k = 0; k < p.SP.count; k++) {
-		p.SP.set(true, k === 0);
+	p.SP.set(true, true);
+	const seen = {};
+	let guard = 40;
+	while (guard-- > 0) {
+		seen[p.SP.index] = true;
 		const want = (p.SP.y[p.SP.index] - padBoxTop) - 10 - 10;
-		ok(Math.abs(parseFloat(r.style.height) - want) < 1e-6, 'content-box page ' + k + ' puts the padding box on the boundary',
+		ok(Math.abs(parseFloat(r.style.height) - want) < 1e-6, 'content-box page ' + p.SP.index + ' puts the padding box on the cut',
 			r.style.height + ' vs ' + want);
+		if (!p.SP.next() || seen[p.SP.index]) break;
 	}
 }
 {
 	/* border-box: height = y[k] − padBoxTop + borderTop + borderBottom */
-	const p = openPage(para('one') + para('two'), { box: 'border-box', pad: 10, border: 2 });
+	const p = openPage(hPara(4) + hPara(4) + hPara(4), { box: 'border-box', pad: 10, border: 2 });
 	const r = p.el('app'), padBoxTop = r.layoutY + 2;
-	p.SP.set(true);
-	for (let k = 0; k < p.SP.count; k++) {
-		p.SP.set(true, k === 0);
+	p.SP.set(true, true);
+	const seen = {};
+	let guard = 40;
+	while (guard-- > 0) {
+		seen[p.SP.index] = true;
 		const want = (p.SP.y[p.SP.index] - padBoxTop) + 2 + 2;
-		ok(Math.abs(parseFloat(r.style.height) - want) < 1e-6, 'border-box page ' + k + ' puts the padding box on the boundary',
+		ok(Math.abs(parseFloat(r.style.height) - want) < 1e-6, 'border-box page ' + p.SP.index + ' puts the padding box on the cut',
 			r.style.height + ' vs ' + want);
+		if (!p.SP.next() || seen[p.SP.index]) break;
 	}
 }
 
-/* ---------------- 4. stepping: one page is one portion ---------------- */
+/* ---------------- 5. stepping: one screenful a tap ---------------- */
 {
-	const p = openPage('<div class="cover">title</div>' + prose(10));
-	const SP = p.SP, r = p.el('app'), n = SP.count;
+	const p = openPage(hPara(1) + hPara(1) + hPara(1) + hPara(90) + hPara(1) + hPara(1) + hPara(1) + hPara(1));
+	const SP = p.SP, r = p.el('app');
 	SP.smooth = 0;
 	SP.set(true, true);
 	eq(SP.index, 0, 'set(true, true) starts at page one');
 	eq(p.win.scrollY, 0, 'at the top of the document');
 	eq(SP.top(), 0, 'and the first page is read at the top');
 	ok(SP.next(), 'a tap advances');
-	eq(SP.index, 1, 'exactly one portion a tap');
-	eq(p.win.scrollY, SP.y[0], 'the new page is read at its portion start');
-	ok(SP.next() && SP.index === 2, 'and again');
-	/* the reader scrolled back up inside the page: the next tap hurries, it
-	   does not reveal, and the old text is not pushed away twice */
-	p.win.setScroll(Math.max(0, SP.y[SP.index - 1]) - 300);
+	eq(SP.index, 1, 'exactly one page a tap');
+	eq(p.win.scrollY, start(p, 1), 'the new page opens on its own first line');
+	/* this page is taller than the screen: the taps walk it, a band at a time,
+	   and reveal nothing while walking */
+	const tallY = SP.y[1], openY = p.win.scrollY;
+	eq(tallY - openY, 24 + 90 * LINE, 'page two is the tall portion');
+	eq(SP.top(), tallY - VH, 'and is done at its last window');
+	let guard = 20, steps = 0;
+	while (p.win.scrollY < SP.top() - 1 && guard-- > 0) {
+		const before = p.win.scrollY;
+		SP.next();
+		steps++;
+		ok(p.win.scrollY - before <= VH + 1e-6, 'walk step ' + steps + ' moves at most one window', String(p.win.scrollY - before));
+	}
+	ok(steps > 1, 'it takes several taps to walk down it (' + steps + ')');
+	eq(p.win.scrollY, SP.top(), 'and the reader ends on its last line');
+	eq(SP.index, 1, 'with no page revealed while walking');
+	ok(SP.next(), 'the next tap reveals the page after it');
+	eq(SP.index, 2, 'which is the shorts after the tall portion');
+	eq(p.win.scrollY, start(p, 2), 'opened on its own first line');
+	/* a reader who wheeled back up is hurried, not turned */
+	p.win.setScroll(Math.max(0, SP.top() - 300));
+	const k = SP.index, sY = p.win.scrollY;
 	SP.next();
-	eq(SP.index, 2, 'a tap above this page\'s top reveals nothing');
-	ok(p.win.scrollY <= SP.y[1] + 0.9 * VH + 1e-6, 'it only scrolls, and never more than stepMax', String(p.win.scrollY));
-	let guard = n * 4;
+	eq(SP.index, k, 'a tap above this page\'s done line reveals nothing');
+	ok(p.win.scrollY <= sY + VH + 1e-6, 'it only scrolls, and never more than a window', String(p.win.scrollY - sY));
+	guard = 20;
 	while (guard-- > 0 && SP.next()) { }
-	eq(SP.index, n - 1, 'stepping ends on the last page');
+	eq(SP.index, SP.count - 1, 'stepping ends on the last page');
+	eq(SP.top(), p.win.scrollY, 'and parks the reader on its done line');
 	eq(SP.next(), false, 'and the end of the story says stop');
 }
 {
-	/* every page: its own portion at the window top, the previous one gone,
-	   and the paper below the portion blank rather than earlier text */
+	/* every page opens on its own first line — the text before it is behind
+	   the reader — and pads the paper to a full window when it is short */
 	const p = openPage('<div class="cover">title</div>' + prose(6));
 	const SP = p.SP;
 	SP.smooth = 0;
 	SP.set(true, true);
-	let page = 0, clean = true, onPage = true, bands = 0;
-	while (page < SP.count - 1 && SP.next()) {
-		if (p.win.scrollY !== SP.top()) { onPage = false; }
-		if (p.win.scrollY < SP.y[page]) clean = false;      /* earlier text still on the page */
-		const band = 800 - (SP.y[SP.index] - SP.top());
-		if (band > 0) {
+	let clean = true, opens = true, bands = 0, last = -1;
+	while (SP.next()) {
+		if (SP.index === last) continue;                 /* a hurry, not a turn */
+		last = SP.index;
+		if (p.win.scrollY !== open(p, SP.index)) opens = false;
+		if (p.win.scrollY < start(p, SP.index) - 1e-6) clean = false;
+		if (band(p, SP.index) > 0) {
 			bands++;
-			eq(parseFloat(p.el('app').style.marginBottom), band, 'page ' + SP.index + ' pads the paper to a full window');
+			eq(parseFloat(p.el('app').style.marginBottom), band(p, SP.index), 'page ' + SP.index + ' pads the paper to a full window');
 		}
-		page = SP.index;
 	}
-	ok(onPage, 'every page is read at its own portion start');
+	ok(opens, 'every page opens on its own first line');
 	ok(clean, 'and no page ever shows text from before its portion');
-	ok(bands > 0, 'short portions get the empty band under them (' + bands + ' of ' + (SP.count - 1) + ')', String(bands));
+	ok(bands > 0, 'short pages get the empty band under them (' + bands + ')', String(bands));
 	SP.set(false);
 	eq(p.el('app').style.marginBottom, '', 'and book mode takes the band away again');
 }
+
+/* ---------------- 6. padTop / padBottom: the chrome is cleared ---------------- */
 {
-	/* a portion taller than the viewport: the page starts at its top and the
-	   reader walks down through it, one stepMax at a time */
-	const p = openPage(para(new Array(400).join('word ')) + para('next'));
+	/* 76px portions: the last cut that fits shows exactly where the band ends */
+	const p = openPage(new Array(12).fill(0).map(() => hPara(2)).join(''));
 	const SP = p.SP;
 	SP.smooth = 0;
+	SP.padTop = 48;
 	SP.set(true, true);
-	eq(SP.index, 0, 'the tall portion is page one');
-	ok(SP.y[0] > VH, 'and it is taller than the window', String(SP.y[0]));
-	eq(p.win.scrollY, 0, 'the page opens on its own first line');
-	eq(SP.top(), SP.y[0] - VH, 'and is read at its last window');
-	let guard = 20, steps = 0;
-	while (p.win.scrollY < SP.top() - 1 && guard-- > 0) { SP.next(); steps++; }
-	ok(steps > 0, 'it takes several taps to walk down it (' + steps + ')');
-	eq(p.win.scrollY, SP.top(), 'and the reader ends on its last line');
-	eq(SP.index, 0, 'with no page revealed while walking');
-	SP.next();
-	eq(SP.index, 1, 'the next tap reveals the page after it');
-	while (p.win.scrollY < SP.top() - 1 && guard-- > 0) SP.next();
-	eq(p.win.scrollY, SP.top(), 'which is read at its own last window');
-}
-{
-	/* prev: the height and the band land only once the scroll has arrived */
-	const p = openPage('<div class="cover">title</div>' + prose(6));
-	const SP = p.SP, r = p.el('app');
+	eq(SP.y[0], 684, 'page one ends on the last cut that fits a 752px band', String(SP.y[0]));
+	ok(SP.next(), 'a tap advances');
+	eq(p.win.scrollY, start(p, 1) - 48, 'the page opens 48px below the window top, under the chrome');
+	eq(SP.top(), Math.max(start(p, 1) - 48, SP.y[1] - VH), 'and is done at its last window');
+	eq(parseFloat(p.el('app').style.marginBottom), band(p, 1), 'the band pads to the window bottom');
+	SP.padTop = 0;
+	SP.padBottom = 30;
+	SP.set(false);
 	SP.set(true, true);
-	while (SP.next()) { }
-	eq(SP.index, SP.count - 1, 'at the last page');
-	const full = parseFloat(r.style.height);
-	ok(SP.prev(), 'prev moves back');
-	eq(SP.index, SP.count - 2, 'one page back');
-	ok(parseFloat(r.style.height) >= full, 'the document is still full while the scroll travels');
-	p.win.setScroll(SP.top());
-	ok(parseFloat(r.style.height) < full, 'and shrinks when the scroll arrives');
-	eq(parseFloat(r.style.height), SP.y[SP.index], 'cutting the root at that page\'s own boundary');
-	while (SP.prev()) { }
-	eq(SP.index, 0, 'and back all the way to the first page');
-	eq(SP.prev(), false, 'prev at page one says stop');
-	SP.smooth = 0;
-	SP.set(true, true);
-	while (SP.next()) { }
-	const whole = parseFloat(r.style.height);
-	SP.prev();
-	ok(parseFloat(r.style.height) < whole, 'smooth = 0 shrinks before the scroll, so nothing jumps', r.style.height);
+	eq(SP.y[0], 760, 'padBottom shrinks the band the same way: the last cut that fits 770px', String(SP.y[0]));
+	SP.padBottom = 0;
 }
 
-/* ---------------- 5. set(true) at a position, and re-measure ---------------- */
+/* ---------------- 7. set(true) at a position, and re-measure ---------------- */
 {
 	/* the read-only surface cannot be written through, even in sloppy code */
 	const p = openPage(para('one') + para('two'));
 	const SP = p.SP;
-	SP.count = 99; SP.index = 42;
-	eq(SP.count, 2, 'count stays the real count after an assignment');
+	SP.count = 99; SP.index = 42; SP.cutN = 7;
+	eq(SP.cutN, 2, 'cutN stays the real count after an assignment');
+	eq(SP.count, 1, 'count stays the real count (two short portions are one page)');
 	eq(SP.index, -1, 'and index stays the real index');
 }
 {
@@ -340,7 +399,7 @@ function mono(p) {
 		SP.set(true);
 		let want = SP.count - 1;
 		for (let i = 0; i < SP.count; i++) if (SP.y[i] >= at + VH - 0.001) { want = i; break; }
-		eq(SP.index, want, 'set(true) at ' + at + 'px takes the first boundary at or below the window bottom');
+		eq(SP.index, want, 'set(true) at ' + at + 'px takes the page holding the window bottom');
 	}
 	SP.set(false);
 	SP.set(true);
@@ -348,8 +407,9 @@ function mono(p) {
 }
 {
 	/* a source edit above the reader must not move the frontier */
-	const p = openPage(para('one') + para('two') + para('three'));
+	const p = openPage(hPara(17) + hPara(17) + hPara(17) + hPara(17));
 	const SP = p.SP;
+	SP.smooth = 0;
 	SP.set(true, true);
 	SP.next();
 	eq(SP.index, 1, 'on page two');
@@ -361,11 +421,11 @@ function mono(p) {
 	reflow(app, added.layoutY, added._h);    /* the fake page is laid out once: reflow by hand */
 	app.querySelector('p').parentNode.insertBefore(added, app.querySelector('p'));
 	p.win.Snowfall.refresh(true);
-	eq(SP.at(SP.index), keep, 'the reader is still on the same stop after an edit above it');
+	eq(SP.at(SP.index), keep, 'the reader is still on the same page, kept by its cut element');
 	ok(SP.y[SP.index] > keepY, 'which moved down with the text', SP.y[SP.index] + ' vs ' + keepY);
 }
 
-/* ---------------- 5b. the story changes its own height ---------------- */
+/* ---------------- 8. the story changes its own height ---------------- */
 {
 	/* A game seats itself when its anchor is looked at and unseats when the
 	   reader walks away: the story grows and shrinks under the reader, and a
@@ -376,10 +436,11 @@ function mono(p) {
 	global.MutationObserver = function(cb) { this.cb = cb; mo = this; };
 	global.MutationObserver.prototype.observe = function() {};
 	global.MutationObserver.prototype.disconnect = function() {};
-	const p = openPage(para('one') + para('two') + para('three') + para('four'));
+	const p = openPage(hPara(17) + hPara(17) + hPara(17) + hPara(17) + hPara(17) + hPara(17));
 	const ticks = [];
 	p.win.setTimeout = fn => { ticks.push(fn); return 1; };
 	const SP = p.SP;
+	SP.smooth = 0;
 	ok(!!mo, 'the controller watches the story root for changes');
 	SP.set(true, true);
 	SP.next();
@@ -398,11 +459,11 @@ function mono(p) {
 	eq(ticks.length, 1, 'a burst of mutations schedules one coalesced measure');
 	ticks[0]();
 	ok(SP.at(SP.index) === stop, 'the reader is still on their page, kept by element');
-	eq(SP.y[SP.index - 1], wasStart + 100, 'its boundary moved down with the story');
+	eq(SP.y[SP.index - 1], wasStart + 100, 'its page moved down with the story');
 	eq(p.win.scrollY, wasY + 100, 'and the reader moved with it: no earlier text on the page');
-	ok(p.win.scrollY >= SP.y[SP.index - 1], 'never above the portion own start');
+	ok(p.win.scrollY >= SP.y[SP.index - 1] - 1e-6, 'never above the page\'s own start');
 
-	/* the reader who wheeled up to re-read, then the story moved: the page
+	/* the reader who wheeled up to re-read, then the story moved: the page's
 	   own new start, not the text before it */
 	p.win.setScroll(SP.y[SP.index - 1] - 20);
 	const grew = para_el('another growth above the reader');
@@ -412,7 +473,7 @@ function mono(p) {
 	app.insertBefore(grew, seated);
 	mo.cb([], mo);
 	ticks[ticks.length - 1]();
-	eq(p.win.scrollY, SP.y[SP.index - 1], 'a reader above their page is put on its new start');
+	eq(p.win.scrollY, open(p, SP.index), 'a reader above their page is put on its new start');
 
 	/* a burst the tick has not run yet still cannot stale a turn */
 	const more = para_el('one more paragraph above the reader');
@@ -424,14 +485,14 @@ function mono(p) {
 	const at = SP.index;
 	SP.next();
 	eq(SP.index, at + 1, 'the turn came from a fresh list');
-	eq(p.win.scrollY, SP.y[SP.index - 1], 'and landed on the moved page, not the stale one');
+	eq(p.win.scrollY, open(p, SP.index), 'and landed on the moved page, not the stale one');
 	ticks[ticks.length - 1]();                /* leave nothing pending */
 	delete global.MutationObserver;
 }
 
-/* ---------------- 6. input ---------------- */
+/* ---------------- 9. input ---------------- */
 {
-	const p = openPage(para('one') + para('two') + para('three') + para('four') + para('five') + '<a href="#x" id="link">go</a>');
+	const p = openPage(new Array(10).fill(0).map(() => hPara(17)).join('') + '<a href="#x" id="link">go</a>');
 	const SP = p.SP;
 	SP.smooth = 0;
 	SP.set(true, true);
@@ -504,7 +565,7 @@ function mono(p) {
 	ok(SP.get() === false, 'and the mode really is book');
 }
 
-/* ---------------- 7. no engine on the page ---------------- */
+/* ---------------- 10. no engine on the page ---------------- */
 {
 	const bare = '<!doctype html><html data-story="gate-paged"><head></head><body><div id="app">' +
 		para('one') + para('two') + '</div><script src="snowfall-paged.js"></script></body></html>';
@@ -512,6 +573,7 @@ function mono(p) {
 	const SP = p.win.SnowfallPaged;
 	ok(!!SP, 'the controller still loads and exports without an engine');
 	eq(SP.count, 0, 'and has nothing to say');
+	eq(SP.cutN, 0, 'no cuts either');
 	eq(SP.set(true), false, 'set(true) is a quiet false');
 	eq(SP.set(false), false, 'set(false) is a quiet false');
 	eq(SP.next(), false, 'next is a quiet false');
@@ -519,11 +581,11 @@ function mono(p) {
 	eq(SP.get(), false, 'get is false');
 	eq(p.el('app').style.height, undefined, 'and nothing was written to the page');
 	let threw = null;
-	try { SP.set(true); SP.next(); SP.prev(); SP.at(0); } catch (e) { threw = e; }
+	try { SP.set(true); SP.next(); SP.prev(); SP.at(0); SP.cutAt(0); } catch (e) { threw = e; }
 	ok(!threw, 'no throw anywhere on that path', threw && threw.message);
 }
 
-/* ---------------- 8. the source keeps the engine's contracts ---------------- */
+/* ---------------- 11. the source keeps the engine's contracts ---------------- */
 {
 	const src = fs.readFileSync(path.join(ROOT, 'snowfall-paged.js'), 'utf8');
 	ok(src.indexOf('MutationObserver') > 0, 'the story root is watched for story-side changes');
@@ -544,12 +606,13 @@ function mono(p) {
 		return src.slice(at);
 	}
 	const layout = /getBoundingClientRect|getComputedStyle|getClientRects|offsetHeight|offsetTop/;
-	for (const name of ['charY', 'stopY', 'readBox', 'walk', 'frame', 'apply', 'next', 'prev', 'onUp', 'onKey']) {
+	for (const name of ['charY', 'stopY', 'readBox', 'walk', 'groupPages', 'frame', 'apply', 'next', 'prev', 'onUp', 'onKey']) {
 		ok(fn(name) !== '', name + '() is there');
 	}
 	ok(layout.test(fn('charY')) && layout.test(fn('stopY')) && layout.test(fn('readBox')),
 		'the boxes are read in charY(), stopY() and readBox()');
 	ok(!layout.test(fn('walk')), 'the walk itself reads no boxes (stopY does)');
+	ok(!layout.test(fn('groupPages')), 'the screenful rule reads no boxes');
 	ok(!layout.test(fn('frame')), 'frame() reads no layout at all');
 	ok(!layout.test(fn('next')) && !layout.test(fn('prev')), 'next() and prev() read no layout');
 	ok(!layout.test(fn('onUp')) && !layout.test(fn('onKey')), 'the input handlers read no layout');

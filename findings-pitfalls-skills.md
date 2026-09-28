@@ -783,3 +783,37 @@ implementation, on the reference's own images and rects.
   `.br` archives: binary + `al2023.tar.br` libs + fonts) into `/tmp`, point
   `CHROME_PATH`/`LD_LIBRARY_PATH`/`FONTCONFIG_PATH` at it, and the repo's
   own `test/browser/check.js` runs unmodified.
+- **The clamp-off measure drops the reader's scroll — synchronously.**
+  `measure()` must read the root unclamped, and with the paper gone the
+  browser clamps `scrollY` to the shorter document's end in the same task.
+  A controller that measures per tap then compares the *post-measure* scroll
+  against the page's done spot hurries ground it already passed — an
+  infinite `next()` loop that only ends in an OOM'd renderer. Take the
+  scroll before the clamp comes off and put it back after; the window never
+  paints the drop.
+- **A glide in flight is already committed to its target.** A tight
+  `while (P.next());` reads `scrollY` mid-animation every call and
+  re-hurries a position the glide has left, thousands of times a frame.
+  The hurry check must compare against the scroll the page is *heading to*
+  (`P.going`) when one is set: then the loop advances one band a call, and
+  a human's fast double-tap turns instead of re-hurrying a finished page.
+- **The screenful rule is greedy on purpose.** "The page ends at the last
+  stop that fits" leaves a bounded blank band before a portion too tall for
+  the remainder; a best-fit/argmin grouping pulls that portion up instead
+  and buries its neighbors, which reads as skipping. Choose the literal
+  rule; the blank is a preview of what comes next.
+- **`min-height` boxes around single paragraphs fight the grouper.** A
+  paragraph styled to the band *is* one portion per page — the screenful
+  rule correctly returns one-portion pages, and the page looks like a
+  caption on blank paper. Fill screens are several short paragraphs; the
+  grouper packs them. (The look you want comes from the author's rhythm,
+  not from CSS boxes.)
+- **Cover wagons are window-tall by engine contract.** With top chrome the
+  reading band is shorter than the art, so a page cut at the band leaves
+  every cover sliced at its bottom edge. Size the cover's own portion (the
+  card) to the full window instead: the page becomes the art exactly, is
+  walked like any tall portion, and nothing is cut.
+- **Fakedom proportions decide what a test can prove.** Portions of a
+  quarter screen pack four to a page; a walk that expects one page per tap
+  then stalls on page 0 and every per-page assertion fails misleadingly.
+  Multi-page fixtures need portions over half a band.

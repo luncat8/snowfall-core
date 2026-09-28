@@ -1,15 +1,18 @@
-/* snowfall-paged.js — 0.6.0 paged (VN) reading: the same story page, read one
-   portion at a time.
+/* snowfall-paged.js — 0.7.0 paged (VN) reading: the same story, read one
+   screen at a time.
 
-   A page is one portion. Advancing puts the portion's own start on the window's
-   top edge and cuts the story root at the portion's end, so the text that came
-   before leaves the page and only the new text is on it — the VN reading the
-   user asked for, not a page that grows by one paragraph at a time.
+   A page is one screenful. The author's own stop tags (`p`, `section`, `br`)
+   are the cut candidates; the page fills whole portions and ends at the last
+   stop that fits, so short portions merge into one screen and nothing is ever
+   cut mid-portion. A portion taller than the screen (the author's choice) is
+   one page of its own: the reader scrolls it natively and fast, and a tap
+   hurries down a screen at a time. The text you have read leaves the page —
+   the new page's own start sits at the top of the reading band.
 
    The whole mechanism is three style properties on the story root: a height
-   that ends the portion, `overflow-y: clip` so nothing past it is painted, and
-   a bottom margin that gives a short portion the window's worth of room to
-   sit at the top of. Because the document is exactly that tall, unrevealed
+   that ends the page, `overflow-y: clip` so nothing past it is painted, and a
+   bottom margin that gives a page shorter than the window the room it needs
+   to sit at the top of. Because the document is exactly that tall, unrevealed
    text is not merely hidden, it is out of reach: no wheel, no scrollbar, no
    anchor below the boundary in firing range. And because the root's own box is
    what changes, nothing inside it moves — every anchor keeps its document Y,
@@ -17,13 +20,15 @@
    exactly as in book mode, and morph, events, prompts and minigames never
    learn that the mode changed.
 
+   Fixed chrome (a toolbar, a hud) is the host's declaration: `padTop` /
+   `padBottom` are the pixels it covers at the window's edges, and every page
+   opens below them — the first line of a page is never under the toolbar.
+
    The story is allowed to change its own height while the reader is on it —
    a minigame seats itself the first time its anchor is looked at and unseats
    when the reader walks away — so the boundary list is not measured once: the
    root's subtree is watched (childList only), a change re-measures on the next
    tick, and the reader is re-anchored onto the page that moved under them.
-   Without that, every page after a seat mounts lands on a stale boundary and
-   the text that came before stays on the page.
 
    The inline axis is deliberately left alone: the engine pulls each art wagon
    out of the text column with a negative margin so it spans the page, and
@@ -39,22 +44,18 @@
 'use strict';
 const hasDOM = typeof document !== 'undefined' && typeof window !== 'undefined';
 const DEFAULTS = 'p,section,br';
-/* one tap moves at most one window. A page turn is never longer than that —
-   the reader is at the old page's bottom, the new one starts at most a window
-   below it — so a turn is always one tap, and only a page taller than the
-   window is walked, a window at a time. */
-const STEP_MAX = 1;
 const TAP_MS = 500, TAP_PX = 8, MERGE_PX = 1, EPS = 0.001;
 /* a tap on any of these is the reader's, not the page's */
 const NO_TAP = 'a,button,input,select,textarea,label,summary,[contenteditable],[data-nopage],.snow-prompt,.snow-game,.snow-region-hud';
 /* whole subtrees that are page furniture, never prose: a <br> in a caption or
-   in a game's painted UI is a line break, not a page break */
+   in a game's painted UI is a line break, not a page cut */
 const CUT = '.snow-bg,.snow-stick,.snow-game,.snow-prompt,script,style,[data-nopage]';
 
 const P = {
 	root: null, subs: false, touched: false, on: false,
 	n: 0, k: -1, kEl: null, el: [],
 	y: new Float64Array(0), tags: null, tagKey: '',
+	pn: 0, pe: new Int32Array(0), py: new Float64Array(0),
 	padBoxTop: 0, padTop: 0, padBottom: 0, borderTop: 0, borderBottom: 0, borderBox: false, endY: 0, contentTop: 0,
 	pendingH: -1, pendingEl: null, pendingAt: 0, band: -1, flowWarn: 0,
 	timer: 0, mo: null, going: -1
@@ -71,6 +72,11 @@ function viewH() {
 	const S = global.Snowfall;
 	const vp = S && S.viewport;
 	return vp && vp.height ? vp.height : (global.innerHeight || 0);
+}
+/* the reading band: the window minus the host's fixed chrome */
+function bandH() {
+	const h = viewH() - api.padTop - api.padBottom;
+	return h > 1 ? h : 1;
 }
 /* compound-only selector test, one part at a time: `closest()` is not in the
    fake DOM the node gate runs pages in, and these lists are fixed. */
@@ -223,6 +229,33 @@ function walk() {
 	P.n = n;
 }
 
+/* ---------------- pages: screenfuls of portions, cut at the stops ---------------- */
+/* The page fills one screen with whole portions and ends at the last stop that
+   fits; short portions merge, and nothing is ever cut mid-portion. When no
+   stop fits — the next portion is taller than the screen, the author's choice
+   — that portion is the page on its own and the reader scrolls it. */
+function groupPages() {
+	const H = bandH(), n = P.n;
+	let pe = P.pe;
+	if (pe.length < n) pe = new Int32Array(Math.max(n, 8));
+	let m = 0, prev = -1;
+	while (prev < n - 1) {
+		const target = (prev < 0 ? 0 : P.y[prev]) + H;
+		let f = prev;
+		for (let i = prev + 1; i < n; i++) {
+			if (P.y[i] <= target + EPS) f = i;
+			else break;
+		}
+		if (f === prev) f = prev + 1;        /* nothing fits: the tall portion is the page */
+		pe[m++] = f;
+		prev = f;
+	}
+	P.pe = pe;
+	P.pn = m;
+	if (P.py.length < m) P.py = new Float64Array(Math.max(m, 8));
+	for (let j = 0; j < m; j++) P.py[j] = P.y[pe[j]];
+}
+
 /* ---------------- the clamp: two style writes, nothing else ---------------- */
 function readBox() {
 	const root = P.root, sY = global.scrollY || 0;
@@ -246,20 +279,21 @@ function readBox() {
 	P.endY = r.bottom + sY - P.borderBottom;
 }
 function apply() {
-	if (P.k < 0 || P.k >= P.n || !P.root) return;
+	if (P.k < 0 || P.k >= P.pn || !P.root) return;
 	/* the padding box's bottom edge IS the boundary: the story root's own box
-	   ends exactly at the stop the reader is on, so nothing past it is painted
+	   ends exactly at the stop the page is cut at, so nothing past it is painted
 	   and nothing past it can be scrolled to */
-	const pb = P.y[P.k] - P.padBoxTop;
+	const hi = P.py[P.k];
+	const pb = hi - P.padBoxTop;
 	const h = P.borderBox ? pb + P.borderTop + P.borderBottom : pb - P.padTop - P.padBottom;
 	P.root.style.height = (h > 0 ? h : 0) + 'px';
 	P.root.style.overflowY = 'clip';
-	/* One page is one portion, so the window's TOP edge is the portion's own
-	   start: the text above it is behind the reader, gone from the page. A
-	   portion shorter than the window cannot scroll that far on its own, so the
-	   root gets a bottom margin for the missing window — margin lives outside
-	   the clip, so the band is empty paper and the unrevealed text below the
-	   boundary is still not painted, still not reachable. */
+	/* The window's TOP edge of the reading band is the page's own start: the
+	   text above it is behind the reader, gone from the page. A page shorter
+	   than the band cannot scroll that far on its own, so the root gets a
+	   bottom margin for the missing room — margin lives outside the clip, so
+	   the band is empty paper and the unrevealed text below the boundary is
+	   still not painted, still not reachable. */
 	const b = band(P.k);
 	if (b !== P.band) {
 		P.band = b;
@@ -273,24 +307,33 @@ function unapply() {
 	P.root.style.overflowY = '';
 	P.root.style.marginBottom = '';
 }
-/* where page k starts: the top of its portion, so the window shows that
-   portion and nothing before it */
-function pageStart(k) {
-	return k > 0 ? P.y[k - 1] : 0;
+/* where page k starts: the top of its own first portion */
+function pageLo(k) {
+	return k > 0 ? P.py[k - 1] : 0;
+}
+/* where page k opens: its own start at the top of the reading band — the text
+   above it is behind the reader, gone from the page. A page taller than the
+   band is walked (or scrolled) from here. */
+function pageOpen(k) {
+	const t = pageLo(k) - api.padTop;
+	return t > 0 ? t : 0;
+}
+/* where page k is done: its last window when the page is taller than the
+   band, its own top otherwise (which is where it opened). Also the document's
+   maximum scroll, because the root ends at the page's cut and the band is
+   exactly the rest of the window — so a page is fully read the moment the
+   reader is here. */
+function pageRead(k) {
+	const hi = P.py[k], lo = pageLo(k), vh = viewH();
+	const top = lo - api.padTop;
+	const last = hi - vh + api.padBottom;
+	const t = top > last ? top : last;
+	return t > 0 ? t : 0;
 }
 /* the empty band a short page needs under it for the reader to reach it */
 function band(k) {
-	const short = viewH() - (P.y[k] - pageStart(k));
-	return short > 0 ? short : 0;
-}
-/* where page k is read: its own top when the portion fits the window, its
-   last window when the portion is taller. It is also the document's maximum
-   scroll, because the root ends at y[k] and the band is exactly the rest of
-   the window — so a page is fully read the moment the reader is here. */
-function pageSpot(k) {
-	const v = P.y[k] - viewH();
-	const t = pageStart(k);
-	return v > t ? v : t;
+	const b = pageRead(k) + viewH() - P.py[k];
+	return b > 0 ? b : 0;
 }
 function smooth() {
 	if (!api.smooth) return false;
@@ -314,8 +357,8 @@ function scrollTo(y, jump) {
    when the reader walks away, a script writes content, a choice resolves into
    text — the story changes its own flow height after the controller measured,
    and a boundary list that no longer matches the document turns every page
-   after it: the text before the portion stays on top of the window, the paper
-   cuts the portion early. Two guards keep the list on the document: every
+   after it: the text before the page stays on top of the window, the paper
+   cuts the page early. Two guards keep the list on the document: every
    turn and every toggle re-measures (a tap is rare, the walk is cheap, and a
    refresh that drops a game mutates the tree after the controller's own
    measure ran — subscription order — so no tick may be waited for), and the
@@ -357,14 +400,14 @@ function ready() {
 function ensure() {
 	if (!ready()) return false;
 	measure();                    /* a toggle never turns from a stale list */
-	return P.n > 0;
+	return P.pn > 0;
 }
 function firstAt(v) {
-	for (let i = 0; i < P.n; i++) if (P.y[i] >= v - EPS) return i;
-	return P.n - 1;
+	for (let i = 0; i < P.pn; i++) if (P.py[i] >= v - EPS) return i;
+	return P.pn - 1;
 }
-function indexOf(el) {
-	for (let i = 0; i < P.n; i++) if (P.el[i] === el) return i;
+function pageOf(el) {
+	for (let i = 0; i < P.pn; i++) if (P.el[P.pe[i]] === el) return i;
 	return -1;
 }
 function set(on, fromTop) {
@@ -382,25 +425,34 @@ function set(on, fromTop) {
 	P.on = true;
 	if (fromTop) { P.k = 0; scrollTo(0); }
 	else P.k = firstAt((global.scrollY || 0) + viewH());
-	P.kEl = P.el[P.k];
+	P.kEl = P.el[P.pe[P.k]];
 	apply();
 	return true;
 }
 function next() {
-	if (!P.on || P.n === 0) return false;
+	if (!P.on || P.pn === 0) return false;
 	measure();                     /* a tap is rare: the list it turns from is the document's own */
 	P.pendingH = -1;
 	P.pendingEl = null;
-	const sY = global.scrollY || 0, vh = viewH(), here = pageSpot(P.k);
-	if (sY < here - 1) {          /* this page is not all read yet: hurry down, reveal nothing */
-		scrollTo(Math.min(here, sY + STEP_MAX * vh));
+	/* a glide in flight is already committed to its target: the walk reads
+	   the scroll it is heading to, so `while (P.next());` advances one band a
+	   call and lands instead of re-hurrying a position it has left behind */
+	const live = global.scrollY || 0, here = pageRead(P.k);
+	const sY = P.going > live ? P.going : live;
+	if (sY < here - 1) {          /* this page is not all read yet (it is taller than
+\t\t   the band): hurry a screen — the reader scrolls the page freely anyway,
+\t\t   and a quick second tap hurries again without ever skipping a page */
+		scrollTo(Math.min(here, sY + bandH()));
 		return true;
 	}
-	if (P.k >= P.n - 1) return false;
+	if (P.k >= P.pn - 1) return false;
 	P.k++;
-	P.kEl = P.el[P.k];                        /* the page is kept by element across a re-measure */
+	P.kEl = P.el[P.pe[P.k]];                      /* the page is kept by element across a re-measure */
 	apply();
-	scrollTo(Math.min(pageSpot(P.k), sY + STEP_MAX * vh));
+	/* consecutive opens are one band apart at most — the turn travels exactly
+	   the old page's own height, capped by the band — so no anchor can leap
+	   the window and `skip` never fires for a page the reader is looking at */
+	scrollTo(pageOpen(P.k));
 	return true;
 }
 function prev() {
@@ -410,8 +462,8 @@ function prev() {
 	P.pendingEl = null;
 	if (P.k <= 0) return false;             /* the re-measure may have ended on page one */
 	P.k--;
-	P.kEl = P.el[P.k];                      /* every path that sets k sets kEl */
-	const at = pageSpot(P.k);
+	P.kEl = P.el[P.pe[P.k]];                 /* every path that sets k sets kEl */
+	const at = pageOpen(P.k);
 	if (smooth()) {
 		/* shrinking first would let the browser clamp the scroll instantly and
 		   the page would jump: travel up, and cut the tail once we arrive */
@@ -426,46 +478,53 @@ function frame(sY) {
 	if (P.going >= 0 && Math.abs(sY - P.going) <= 1) P.going = -1;
 	if (P.pendingH < 0) return;                 /* the only per-frame work: one compare */
 	if (sY > P.pendingAt + 1) return;
-	let k = P.pendingEl ? indexOf(P.pendingEl) : -1;
-	if (k < 0) k = firstAt(P.pendingAt);        /* the stop is gone: the nearest boundary at its Y */
+	let k = P.pendingEl ? pageOf(P.pendingEl) : -1;
+	if (k < 0) k = firstAt(P.pendingAt);        /* the stop is gone: the nearest page at its Y */
 	P.pendingH = -1;
 	P.pendingEl = null;
 	P.k = k;
-	P.kEl = P.el[k];
+	P.kEl = P.el[P.pe[k]];
 	apply();
 }
 function boot() {
 	const de = document.documentElement;
 	if (de && de.hasAttribute && de.hasAttribute('data-paged')) return de.getAttribute('data-paged') !== 'false';
-	const m = document.querySelector ? document.querySelector('meta[name="paged"]') : null;
+	const m = document.querySelector ? document.querySelector('meta[name=\"paged\"]') : null;
 	return !!(m && m.getAttribute('content') !== '0');
 }
 function measure() {
 	if (!ready()) return;
 	/* the root's own box is the one thing the clamp changes, so it is read
 	   with the clamp OFF: measuring a clamped root would feed the boundary
-	   list back into itself and the story would shrink on every refresh */
+	   list back into itself and the story would shrink on every refresh.
+	   The clamp-off window is one task and must not move the reader: with the
+	   paper gone the browser drops the scroll to the shorter document's end,
+	   and a walk that measures per tap would hurry that lost ground forever.
+	   The place is taken before the clamp comes off and put back after. */
+	const sY0 = global.scrollY || 0;
 	const wasOn = P.on;
 	if (wasOn) unapply();
 	readBox();
-	const keepEl = P.kEl, keepY = P.k >= 0 && P.k < P.n ? P.y[P.k] : -1;
-	const oldLo = wasOn && P.k >= 0 ? pageStart(P.k) : -1;
+	const keepEl = P.kEl, keepY = P.k >= 0 && P.k < P.pn ? P.py[P.k] : -1;
+	const oldLo = wasOn && P.k >= 0 ? pageLo(P.k) : -1;
 	walk();
+	groupPages();
 	if (!wasOn && !P.touched && boot()) { set(true, (global.scrollY || 0) < 1); return; }
 	if (!wasOn) return;
 	/* the page is kept by element, not by index: a source edit above the
 	   reader must not move the frontier. If the stop itself is gone, the
-	   nearest boundary at or after the old one takes over. */
-	let k = keepEl ? indexOf(keepEl) : -1;
+	   nearest page cut at or after the old one takes over. */
+	let k = keepEl ? pageOf(keepEl) : -1;
 	if (k < 0) k = firstAt(keepY < 0 ? (global.scrollY || 0) + viewH() : keepY);
 	P.k = k;
-	P.kEl = P.el[k];
+	P.kEl = P.el[P.pe[k]];
 	apply();
+	if ((global.scrollY || 0) !== sY0) scrollTo(sY0, true);
 	anchor(k, oldLo);
 }
 /* A re-measure that moved this page moves the reader with it: a story that
    grew above the reader (a game seating itself when its anchor is looked at)
-   otherwise leaves them looking at the text before their portion, and the
+   otherwise leaves them looking at the text before their page, and the
    browser's own scroll anchoring — which cancels a travelling smooth scroll
    when it compensates — can land them anywhere in between. The reading place
    inside the page is kept; a reader above the page's old start is re-reading,
@@ -475,10 +534,10 @@ function measure() {
 function anchor(k, oldLo) {
 	if (oldLo < 0 || P.pendingH >= 0) return;
 	const at = global.scrollY || 0;
-	const lo = pageStart(k), hi = pageSpot(k);
+	const lo = pageLo(k), open = pageOpen(k), done = pageRead(k);
 	const shift = lo - oldLo;
 	if (!shift) return;
-	const to = at < oldLo - 1 ? lo : Math.min(hi, Math.max(lo, at + shift));
+	const to = at < oldLo - 1 ? open : Math.min(done, Math.max(open, at + shift));
 	if (Math.abs(to - at) <= 1) return;
 	scrollTo(to, P.going < 0);
 }
@@ -535,18 +594,25 @@ const api = {
 	prev: prev,
 	stops: DEFAULTS,                        /* default stop list; data-stops on the root wins */
 	smooth: 1,                               /* 0 makes every step a jump, for QA logs */
-	ignore: ''                               /* extra selector the host wants taps ignored in */
+	ignore: '',                              /* extra selector the host wants taps ignored in */
+	padTop: 0,                               /* fixed chrome at the window's top, in px */
+	padBottom: 0                             /* fixed chrome at the window's bottom, in px */
 };
 	Object.defineProperty(api, 'index', { get: function() { return P.k; }, set: function() { /* read-only */ } });
-	Object.defineProperty(api, 'count', { get: function() { return P.n; }, set: function() { /* read-only */ } });
-	Object.defineProperty(api, 'y', { get: function() { return P.y; }, set: function() { /* read-only */ } });
+	Object.defineProperty(api, 'count', { get: function() { return P.pn; }, set: function() { /* read-only */ } });
+	Object.defineProperty(api, 'y', { get: function() { return P.py; }, set: function() { /* read-only */ } });
 	Object.defineProperty(api, 'root', { get: function() { return P.root; }, set: function() { /* read-only */ } });
-/* the stop element a boundary was taken from — the story root for the last
-   one. `y` is the raw buffer: read it only for [0, count). */
-api.at = function(i) { return i >= 0 && i < P.n ? P.el[i] : null; };
+	Object.defineProperty(api, 'cutN', { get: function() { return P.n; }, set: function() { /* read-only */ } });
+	Object.defineProperty(api, 'cutY', { get: function() { return P.y; }, set: function() { /* read-only */ } });
+/* the stop element page i is cut at — the story root for the last one.
+   `y` is the page-cut buffer: read it only for [0, count).
+   cutAt is the same for the portion cuts the walk found — the author's own
+   units, which pages group; `cutY` is the grown buffer: read [0, cutN). */
+api.at = function(i) { return i >= 0 && i < P.pn ? P.el[P.pe[i]] : null; };
+api.cutAt = function(i) { return i >= 0 && i < P.n ? P.el[i] : null; };
 /* the scroll position the current page is read at — also its maximum scroll,
    so a host that parks the reader here has read the whole page */
-api.top = function() { return P.k >= 0 && P.k < P.n ? pageSpot(P.k) : 0; };
+api.top = function() { return P.k >= 0 && P.k < P.pn ? pageRead(P.k) : 0; };
 
 if (hasDOM) {
 	global.addEventListener('pointerdown', onDown, { passive: true });

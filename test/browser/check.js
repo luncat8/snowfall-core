@@ -17,7 +17,9 @@ const fs = require('fs'), path = require('path'), http = require('http');
 
 let puppeteer = null;
 try { puppeteer = require('puppeteer'); } catch (e1) {
-	try { puppeteer = require('/tmp/browsertest/node_modules/puppeteer'); } catch (e2) { puppeteer = null; }
+	try { puppeteer = require('/tmp/browsertest/node_modules/puppeteer'); } catch (e2) {
+		try { puppeteer = require('/home/user/.toolchain/node_modules/puppeteer'); } catch (e3) { puppeteer = null; }
+	}
 }
 if (!puppeteer) { console.log('browser/check: SKIP — puppeteer not installed'); process.exit(0); }
 

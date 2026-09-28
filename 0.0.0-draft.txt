@@ -120,3 +120,9 @@ Do not blind use coding-patterns. This is experimental new engine, but not renpy
 
 if some things are extremely difficult or not possible - skip or simplyfy/rethink alternate. we need flexible, robust, fast architecture. 
 
+
+
+we have several failed attempts to make paged mode.
+in book mode - it is just a text.
+in paged mode it split by stop-tags (p, section, br) per one screen. i dont know may be it is possible to add such separator by css or by js. previous working solution was walking DOM element by element in cycle and move them to page container. but this was considered not efficient so we make new engive with best solutions.
+what about in paged mode hide all oter content that not correspont to current page?
