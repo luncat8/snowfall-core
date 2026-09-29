@@ -10,6 +10,7 @@ body{margin:0;background:#0d1117;color:#e9f1ff;font:17px/1.65 Georgia,'Iowan Old
 #bar b{color:#ffd166;font-size:1.1em;margin-right:.2rem}
 #bar button{background:#1b2740;color:#dce8ff;border:1px solid #3a4f75;border-radius:.4rem;padding:.35rem .7rem;cursor:pointer;font:14px/1.2 system-ui,sans-serif}
 #bar button:hover{background:#26365a}
+#bar select{background:#1b2740;color:#dce8ff;border:1px solid #3a4f75;border-radius:.4rem;padding:.35rem .55rem;font:14px/1.2 system-ui,sans-serif}
 #bar button[aria-pressed=true]{background:#2f6f4f;border-color:#4fae7a;color:#fff}
 #bar .hint{font:13px/1.3 system-ui,sans-serif;color:#9fb4d4;margin-left:auto;text-align:right}
 #qa{position:fixed;left:0;right:0;bottom:0;z-index:71;max-height:52vh;overflow-y:auto;margin:0;padding:.7rem 1rem;background:rgba(6,10,18,.97);border-top:1px solid #2b3a55;font:12.5px/1.45 ui-monospace,monospace;white-space:pre-wrap;display:none}
@@ -45,6 +46,8 @@ p.notes{padding:1.4rem 0 .6rem;color:#8fa8c8;font-size:1rem}
 <div id="bar">
 	<b>book ⇄ paged</b>
 	<button id="mode" type="button" aria-pressed="true">paged on</button>
+	<label for="align">align</label>
+	<select id="align" aria-label="Page alignment"><option value="top">top</option><option value="bottom">bottom</option></select>
 	<button id="back" type="button" title="Backspace">◂ back</button>
 	<button id="fwd" type="button" title="Space">advance ▸</button>
 	<button id="restart" type="button">restart</button>
@@ -61,7 +64,7 @@ p.notes{padding:1.4rem 0 .6rem;color:#8fa8c8;font-size:1rem}
 			text you have read leaves the page. Same engine, same wagons, same
 			events: only the story root's height is clamped.
 			<small>Press <b>v</b> to switch, <b>Backspace</b> to go back, and run
-			the self-test for the proof.</small></div>
+			the self-test for the proof. Page, alignment and game state auto-save.</small></div>
 	</header>
 
 	<section id="notes">
@@ -138,10 +141,10 @@ p.notes{padding:1.4rem 0 .6rem;color:#8fa8c8;font-size:1rem}
 	</section>
 
 </div>
-<script src="snowfall.js?v=33b3548b99"></script>
-<script src="snowfall-paged.js?v=33b3548b99"></script>
-<script src="snowfall-games.js?v=33b3548b99"></script>
-<script src="games/gamble.js?v=33b3548b99"></script>
+<script src="snowfall.js?v=439c0a6814"></script>
+<script src="snowfall-paged.js?v=439c0a6814"></script>
+<script src="snowfall-games.js?v=439c0a6814"></script>
+<script src="games/gamble.js?v=439c0a6814"></script>
 <script>
 /* The page is the switch: one button, one key, and a self-test that shows the
    clamp never moves anything the engine knows about. Nothing here measures
@@ -200,12 +203,13 @@ function setMode(on, fromTop) {
 	P().set(on, !!fromTop);
 	$('mode').textContent = on ? 'paged on' : 'book mode';
 	$('mode').setAttribute('aria-pressed', on ? 'true' : 'false');
+	$('align').value = P().align;
 	stat();
 }
 function stat() {
 	if (!P()) return;
 	var s = P().get()
-		? 'paged · page ' + (P().index + 1) + '/' + P().count + ' · ' +
+		? 'paged · page ' + (P().index + 1) + '/' + P().count + ' · ' + P().align + ' aligned · ' +
 			Math.round(portion(P().index)) + 'px of text on this page · tap or space'
 		: 'book · scroll freely · v for paged';
 	if (s === lastStat) return;
@@ -213,6 +217,7 @@ function stat() {
 	$('stat').textContent = s;
 }
 $('mode').onclick = function() { setMode(!P().get()); };
+$('align').onchange = function() { P().align = $('align').value; stat(); };
 $('restart').onclick = function() { window.scrollTo(0, 0); setMode(P().get(), true); };
 $('fwd').onclick = function() { if (P().get()) P().next(); };
 $('back').onclick = function() { if (P().get()) P().prev(); };
@@ -484,7 +489,18 @@ function run() {
 		setMode(true, true);
 	});
 }
-setMode(true, true);
+function startReader() {
+	if (P().restored) {
+		$('mode').textContent = P().get() ? 'paged on' : 'book mode';
+		$('mode').setAttribute('aria-pressed', P().get() ? 'true' : 'false');
+		$('align').value = P().align;
+		stat();
+		return;
+	}
+	setMode(true, true);
+}
+if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', startReader);
+else startReader();
 window.demoPaged = { run: run, setMode: setMode, log: LOG };
 })();
 </script>

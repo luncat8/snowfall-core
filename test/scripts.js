@@ -34,6 +34,8 @@ ok(typeof Snowfall.load === 'function', 'Snowfall.load exists');
 ok(typeof Snowfall.exportJSON === 'function', 'Snowfall.exportJSON exists');
 ok(typeof Snowfall.importJSON === 'function', 'Snowfall.importJSON exists');
 ok(typeof Snowfall.reset === 'function', 'Snowfall.reset exists');
+ok(typeof Snowfall.getAddonState === 'function', 'Snowfall.getAddonState exists');
+ok(typeof Snowfall.setAddonState === 'function', 'Snowfall.setAddonState exists');
 ok(Snowfall.store !== undefined, 'Snowfall.store exists');
 
 // Initial reset
@@ -147,7 +149,21 @@ eq(Snowfall.store.counts.fired, 0, 'initial fired count 0');
 
 	// Byte-identical round trip
 	const exported2 = Snowfall.exportJSON();
-	eq(exported, exported2, 'export/import round trip is byte-identical');
+		eq(exported, exported2, 'export/import round trip is byte-identical');
+}
+{
+	Snowfall.reset();
+	Snowfall.setAddonState('reader', { page: 7, progress: 0.5 });
+	const state = Snowfall.getAddonState('reader');
+	eq(state.page, 7, 'addon state stores structured reader data');
+	state.page = 2;
+	eq(Snowfall.getAddonState('reader').page, 7, 'addon state reads are defensive copies');
+	const exported = Snowfall.exportJSON();
+	Snowfall.reset();
+	Snowfall.importJSON(exported);
+	eq(Snowfall.getAddonState('reader').progress, 0.5, 'addon state survives save export/import');
+	Snowfall.reset();
+	eq(Snowfall.getAddonState('reader'), null, 'full reset clears addon state');
 }
 
 // 1.4 Reset with mask

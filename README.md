@@ -7,7 +7,11 @@ early development stage
   screenful of the author's own portions (cut at `p` / `section` / `br`), the
   page ends at the last stop that fits and the text you have read leaves the
   page; a portion taller than the screen is its own page, walked one band a
-  tap; everything else works as in book mode;
+  tap; the scrollbar is hidden while native scrolling remains available for
+  tall portions; short pages can align at the top or bottom of the reading
+  band. Reader mode, page and in-page progress are autosaved alongside game
+  state, and style/background state is derived directly from the restored
+  source position;
   `0.6.0-plan-paged-mode.md` is the plan, `demo-paged.html` the playable page
   with a book/paged toggle
 * without js fallback to readable html

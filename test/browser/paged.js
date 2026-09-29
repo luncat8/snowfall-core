@@ -121,6 +121,8 @@ module.exports = async function paged(page, BASE, ok) {
 			count: P.count, engine: window.Snowfall.version, paged: P.version,
 			on: P.get(), y0: P.y[0], padTop: P.padTop,
 			overflowY: P.root.style.overflowY, overflowX: P.root.style.overflowX,
+			scrollbarHidden: document.documentElement.classList.contains('snow-paged'),
+			align: P.align,
 			height: P.root.style.height, docH: document.documentElement.scrollHeight,
 			vh: window.innerHeight,
 		};
@@ -130,6 +132,8 @@ module.exports = async function paged(page, BASE, ok) {
 	ok(boot1.engine === '0.7.0' && boot1.paged === '0.7.0', 'on engine ' + boot1.engine + ' + paged ' + boot1.paged, boot1.engine);
 	ok(boot1.overflowY === 'clip' && boot1.overflowX !== 'clip',
 		'the story root is clipped on the block axis only', boot1.overflowY + '/' + boot1.overflowX);
+	ok(boot1.scrollbarHidden, 'paged mode hides the browser scrollbar without disabling native tall-page scroll');
+	ok(boot1.align === 'top', 'top alignment is the default');
 	ok(/px/.test(boot1.height), 'the clamp is a plain height, never a second axis', boot1.height);
 	ok(Math.abs(boot1.docH - Math.round(boot1.vh)) <= 2 || boot1.docH >= boot1.vh - TOL,
 		'the paper fills the window on a full first page', boot1.docH + 'px of ' + boot1.vh);
@@ -226,6 +230,46 @@ module.exports = async function paged(page, BASE, ok) {
 	ok(step.backTo === 0 && step.backs >= step.reveals, 'back taps walk the same pages in reverse',
 		step.backs + ' back taps to page ' + (step.backTo + 1));
 	ok(step.mono, 'and no tap ever goes backwards');
+
+	/* bottom alignment lands short pages on their lower edge; tall portions
+	   retain a top entry point so the reader does not begin at their end. */
+	const bottom = await page.evaluate(async () => {
+		const P = P0();
+		P.set(true, true);
+		P.smooth = 0;
+		const originalStart = P.root.getBoundingClientRect().top + window.scrollY;
+		const originalMarks = __probe.marks();
+		P.align = 'bottom';
+		const firstShort = P.y[0] - (P.root.getBoundingClientRect().top + window.scrollY) <= __probe.bandH() + TOL;
+		const firstEnd = P.y[0];
+		const firstBottom = !firstShort || Math.abs(firstEnd - (window.innerHeight - P.padBottom)) <= 2;
+		const firstShift = P.root.getBoundingClientRect().top + window.scrollY >= originalStart;
+		P.align = 'top';
+		const sourceAnchorsRestore = originalMarks === __probe.marks();
+		P.align = 'bottom';
+		P.set(true, true);
+		let guard = P.count * 6;
+		while (guard-- > 0) {
+			const k = P.index, h = __probe.portion(k);
+			if (k > 0 && h <= __probe.bandH() + TOL) break;
+			if (!P.next()) break;
+			await __probe.settle();
+		}
+		const k = P.index;
+		return {
+			k, short: __probe.portion(k) <= __probe.bandH() + TOL,
+			y: window.scrollY,
+			want: Math.max(0, P.y[k] - window.innerHeight + P.padBottom),
+			firstShort, firstBottom, firstShift, sourceAnchorsRestore,
+		};
+	});
+	ok(!bottom.firstShort || bottom.firstBottom && bottom.firstShift,
+		'bottom alignment fills the opening short page without negative scrolling');
+	ok(bottom.sourceAnchorsRestore, 'returning to top alignment restores every source anchor position');
+	ok(bottom.short && bottom.k > 0 && Math.abs(bottom.y - bottom.want) <= 2,
+		'bottom alignment places a short page at the reading band’s bottom', bottom.y + ' vs ' + bottom.want);
+	await page.evaluate(() => { P0().align = 'top'; P0().set(true, true); });
+	await sleep(100);
 
 	/* the art: no cover is sliced by a page edge */
 	const art = await page.evaluate(() => __probe.artCuts());

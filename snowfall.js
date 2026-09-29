@@ -266,7 +266,8 @@ const storeData = {
 	vars: {},
 	keys: {},
 	defaults: {},
-	fired: {}
+	fired: {},
+	addons: {}
 };
 let isDirty = false;
 let saveTimer = null;
@@ -327,6 +328,7 @@ function adoptDoc(parsed) {
 	storeData.keys = (parsed.keys && typeof parsed.keys === 'object') ? parsed.keys : {};
 	storeData.defaults = (parsed.defaults && typeof parsed.defaults === 'object') ? parsed.defaults : {};
 	storeData.fired = (parsed.fired && typeof parsed.fired === 'object') ? parsed.fired : {};
+	storeData.addons = (parsed.addons && typeof parsed.addons === 'object') ? parsed.addons : {};
 	isDirty = false;
 }
 
@@ -393,6 +395,7 @@ function createCore(opts) {
 	const inst = {
 		options: { wagons: 1, morph: 1, events: 1, hysteresis: 40, parkedAsView: 0 },
 		enabled: opts.enabled !== false,
+		stylePosition: null,
 		destroyed: false,
 		onFrame: typeof opts.onFrame === 'function' ? opts.onFrame : null,
 		subs: [],
@@ -760,7 +763,11 @@ function createCore(opts) {
 	function styleFrame(sY, vh) {
 		const n = M.n;
 		if (!n || !inst.options.morph) return;
-		const c = sY + vh * 0.5;
+		let c = sY + vh * 0.5;
+		if (typeof inst.stylePosition === 'function') {
+			const pos = inst.stylePosition(sY, vh);
+			if (Number.isFinite(pos)) c = pos;
+		} else if (Number.isFinite(inst.stylePosition)) c = inst.stylePosition;
 		let i = -1;
 		while (i + 1 < n && M.ay[i + 1] <= c) i++;
 		chanAt(M.bgKind, M.srcBg, M.sbg, c, i, chBg);
@@ -1108,6 +1115,14 @@ function createCore(opts) {
 		if (!hasDOM || !el || !el.__snowA || !el.__snowA.parentNode) return 0;
 		return el.__snowA.getBoundingClientRect().top + (window.scrollY || 0);
 	};
+	/* Uniform root translation: keep measured absolute anchors in sync without
+	   rebuilding event state or disturbing the current page's live events. */
+	inst.shiftSourceY = function(delta) {
+		if (!Number.isFinite(delta) || !delta) return;
+		for (let i = 0; i < W.n; i++) { W.y[i] += delta; W.pBot[i] += delta; }
+		for (let i = 0; i < M.n; i++) { M.ay[i] += delta; M.sbg[i] += delta; M.sfg[i] += delta; }
+		for (let i = 0; i < E.n; i++) E.y[i] += delta;
+	};
 	inst.setEnabled = function(on) {
 		inst.enabled = !!on;
 		if (!hasDOM) return;
@@ -1309,6 +1324,18 @@ Snowfall.answer = function(key, value) {
 		console.error('Snowfall.ask continuation threw for key ' + key, e);
 	}
 };
+Snowfall.getAddonState = function(key) {
+	if (typeof key !== 'string' || !Object.prototype.hasOwnProperty.call(storeData.addons, key)) return null;
+	try { return JSON.parse(JSON.stringify(storeData.addons[key])); }
+	catch (_ignored) { return null; }
+};
+Snowfall.setAddonState = function(key, value) {
+	if (typeof key !== 'string' || !key) return false;
+	try { storeData.addons[key] = JSON.parse(JSON.stringify(value)); }
+	catch (e) { return false; }
+	scheduleAutosave();
+	return true;
+};
 Snowfall.save = function() {
 	flushSave();
 	return true;
@@ -1350,10 +1377,12 @@ Snowfall.reset = function(mask) {
 		storeData.keys = {};
 		storeData.defaults = {};
 		storeData.fired = {};
+		storeData.addons = {};
 	} else {
 		if (mask.vars) storeData.vars = {};
 		if (mask.keys) { storeData.keys = {}; storeData.defaults = {}; }
 		if (mask.fired) storeData.fired = {};
+		if (mask.addons) storeData.addons = {};
 	}
 	isDirty = true;
 	flushSave();

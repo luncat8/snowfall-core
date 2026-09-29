@@ -23,7 +23,8 @@
      input           — a tap on prose turns the page; on a button, a link or
                        the host's own UI it does not
      no engine       — quiet false, no throw, no style write
-     the source      — no scroll listener, no rAF, no overflow shorthand
+     the source      — one passive scroll listener for throttled position saves,
+                       no rAF, no overflow shorthand
 
    `node test/paged.js`, or via `node test/run.js`. */
 'use strict';
@@ -381,6 +382,31 @@ function reflow(root, from, by) {
 	SP.padBottom = 0;
 }
 
+/* ---------------- alignment and direct page seeks ---------------- */
+{
+	const p = openPage(hPara(1) + hPara(1));
+	const SP = p.SP, firstEnd = SP.y[0];
+	SP.align = 'bottom';
+	SP.set(true, true);
+	eq(SP.y[0], VH, 'bottom alignment adds top paper to fill a short opening page');
+	eq(p.el('app').style.marginTop, (VH - firstEnd) + 'px', 'the opening offset is applied to the story root');
+	SP.set(false);
+	eq(p.el('app').style.marginTop, '', 'book mode restores the author margin');
+}
+{
+	const p = openPage(hPara(90) + hPara(1) + hPara(1) + hPara(1));
+	const SP = p.SP;
+	SP.smooth = 0;
+	SP.align = 'bottom';
+	SP.set(true, true);
+	ok(SP.go(1), 'the TOC-style go() seeks directly to a page');
+	eq(p.win.scrollY, Math.max(0, SP.y[1] - VH), 'a short page bottom-aligns at its final line');
+	SP.align = 'top';
+	SP.go(1);
+	eq(p.win.scrollY, start(p, 1), 'top alignment opens at the page start');
+	ok(!SP.go(SP.count), 'go() rejects an index past the last page');
+}
+
 /* ---------------- 7. set(true) at a position, and re-measure ---------------- */
 {
 	/* the read-only surface cannot be written through, even in sloppy code */
@@ -589,7 +615,8 @@ function reflow(root, from, by) {
 {
 	const src = fs.readFileSync(path.join(ROOT, 'snowfall-paged.js'), 'utf8');
 	ok(src.indexOf('MutationObserver') > 0, 'the story root is watched for story-side changes');
-	ok(src.indexOf("addEventListener('scroll'") < 0, 'the controller adds no scroll listener');
+	ok(src.indexOf("addEventListener('scroll', onScrollSave, { passive: true })") >= 0,
+		'the controller saves position through one passive scroll listener');
 	ok(src.indexOf('requestAnimationFrame') < 0, 'and runs no rAF');
 	ok(src.indexOf("overflowY = 'clip'") > 0, 'the clamp writes overflow-y');
 	ok(src.indexOf("overflow = 'clip'") < 0, 'never the shorthand, which would clip the inline axis too');

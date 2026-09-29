@@ -44,6 +44,7 @@
 'use strict';
 const hasDOM = typeof document !== 'undefined' && typeof window !== 'undefined';
 const DEFAULTS = 'p,section,br';
+const SAVE_KEY = 'snowfall-paged';
 const TAP_MS = 500, TAP_PX = 8, MERGE_PX = 1, EPS = 0.001;
 /* a tap on any of these is the reader's, not the page's */
 const NO_TAP = 'a,button,input,select,textarea,label,summary,[contenteditable],[data-nopage],.snow-prompt,.snow-game,.snow-region-hud';
@@ -53,10 +54,11 @@ const CUT = '.snow-bg,.snow-stick,.snow-game,.snow-prompt,script,style,[data-nop
 
 const P = {
 	root: null, subs: false, touched: false, on: false,
-	n: 0, k: -1, kEl: null, el: [],
+	n: 0, k: -1, kEl: null, el: [], restored: false, saved: null, saveTimer: 0,
 	y: new Float64Array(0), tags: null, tagKey: '',
 	pn: 0, pe: new Int32Array(0), py: new Float64Array(0),
-	padBoxTop: 0, padTop: 0, padBottom: 0, borderTop: 0, borderBottom: 0, borderBox: false, endY: 0, contentTop: 0,
+	padBoxTop: 0, rootTop: 0, padTop: 0, padBottom: 0, borderTop: 0, borderBottom: 0, borderBox: false, endY: 0, contentTop: 0,
+	marginReady: false, baseMarginTop: 0, baseMarginInline: '', leading: 0,
 	pendingH: -1, pendingEl: null, pendingAt: 0, band: -1, flowWarn: 0,
 	timer: 0, mo: null, going: -1
 };
@@ -240,7 +242,7 @@ function groupPages() {
 	if (pe.length < n) pe = new Int32Array(Math.max(n, 8));
 	let m = 0, prev = -1;
 	while (prev < n - 1) {
-		const target = (prev < 0 ? 0 : P.y[prev]) + H;
+		const target = (prev < 0 ? P.rootTop : P.y[prev]) + H;
 		let f = prev;
 		for (let i = prev + 1; i < n; i++) {
 			if (P.y[i] <= target + EPS) f = i;
@@ -257,15 +259,37 @@ function groupPages() {
 }
 
 /* ---------------- the clamp: two style writes, nothing else ---------------- */
+function scrollbar(on) {
+	const de = document.documentElement;
+	if (!de || !de.classList) return;
+	if (on) {
+		if (!document.getElementById('snowfall-paged-css')) {
+			const style = document.createElement('style');
+			style.id = 'snowfall-paged-css';
+			style.textContent = 'html.snow-paged{scrollbar-width:none;scrollbar-gutter:stable}' +
+				'html.snow-paged::-webkit-scrollbar{display:none;width:0;height:0}';
+			document.head.appendChild(style);
+		}
+		de.classList.add('snow-paged');
+		return;
+	}
+	de.classList.remove('snow-paged');
+}
 function readBox() {
 	const root = P.root, sY = global.scrollY || 0;
 	const r = root.getBoundingClientRect();
 	const cs = global.getComputedStyle ? global.getComputedStyle(root) : null;
+	P.rootTop = r.top + sY;
 	if (!cs) {                                    /* no style engine (node gate) */
-		P.padBoxTop = r.top + sY;
+		P.padBoxTop = P.rootTop;
 		P.contentTop = P.padBoxTop;
 		P.endY = r.bottom + sY;
 		return;
+	}
+	if (!P.marginReady) {
+		P.marginReady = true;
+		P.baseMarginTop = parseFloat(cs.marginTop) || 0;
+		P.baseMarginInline = P.root.style.marginTop || '';
 	}
 	P.padTop = parseFloat(cs.paddingTop) || 0;
 	P.padBottom = parseFloat(cs.paddingBottom) || 0;
@@ -278,11 +302,56 @@ function readBox() {
 	   last page is the whole story box, not its last line */
 	P.endY = r.bottom + sY - P.borderBottom;
 }
+function styleAt(sY) {
+	if (!P.on || api.align !== 'bottom' || P.k < 0 || P.k >= P.pn) return NaN;
+	const hi = P.py[P.k];
+	let lo = pageLo(P.k);
+	if (P.k === 0 && P.contentTop > lo) lo = P.contentTop;
+	if (hi - lo >= bandH()) return NaN;
+	return (lo + hi) / 2 + sY - pageOpen(P.k);
+}
+/* The opening page may need leading paper to bottom-align. Its DOM remains a
+   rigid block, so shift the cached absolute Ys instead of remeasuring the engine. */
+function shiftPageY(delta) {
+	if (!delta) return;
+	P.rootTop += delta;
+	P.padBoxTop += delta;
+	P.contentTop += delta;
+	P.endY += delta;
+	for (let i = 0; i < P.n; i++) P.y[i] += delta;
+	for (let i = 0; i < P.pn; i++) P.py[i] += delta;
+	if (P.pendingH >= 0) P.pendingAt += delta;
+	if (P.going >= 0) P.going += delta;
+	const S = engine();
+	if (S && S.default && typeof S.default.shiftSourceY === 'function') S.default.shiftSourceY(delta);
+}
+function adjustLeading() {
+	let desired = 0;
+	if (P.k === 0 && api.align === 'bottom' && P.pn) {
+		const bottom = viewH() - api.padBottom;
+		if (P.py[0] < bottom) desired = P.leading + bottom - P.py[0];
+	}
+	if (desired < 0) desired = 0;
+	const delta = desired - P.leading;
+	if (Math.abs(delta) <= 1) return;
+	P.leading = desired;
+	P.root.style.marginTop = desired > 0 ? (P.baseMarginTop + desired) + 'px' : P.baseMarginInline;
+	shiftPageY(delta);
+}
+function resetLeading() {
+	if (!P.leading || !P.root) return;
+	const delta = -P.leading;
+	P.leading = 0;
+	P.root.style.marginTop = P.baseMarginInline;
+	shiftPageY(delta);
+}
 function apply() {
 	if (P.k < 0 || P.k >= P.pn || !P.root) return;
+	adjustLeading();
 	/* the padding box's bottom edge IS the boundary: the story root's own box
 	   ends exactly at the stop the page is cut at, so nothing past it is painted
 	   and nothing past it can be scrolled to */
+	scrollbar(true);
 	const hi = P.py[P.k];
 	const pb = hi - P.padBoxTop;
 	const h = P.borderBox ? pb + P.borderTop + P.borderBottom : pb - P.padTop - P.padBottom;
@@ -299,22 +368,28 @@ function apply() {
 		P.band = b;
 		P.root.style.marginBottom = b > 0 ? b + 'px' : '';
 	}
+	const S = engine();
+	if (S && S.default) S.default.stylePosition = api.align === 'bottom' ? styleAt : null;
 }
 function unapply() {
 	if (!P.root) return;
 	P.band = -1;
+	scrollbar(false);
+	const S = engine();
+	if (S && S.default) S.default.stylePosition = null;
 	P.root.style.height = '';
 	P.root.style.overflowY = '';
 	P.root.style.marginBottom = '';
 }
 /* where page k starts: the top of its own first portion */
 function pageLo(k) {
-	return k > 0 ? P.py[k - 1] : 0;
+	return k > 0 ? P.py[k - 1] : P.rootTop;
 }
 /* where page k opens: its own start at the top of the reading band — the text
    above it is behind the reader, gone from the page. A page taller than the
    band is walked (or scrolled) from here. */
 function pageOpen(k) {
+	if (api.align === 'bottom' && P.py[k] - pageLo(k) <= bandH()) return pageRead(k);
 	const t = pageLo(k) - api.padTop;
 	return t > 0 ? t : 0;
 }
@@ -327,6 +402,7 @@ function pageRead(k) {
 	const hi = P.py[k], lo = pageLo(k), vh = viewH();
 	const top = lo - api.padTop;
 	const last = hi - vh + api.padBottom;
+	if (api.align === 'bottom' && hi - lo <= bandH()) return last > 0 ? last : 0;
 	const t = top > last ? top : last;
 	return t > 0 ? t : 0;
 }
@@ -341,6 +417,10 @@ function smooth() {
 	try { return !global.matchMedia('(prefers-reduced-motion: reduce)').matches; }
 	catch (e) { return true; }
 }
+function stepEngine() {
+	const S = engine();
+	if (S && S.default && typeof S.default.step === 'function') S.default.step();
+}
 function scrollTo(y, jump) {
 	scrollOpts.top = y;
 	scrollOpts.behavior = jump || !smooth() ? 'auto' : 'smooth';
@@ -350,6 +430,98 @@ function scrollTo(y, jump) {
 	   ground to cover is, and the re-anchor corrects it by re-targeting
 	   rather than snapping the glide dead */
 	P.going = scrollOpts.behavior === 'smooth' && Math.abs((global.scrollY || 0) - y) > 1 ? y : -1;
+}
+
+function startEl(k) {
+	return k > 0 ? P.el[P.pe[k - 1]] : P.root;
+}
+function startId(k) {
+	const el = startEl(k);
+	if (!el) return '';
+	if (el.getAttribute) return el.getAttribute('data-paged-id') || el.id || '';
+	return '';
+}
+function elementPath(el) {
+	let path = '';
+	for (let n = el; n && n !== P.root; n = n.parentNode) {
+		let i = 0;
+		for (let c = n.parentNode && n.parentNode.firstChild; c && c !== n; c = c.nextSibling)
+			if (isEl(c) && c.tagName === n.tagName) i++;
+		path = n.tagName.toLowerCase() + ':' + i + '/' + path;
+	}
+	return path;
+}
+function pageByAnchor(id, path) {
+	for (let k = 0; k < P.pn; k++) {
+		if (id && startId(k) === id || path && elementPath(startEl(k)) === path) return k;
+	}
+	if (path) {
+		for (let i = 0; i < P.n; i++) {
+			if (elementPath(P.el[i]) !== path) continue;
+			for (let k = 0; k < P.pn; k++) if (P.pe[k] >= i) return k;
+		}
+	}
+	return -1;
+}
+function progress(k, y) {
+	const a = pageOpen(k), b = pageRead(k);
+	return b > a ? Math.max(0, Math.min(1, (y - a) / (b - a))) : 0;
+}
+function saveState() {
+	const S = engine();
+	if (!S || typeof S.setAddonState !== 'function' || !P.root) return;
+	const y = global.scrollY || 0;
+	S.setAddonState(SAVE_KEY, {
+		v: 1,
+		mode: P.on ? 'paged' : 'book',
+		page: P.k,
+		pageId: P.k >= 0 && P.k < P.pn ? startId(P.k) : '',
+		pagePath: P.k >= 0 && P.k < P.pn ? elementPath(startEl(P.k)) : '',
+		progress: P.on && P.k >= 0 ? progress(P.k, y) : 0,
+		bookY: P.on ? 0 : y,
+		align: api.align
+	});
+}
+function queueSave() {
+	if (P.saveTimer) return;
+	if (typeof global.setTimeout !== 'function') { saveState(); return; }
+	P.saveTimer = global.setTimeout(function() {
+		P.saveTimer = 0;
+		saveState();
+	}, 250);
+}
+function restoreState(state) {
+	P.restored = true;
+	P.touched = true;
+	if (state.align === 'bottom' || state.align === 'top') alignment = state.align;
+	if (state.mode === 'paged' && P.pn) {
+		let k = pageByAnchor(state.pageId, state.pagePath);
+		if (k < 0) k = Math.max(0, Math.min(P.pn - 1, state.page | 0));
+		P.on = true;
+		P.k = k;
+		P.kEl = P.el[P.pe[k]];
+		apply();
+		const amount = Number.isFinite(state.progress) ? Math.max(0, Math.min(1, state.progress)) : 0;
+		scrollTo(pageOpen(k) + (pageRead(k) - pageOpen(k)) * amount, true);
+		return;
+	}
+	P.on = false;
+	unapply();
+	if (state.mode === 'book') scrollTo(Math.max(0, +state.bookY || 0), true);
+}
+function onScrollSave() {
+	if (!P.touched) return;
+	queueSave();
+}
+function flushPosition() {
+	if (!P.touched) return;
+	if (P.saveTimer) {
+		if (typeof global.clearTimeout === 'function') global.clearTimeout(P.saveTimer);
+		P.saveTimer = 0;
+	}
+	saveState();
+	const S = engine();
+	if (S && typeof S.save === 'function') S.save();
 }
 
 /* ---------------- the story moves: the boundary list must follow ---------------- */
@@ -383,6 +555,7 @@ function ready() {
 	const root = S.scope || (document.getElementById && document.getElementById('app'));
 	if (!root || !root.getBoundingClientRect) return false;
 	P.root = root;
+	if (!P.saved) P.saved = typeof S.getAddonState === 'function' ? S.getAddonState(SAVE_KEY) : null;
 	if (!P.mo && typeof MutationObserver === 'function') {
 		P.mo = new MutationObserver(onMutate);
 		P.mo.observe(root, { childList: true, subtree: true });
@@ -392,7 +565,7 @@ function ready() {
 		S.use({
 			measure: measure,
 			frame: frame,
-			off: function() { P.on = false; P.pendingH = -1; P.pendingEl = null; P.going = -1; unapply(); }
+			off: function() { P.on = false; P.pendingH = -1; P.pendingEl = null; P.going = -1; resetLeading(); unapply(); }
 		});
 	}
 	return true;
@@ -418,7 +591,10 @@ function set(on, fromTop) {
 		P.pendingH = -1;
 		P.pendingEl = null;
 		P.going = -1;
+		resetLeading();
 		unapply();
+		stepEngine();
+		saveState();
 		return true;
 	}
 	if (!ensure()) return false;
@@ -427,6 +603,8 @@ function set(on, fromTop) {
 	else P.k = firstAt((global.scrollY || 0) + viewH());
 	P.kEl = P.el[P.pe[P.k]];
 	apply();
+	stepEngine();
+	saveState();
 	return true;
 }
 function next() {
@@ -443,6 +621,8 @@ function next() {
 \t\t   the band): hurry a screen — the reader scrolls the page freely anyway,
 \t\t   and a quick second tap hurries again without ever skipping a page */
 		scrollTo(Math.min(here, sY + bandH()));
+		stepEngine();
+		queueSave();
 		return true;
 	}
 	if (P.k >= P.pn - 1) return false;
@@ -453,6 +633,23 @@ function next() {
 	   the old page's own height, capped by the band — so no anchor can leap
 	   the window and `skip` never fires for a page the reader is looking at */
 	scrollTo(pageOpen(P.k));
+	stepEngine();
+	saveState();
+	return true;
+}
+function go(k, amount) {
+	if (!P.on || !Number.isInteger(k)) return false;
+	measure();
+	if (k < 0 || k >= P.pn) return false;
+	P.pendingH = -1;
+	P.pendingEl = null;
+	P.k = k;
+	P.kEl = P.el[P.pe[k]];
+	apply();
+	const t = Number.isFinite(amount) ? Math.max(0, Math.min(1, amount)) : 0;
+	scrollTo(pageOpen(k) + (pageRead(k) - pageOpen(k)) * t);
+	stepEngine();
+	saveState();
 	return true;
 }
 function prev() {
@@ -472,6 +669,8 @@ function prev() {
 		P.pendingAt = at;
 	} else apply();
 	scrollTo(at);
+	stepEngine();
+	saveState();
 	return true;
 }
 function frame(sY) {
@@ -485,6 +684,7 @@ function frame(sY) {
 	P.k = k;
 	P.kEl = P.el[P.pe[k]];
 	apply();
+	saveState();
 }
 function boot() {
 	const de = document.documentElement;
@@ -509,6 +709,7 @@ function measure() {
 	const oldLo = wasOn && P.k >= 0 ? pageLo(P.k) : -1;
 	walk();
 	groupPages();
+	if (!wasOn && !P.touched && P.saved && P.saved.v === 1) { restoreState(P.saved); return; }
 	if (!wasOn && !P.touched && boot()) { set(true, (global.scrollY || 0) < 1); return; }
 	if (!wasOn) return;
 	/* the page is kept by element, not by index: a source edit above the
@@ -592,12 +793,25 @@ const api = {
 	get: function() { return P.on; },
 	next: next,
 	prev: prev,
+	go: go,
 	stops: DEFAULTS,                        /* default stop list; data-stops on the root wins */
 	smooth: 1,                               /* 0 makes every step a jump, for QA logs */
 	ignore: '',                              /* extra selector the host wants taps ignored in */
 	padTop: 0,                               /* fixed chrome at the window's top, in px */
 	padBottom: 0                             /* fixed chrome at the window's bottom, in px */
 };
+	let alignment = 'top';
+	Object.defineProperty(api, 'align', { get: function() { return alignment; }, set: function(v) {
+		if (v !== 'top' && v !== 'bottom' || v === alignment) return;
+		alignment = v;
+		if (!P.on || P.k < 0 || P.k >= P.pn) { saveState(); return; }
+		measure();
+		apply();
+		scrollTo(pageOpen(P.k), true);
+		stepEngine();
+		saveState();
+	} });
+	Object.defineProperty(api, 'restored', { get: function() { return P.restored; }, set: function() { /* read-only */ } });
 	Object.defineProperty(api, 'index', { get: function() { return P.k; }, set: function() { /* read-only */ } });
 	Object.defineProperty(api, 'count', { get: function() { return P.pn; }, set: function() { /* read-only */ } });
 	Object.defineProperty(api, 'y', { get: function() { return P.py; }, set: function() { /* read-only */ } });
@@ -619,6 +833,9 @@ if (hasDOM) {
 	global.addEventListener('pointerup', onUp, { passive: true });
 	global.addEventListener('pointercancel', function() { down = null; pointers = 0; }, { passive: true });
 	global.addEventListener('keydown', onKey);
+	global.addEventListener('scroll', onScrollSave, { passive: true });
+	global.addEventListener('pagehide', flushPosition);
+	global.addEventListener('beforeunload', flushPosition);
 	/* the engine may not be on the page yet (load order): a boot refresh with
 	   no subscriber would be the only frame before the next one picks it up */
 	if (engine()) ready();
