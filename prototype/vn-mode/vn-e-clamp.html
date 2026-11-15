@@ -1,0 +1,74 @@
+<!doctype html>
+<html lang="en" data-story="vn-proto-e-clamp" data-paged>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>VN E · clamp</title>
+<link rel="stylesheet" href="vn-proto.css">
+</head>
+<body>
+<div id="stage"><main id="app"></main></div>
+
+<template id="about-src">
+	<h3>E · clamp — the paged mode the engine has today</h3>
+	<p>The baseline, on the same story: <code>snowfall-paged.js</code> as it is. No node
+	moves and nothing is inserted: the story root's <code>height</code> is clamped to the
+	end of the current page (<code>overflow-y: clip</code>), the scrollbar is hidden, and
+	a turn is a native smooth scroll to the next page's opening position.</p>
+	<ul>
+		<li><b>Pictures</b> push during the turn (real scroll).</li>
+		<li><b>Pages are not whole screens:</b> a page is as long as its portions, so the
+		next picture can already be on screen below a short page, and a cover picture is
+		cut by a page shorter than the window.</li>
+		<li><b>The window still scrolls</b> inside a page taller than the screen; only the
+		scrollbar is hidden.</li>
+		<li>Speed has two settings here: glide or instant. No stage driver.</li>
+	</ul>
+</template>
+
+<script src="story.js"></script>
+<script src="../../snowfall.js"></script>
+<script src="../../snowfall-paged.js"></script>
+<script src="vn-proto.js"></script>
+<script>
+(function() {
+'use strict';
+const VN = window.VN, S = window.Snowfall, P = window.SnowfallPaged, drv = VN.drv;
+const glides = () => { P.smooth = VN.speed > 0 ? 1 : 0; };
+const ctl = {
+	isVN: () => P.get(),
+	next: function() { glides(); return P.next(); },
+	prev: function() { glides(); return P.prev(); },
+	setVN: function(want) { P.set(want); },
+	restart: function() {
+		S.reset();
+		VN.clearLog();
+		window.VN_STORY.reset();
+		if (P.get()) P.set(true, true); else drv.set(0);
+		S.refresh();
+	},
+	status: function() {
+		return P.get() ? 'page ' + (P.index + 1) + '/' + P.count + ' · scroll ' + Math.round(drv.get()) : 'book · scroll ' + Math.round(drv.get());
+	},
+	/* ground truth: the story's box ends at the current page's cut */
+	probe: function() {
+		const root = P.root.getBoundingClientRect();
+		const off = root.bottom + drv.get() - P.y[P.index];
+		return Math.abs(off) > 1.5 ? 'page ' + (P.index + 1) + ' is clamped ' + off.toFixed(1) + 'px off its cut' : '';
+	}
+};
+document.addEventListener('DOMContentLoaded', function() {
+	VN.shell({ title: 'E · clamp', ctl: ctl, drivers: false });
+	P.padTop = VN.barH();
+	P.ignore = '#bar,#about,#qa,.snow-prompt';
+	/* every variant opens at the top: a page restored from the last visit would
+		read as scripts fired out of order */
+	if (P.restored) ctl.restart();
+	if (VN.startsAsBook()) P.set(false);
+	window.addEventListener('scroll', VN.stat, { passive: true });
+	VN.stat();
+});
+})();
+</script>
+</body>
+</html>

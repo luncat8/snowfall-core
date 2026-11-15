@@ -1,0 +1,123 @@
+<!doctype html>
+<html lang="en" data-story="vn-proto-a-film">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>VN A · film</title>
+<link rel="stylesheet" href="vn-proto.css">
+</head>
+<body>
+<div id="stage"><main id="app"></main></div>
+
+<template id="about-src">
+	<h3>A · film — the story is padded into whole screens</h3>
+	<p>In VN mode the controller inserts blank spacers so that every page is exactly one
+	screen long and every picture opens a page. A step scrolls one screen; the reader
+	never scrolls.</p>
+	<ul>
+		<li><b>Pictures</b> push for real: the turn is a scroll, so the engine's own wagon
+		chain runs, in both directions.</li>
+		<li><b>Scripts and theme</b> are untouched: they ride the same scroll.</li>
+		<li><b>A whole page of text shows at once.</b> Scripts on the page fire when the
+		page arrives, not when the line is read.</li>
+		<li><b>Cost:</b> the DOM gains two spacer nodes per page edge, relaid on resize.</li>
+	</ul>
+	<p>A portion taller than a screen (B3) is read in several steps inside its page.</p>
+</template>
+
+<script src="story.js"></script>
+<script src="../../snowfall.js"></script>
+<script src="../../snowfall-paged.js"></script>
+<script src="vn-proto.js"></script>
+<script>
+(function() {
+'use strict';
+const VN = window.VN, S = window.Snowfall, F = VN.film, drv = VN.drv;
+const TURN_MS = 950, INNER_MS = 520;
+const opt = { top: 0, bottom: 24, pictures: true };
+const rests = [];
+let on = false, at = 0;
+
+function enter(portion) {
+	opt.top = VN.barH() + 14;
+	VN.quietly(function() {
+		F.layout(opt);
+		/* one rest per page, more inside a page taller than a screen */
+		F.steps(rests, false, Math.floor((VN.viewH() - opt.top - opt.bottom) * 0.85));
+		at = F.stepOf(rests, portion);
+		drv.set(rests[at].s);
+	});
+}
+function leave() {
+	const portion = F.pages[rests[at].k].first;
+	VN.quietly(function() {
+		F.clear();
+		S.refresh();
+		VN.readCuts();
+		drv.set(Math.max(0, VN.start(portion) - (VN.lead(portion) >= 0 ? 0 : opt.top)));
+	});
+	VN.left(portion);
+}
+function go(to) {
+	if (to < 0 || to >= rests.length) return false;
+	const turn = rests[to].k !== rests[at].k;
+	at = to;
+	VN.glide(rests[at].s, turn ? TURN_MS : INNER_MS);
+	return true;
+}
+const ctl = {
+	isVN: () => on,
+	next: () => go(at + 1),
+	prev: () => go(at - 1),
+	setVN: function(want) {
+		if (want === on) return;
+		VN.settle();
+		on = want;
+		/* the theme turns over the screen that scrolls in, not half a screen early */
+		S.default.stylePosition = on ? (s, vh) => s + vh * 0.4 : null;
+		if (on) enter(VN.resume(VN.portionAt(drv.get() + opt.top))); else leave();
+		VN.lock(on);
+	},
+	restart: function() {
+		VN.settle();
+		S.reset();
+		VN.clearLog();
+		window.VN_STORY.reset();
+		at = 0;
+		VN.quietly(function() { drv.set(0); VN.rearm(); });
+	},
+	status: function() {
+		if (!on) return 'book · scroll ' + Math.round(drv.get());
+		const r = rests[at], pg = F.pages[r.k];
+		return 'page ' + (r.k + 1) + '/' + F.pages.length + (pg.tall ? ' · tall' : '') + ' · rest ' + (at + 1) + '/' + rests.length;
+	},
+	/* ground truth: the page's first glyph is on screen at its opening rest,
+		and the next page's first glyph is on no rest of this page */
+	probe: function() {
+		const r = rests[at], pg = F.pages[r.k], s = drv.get(), vh = VN.viewH();
+		const opening = s === pg.s;
+		const first = VN.glyphY(pg.first) - s;
+		if (opening && (first < opt.top - 1 || first > vh)) return 'page ' + (r.k + 1) + ' opens with its first line at ' + Math.round(first);
+		if (r.k + 1 >= F.pages.length) return '';
+		const next = VN.glyphY(F.pages[r.k + 1].first) - s;
+		return next < vh - 1 ? 'page ' + (r.k + 2) + ' shows on page ' + (r.k + 1) + ' at ' + Math.round(next) : '';
+	}
+};
+VN.rig();
+document.addEventListener('DOMContentLoaded', function() {
+	VN.shell({ title: 'A · film', ctl: ctl });
+	VN.input();
+	VN.readCuts();
+	VN.onResize(function() {
+		if (on) { enter(F.pages[rests[at].k].first); return; }
+		S.refresh();
+		VN.readCuts();
+	});
+	ctl.setVN(!VN.startsAsBook());
+	VN.open();
+	VN.stat();
+});
+})();
+</script>
+</body>
+</html>

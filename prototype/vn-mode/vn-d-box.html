@@ -1,0 +1,184 @@
+<!doctype html>
+<html lang="en" data-story="vn-proto-d-box">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>VN D · box</title>
+<link rel="stylesheet" href="vn-proto.css">
+<style>
+/* the story stays laid out — it is what the pictures, theme and scripts are
+	measured against — but only its pictures and parked sticks are painted */
+html.vn-box #app{color:transparent;text-shadow:none;user-select:none}
+html.vn-box #app #door{border-color:transparent}
+#box{position:fixed;z-index:20;left:50%;bottom:1rem;transform:translateX(-50%);width:min(46rem,calc(100% - 1.5rem));
+	max-height:44vh;overflow-y:auto;overscroll-behavior:contain;padding:1.5rem 1.3rem 1rem;border-radius:.8rem;
+	background:color-mix(in srgb,var(--snow-bg,#10151f) 86%,transparent);color:var(--snow-fg,#dfe8f5);
+	border:1px solid color-mix(in srgb,var(--snow-fg,#fff) 26%,transparent);backdrop-filter:blur(8px);
+	font:18px/1.6 Georgia,'Iowan Old Style','Times New Roman',serif;cursor:pointer}
+#box p{margin:0 0 .6em}#box h1{margin:0;font-size:1.9rem;line-height:1.2}#box h2{margin:0 0 .2em;font-size:1.3rem;letter-spacing:.12em}
+#box .sub{opacity:.75;font-size:.95rem}
+#box .stanza span{display:block}
+#box section{display:contents}
+#plate{position:sticky;top:-1.5rem;float:left;margin:-1.5rem 0 .4rem -1.3rem;padding:.15rem .9rem;border-radius:.8rem 0 .6rem 0;
+	background:var(--snow-fg,#dfe8f5);color:var(--snow-bg,#10151f);font:600 12px/1.5 system-ui,sans-serif;letter-spacing:.06em;text-transform:uppercase}
+#plate:empty{display:none}
+#say{clear:both}
+#more{position:sticky;bottom:-1rem;float:right;font:12px/1 system-ui,sans-serif;opacity:.7}
+.snow-prompt{bottom:auto;top:calc(var(--bar-h) + 1rem)}
+@media (max-width:48rem){#box{font-size:17px;max-height:50vh}}
+</style>
+</head>
+<body>
+<div id="stage"><main id="app"></main></div>
+<div id="box" hidden><div id="plate"></div><div id="say"></div><div id="more" hidden>more below</div></div>
+
+<template id="about-src">
+	<h3>D · box — a picture stage and a text box</h3>
+	<p>The story is still laid out in the page (A's whole screens) and still scrolls, but
+	its text is not painted. The box shows a copy of the portion being read; the page
+	behind it is only pictures, theme and parked captions.</p>
+	<ul>
+		<li><b>Pictures</b> push when the reading crosses into a page that a picture opens:
+		that step is a one-screen scroll. Steps inside a picture's pages move nothing.</li>
+		<li><b>Scripts</b> fire per portion (reading position, as in C). The name plate on
+		the box is written by the story's own scripts.</li>
+		<li><b>Cost:</b> the text exists twice while shown (the copy is a clone: an
+		<code>id</code> inside it is a duplicate), long portions scroll inside the box,
+		and text no longer sits on its picture — the book's layout is gone.</li>
+	</ul>
+</template>
+
+<script src="story.js"></script>
+<script src="../../snowfall.js"></script>
+<script src="../../snowfall-paged.js"></script>
+<script src="vn-proto.js"></script>
+<script>
+(function() {
+'use strict';
+const VN = window.VN, S = window.Snowfall, F = VN.film, drv = VN.drv;
+const $ = id => document.getElementById(id);
+const html = document.documentElement, box = $('box'), say = $('say');
+const TURN_MS = 950, NOT_TEXT = '.snow-a,.snow-bg,.snow-stick,.vn-pad,script,style';
+const opt = { top: 0, bottom: 24, pictures: true };
+const steps = [];
+let on = false, at = 0;
+
+function show(i) {
+	const copy = VN.portionRange(i).cloneContents();
+	const drop = copy.querySelectorAll(NOT_TEXT);
+	for (let n = 0; n < drop.length; n++) drop[n].remove();
+	say.replaceChildren(copy);
+	box.scrollTop = 0;
+	hint();
+}
+const boxRest = () => box.scrollHeight - box.clientHeight - box.scrollTop;
+function hint() { $('more').hidden = boxRest() < 2; }
+function enter(portion) {
+	opt.top = VN.barH() + 14;
+	VN.quietly(function() {
+		F.layout(opt);
+		F.steps(steps, true, 0);
+		at = F.stepOf(steps, portion);
+		show(steps[at].i);
+		drv.set(steps[at].s);
+	});
+}
+function leave() {
+	const portion = steps[at].i;
+	VN.quietly(function() {
+		F.clear();
+		S.refresh();
+		VN.readCuts();
+		drv.set(Math.max(0, VN.start(portion) - (VN.lead(portion) >= 0 ? 0 : opt.top)));
+	});
+	VN.left(portion);
+}
+function go(to) {
+	if (to < 0 || to >= steps.length) return false;
+	const from = steps[at], next = steps[to];
+	/* only a page that a picture opens is worth watching arrive (or leave) */
+	const pushes = F.pages[Math.max(from.k, next.k)].lead >= 0 && from.k !== next.k;
+	at = to;
+	show(next.i);
+	VN.glide(next.s, pushes ? TURN_MS : 0);
+	VN.step();
+	return true;
+}
+const ctl = {
+	isVN: () => on,
+	/* a portion longer than the box is read inside the box first */
+	next: function() {
+		if (boxRest() < 2) return go(at + 1);
+		box.scrollTop += box.clientHeight * 0.8;
+		hint();
+		return true;
+	},
+	prev: function() {
+		if (box.scrollTop < 1) return go(at - 1);
+		box.scrollTop -= box.clientHeight * 0.8;
+		hint();
+		return true;
+	},
+	setVN: function(want) {
+		if (want === on) return;
+		VN.settle();
+		on = want;
+		html.classList.toggle('vn-box', on);
+		box.hidden = !on;
+		VN.read = on ? () => VN.cuts.y[steps[at].i] - VN.viewH() : null;
+		VN.alias = on;
+		S.default.options.parkedAsView = on ? 1 : 0;
+		S.default.stylePosition = on ? (s, vh) => s + vh * 0.4 : null;
+		if (on) enter(VN.resume(VN.portionAt(drv.get() + opt.top))); else leave();
+		VN.lock(on);
+	},
+	restart: function() {
+		VN.settle();
+		S.reset();
+		VN.clearLog();
+		window.VN_STORY.reset();
+		at = 0;
+		VN.quietly(function() {
+			if (on) show(steps[0].i);
+			drv.set(0);
+			VN.rearm();
+		});
+	},
+	status: function() {
+		if (!on) return 'book · scroll ' + Math.round(drv.get());
+		const st = steps[at];
+		return 'portion ' + (st.i + 1) + '/' + VN.cuts.n + ' · stage ' + (st.k + 1) + '/' + F.pages.length;
+	},
+	/* ground truth: the box says what the portion says, and the picture that
+		opens this stage is parked */
+	probe: function() {
+		const st = steps[at], pg = F.pages[st.k], W = S.wagons;
+		const nodes = VN.ink.textNodes(st.i);
+		let text = '';
+		for (let n = 0; n < nodes.length; n++) if (!nodes[n].parentNode.closest('.snow-stick')) text += nodes[n].nodeValue;
+		const squeeze = t => t.replace(/\s+/g, '');
+		if (squeeze(say.textContent) !== squeeze(text)) return 'the box does not say portion ' + (st.i + 1);
+		if (pg.lead >= 0 && Math.abs(W.els[pg.lead].getBoundingClientRect().top) > 1) return 'the picture of stage ' + (st.k + 1) + ' is not parked';
+		return '';
+	}
+};
+VN.onPlace = function(text) { $('plate').textContent = text === '—' ? '' : text; };
+box.addEventListener('scroll', hint, { passive: true });
+VN.rig();
+document.addEventListener('DOMContentLoaded', function() {
+	VN.shell({ title: 'D · box', ctl: ctl });
+	VN.input();
+	VN.readCuts();
+	VN.onResize(function() {
+		if (on) { enter(steps[at].i); return; }
+		S.refresh();
+		VN.readCuts();
+	});
+	ctl.setVN(!VN.startsAsBook());
+	VN.open();
+	VN.stat();
+});
+})();
+</script>
+</body>
+</html>

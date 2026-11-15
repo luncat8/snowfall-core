@@ -1,0 +1,101 @@
+/* vn-proto.css — the look shared by every VN-mode variant: story type, the
+	theme-coloured chrome (so a theme transition is visible on the toolbar and
+	the log too), the scroll drivers, and the QA panel. */
+/* the halo that keeps text readable on a picture: two small shadows — a wide
+	blur over a screen of text is the most expensive thing on the page to raster */
+:root{--halo:0 1px 2px #000e,0 0 7px #000c;--bar-h:2.9rem}
+html.day{--halo:0 1px 1px #fffd,0 0 7px #fffc}
+*{box-sizing:border-box}
+html{background:var(--snow-bg,#10151f);color:var(--snow-fg,#dfe8f5);overflow-x:clip}
+body{margin:0;font:18px/1.6 Georgia,'Iowan Old Style','Times New Roman',serif;overflow-x:clip}
+button,select{font:inherit;color:inherit}
+
+/* ---- the story ---- */
+#app{position:relative;max-width:40rem;margin:0 auto;padding:calc(var(--bar-h) + 1.4rem) 1.25rem 3rem;text-shadow:var(--halo)}
+#app section{margin:0;padding:0}
+#app p{margin:0 0 .9em}
+#app h1{margin:0;font-size:2.3rem;line-height:1.15;letter-spacing:-.02em}
+#app h2{margin:0 0 .25em;font-size:1.5rem;line-height:1.3;letter-spacing:.12em}
+#app .sub{margin:.3rem 0 1.6rem;opacity:.75;font-size:.95rem}
+#app .long{line-height:1.85}
+#app .stanza span{display:block}
+#door{display:inline-block;min-width:4.6em;text-align:center;border-bottom:1px dashed currentColor}
+/* a frame on every picture: where one wagon ends and the next begins must be
+	visible while they push each other */
+.snow-bg{box-shadow:inset 0 0 0 5px #ffffff3d,inset 0 0 0 6px #0000004d}
+.snow-stick{width:max-content;max-width:100%;margin:0 0 .6rem;padding:.25rem .7rem;border:1px solid #ffffff38;border-radius:2rem;
+	background:#0009;color:#fff;text-shadow:none;font:12px/1.4 ui-monospace,monospace;letter-spacing:.03em}
+.snow-stick.tag{margin:.8rem 0 0 auto}
+/* a page spacer the VN controller owns: blank paper, never a stop */
+.vn-pad{display:block;height:0;margin:0;padding:0;border:0;pointer-events:none}
+
+/* ---- scroll drivers ---- */
+/* window: the viewport stays the scrollport, only the reader's hands are taken
+	off it — scrollTo still works and sticky still parks */
+html.vn-lock{overflow:hidden;overscroll-behavior:none;touch-action:none}
+/* stage: the window never scrolls; a fixed stage is the scrollport */
+html.vn-stage,html.vn-stage body{height:100%;overflow:hidden}
+html.vn-stage #stage{position:fixed;inset:0;overflow-x:hidden;overflow-y:auto;scrollbar-width:none;overscroll-behavior:none}
+html.vn-stage #stage::-webkit-scrollbar{display:none}
+html.vn-stage.vn-lock #stage{overflow-y:hidden}
+/* a picture that leaves by the bottom is translated below the story's end, and
+	a scroll container counts that as scrollable overflow: the story clips it */
+html.vn-stage #app{overflow-y:clip}
+html.vn-measure .snow-stick{position:static}
+
+/* ---- ink: unread text is laid out and has no ink ---- */
+::highlight(vn-unread){color:transparent}
+/* the halo moves onto the read text: a text-shadow on the element itself is
+	painted under transparent glyphs too */
+html.vn-ink #app{text-shadow:none}
+::highlight(vn-read){text-shadow:var(--halo)}
+.snow-stick::highlight(vn-read){text-shadow:none}
+html.vn-ink .vn-off{visibility:hidden}
+
+/* ---- chrome ---- */
+#bar{position:fixed;top:0;left:0;right:0;z-index:70;display:flex;flex-wrap:wrap;gap:.3rem .4rem;align-items:center;min-height:var(--bar-h);
+	padding:.35rem .6rem;background:color-mix(in srgb,var(--snow-bg,#10151f) 80%,transparent);color:var(--snow-fg,#dfe8f5);
+	border-bottom:1px solid color-mix(in srgb,var(--snow-fg,#fff) 22%,transparent);backdrop-filter:blur(7px);
+	font:13px/1.2 system-ui,-apple-system,'Segoe UI',sans-serif}
+#bar a{color:inherit;opacity:.8;text-decoration:none;white-space:nowrap}
+#bar a:hover{opacity:1;text-decoration:underline}
+#bar b{margin:0 .3rem 0 .1rem;white-space:nowrap}
+#bar button,#bar select{padding:.28rem .5rem;border:1px solid color-mix(in srgb,var(--snow-fg,#fff) 32%,transparent);border-radius:.4rem;
+	background:color-mix(in srgb,var(--snow-fg,#fff) 9%,transparent);cursor:pointer}
+#bar button:hover{background:color-mix(in srgb,var(--snow-fg,#fff) 20%,transparent)}
+#bar button[aria-pressed=true]{background:color-mix(in srgb,var(--snow-fg,#fff) 30%,transparent);font-weight:600}
+#bar option{color:#111;background:#fff}
+#bar label{display:inline-flex;gap:.25rem;align-items:center;white-space:nowrap;opacity:.9}
+/* the status never changes the toolbar's height: it takes what is left of the row */
+#stat{flex:1 1 0;min-width:0;overflow:hidden;text-overflow:ellipsis;text-align:right;font:12px/1.2 ui-monospace,monospace;opacity:.8;white-space:nowrap}
+.panel{position:fixed;z-index:65;right:.5rem;width:min(19rem,calc(100% - 1rem));padding:.5rem .65rem;border-radius:.5rem;
+	background:color-mix(in srgb,var(--snow-bg,#10151f) 84%,transparent);color:var(--snow-fg,#dfe8f5);
+	border:1px solid color-mix(in srgb,var(--snow-fg,#fff) 20%,transparent);backdrop-filter:blur(7px);
+	font:12px/1.45 ui-monospace,monospace}
+#log{top:calc(var(--bar-h) + .5rem);pointer-events:none}
+html.log-flip #log{display:none}
+#log .where{font-weight:700;margin-bottom:.15rem}
+#log .seq{margin-bottom:.3rem;opacity:.9}
+#log .seq.bad,#log .bad{color:#ff7b8f;font-weight:700}
+#log .mark{opacity:1}#log .note{opacity:.62}#log .dim{opacity:.45}#log .ask{color:#ffd166}
+#about{top:calc(var(--bar-h) + .5rem);left:.5rem;right:auto;width:min(27rem,calc(100% - 1rem));font:13px/1.5 system-ui,sans-serif;max-height:70vh;overflow:auto}
+#about h3{margin:0 0 .3rem;font-size:14px}
+#about p,#about ul{margin:.3rem 0}#about ul{padding-left:1.1rem}
+#about code{font:12px ui-monospace,monospace;opacity:.9}
+#qa{bottom:.5rem;left:.5rem;right:.5rem;width:auto;max-height:55vh;overflow:auto;white-space:pre-wrap;z-index:90;
+	background:#070b12f5;color:#dfe8f5}
+#qa .pass{color:#7ee2a8}#qa .fail{color:#ff8fa3}#qa .head{color:#ffd166}
+#qa button{margin:.4rem .4rem 0 0;padding:.25rem .6rem;border:1px solid #4b5b78;border-radius:.35rem;background:#1b2740;color:#dce8ff;cursor:pointer}
+[hidden]{display:none !important}
+.snow-prompt{z-index:80}
+.snow-prompt.nudge{animation:vn-nudge .35s}
+@keyframes vn-nudge{25%{transform:translateX(-50%) translateY(-6px)}75%{transform:translateX(-50%) translateY(3px)}}
+#bar .more{display:contents}
+#bMore{display:none}
+@media (max-width:48rem){
+	body{font-size:17px}
+	#bMore{display:inline-block}
+	#bar .more{display:none}html.bar-open #bar .more{display:contents}
+	#log{display:none}html.log-flip #log{display:block}
+	#stat{flex:0 0 100%;text-align:left}
+}

@@ -1,0 +1,162 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>VN mode · variants</title>
+<style>
+:root{--bg:#0e131c;--fg:#dfe8f5;--dim:#9aa8bd;--line:#2a3547;--card:#151c29;--a:#ffd166}
+*{box-sizing:border-box}
+html{background:var(--bg);color:var(--fg)}
+body{margin:0 auto;max-width:68rem;padding:2rem 1.25rem 4rem;font:16px/1.55 system-ui,-apple-system,'Segoe UI',sans-serif}
+h1{margin:0 0 .3rem;font:700 2rem/1.15 Georgia,serif;letter-spacing:-.02em}
+h2{margin:2.4rem 0 .7rem;font-size:1.05rem;letter-spacing:.08em;text-transform:uppercase;color:var(--dim)}
+p{margin:.5rem 0}
+.lead{max-width:50rem;color:var(--dim)}
+a{color:var(--a)}
+code{font:13px ui-monospace,monospace;color:#c9d6ea}
+.cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(19rem,1fr));gap:1rem}
+.card{display:flex;flex-direction:column;padding:1rem 1.1rem 1.1rem;border:1px solid var(--line);border-radius:.7rem;background:var(--card)}
+.card h3{margin:0;font:700 1.25rem/1.3 Georgia,serif}
+.card .how{margin:.2rem 0 .7rem;color:var(--dim);font-size:.93rem}
+.card dl{margin:0 0 .9rem;display:grid;grid-template-columns:5.2rem 1fr;gap:.25rem .6rem;font-size:.9rem}
+.card dt{color:var(--dim)}
+.card dd{margin:0}
+.go{margin-top:auto;display:flex;flex-wrap:wrap;gap:.4rem}
+.go a{padding:.35rem .7rem;border:1px solid var(--line);border-radius:.45rem;background:#1d2738;color:var(--fg);text-decoration:none;font-size:.88rem}
+.go a:first-child{background:var(--a);border-color:var(--a);color:#1b1400;font-weight:600}
+.go a:hover{border-color:var(--a)}
+/* what the screen does on one step, drawn */
+.pic{position:relative;height:6.2rem;margin:0 0 .8rem;border-radius:.4rem;overflow:hidden;background:linear-gradient(135deg,#3d0a10,#b3261e 60%,#ff9d7a);border:1px solid var(--line)}
+.pic i{position:absolute;left:12%;height:3px;border-radius:2px;background:#fff}
+.pic .ghost{opacity:.22}
+.pic .box{position:absolute;left:8%;right:8%;bottom:8%;height:36%;border-radius:.3rem;background:#0f1622e0;border:1px solid #ffffff40}
+.pic .fold{position:absolute;left:0;right:0;top:72%;border-top:1px dashed #ffffffa0}
+.pic .next{position:absolute;left:0;right:0;top:100%;height:100%;background:linear-gradient(135deg,#06250f,#1f7a3a 60%,#b7e37a)}
+.pic .cut{position:absolute;left:0;right:0;bottom:0;background:#0e131c}
+table{width:100%;border-collapse:collapse;font-size:.9rem}
+th,td{padding:.45rem .6rem;border-bottom:1px solid var(--line);text-align:left;vertical-align:top}
+th{color:var(--dim);font-weight:600}
+td:first-child,th:first-child{white-space:nowrap}
+.scroll{overflow-x:auto}
+ul{margin:.4rem 0;padding-left:1.2rem}
+li{margin:.25rem 0}
+</style>
+</head>
+<body>
+<h1>VN mode — five ways to read the same story</h1>
+<p class="lead">The question: when the reader does not scroll and everything sits on one
+screen, what moves the pictures, the theme and the scripts? Each page below answers it
+differently on the unchanged engine and the same story. Every page has a
+<b>book ⇄ VN</b> switch, a script log that flags anything out of order, a speed
+control, and a <b>self-test</b> button that walks the story both ways.</p>
+
+<h2>The variants</h2>
+<div class="cards">
+
+<div class="card">
+	<div class="pic"><i style="top:18%;width:60%"></i><i style="top:30%;width:70%"></i><i style="top:42%;width:52%"></i><i style="top:54%;width:64%"></i><i style="top:66%;width:40%"></i></div>
+	<h3>A · film</h3>
+	<p class="how">Spacers pad the story into whole screens. A step scrolls one screen.</p>
+	<dl>
+		<dt>text</dt><dd>a whole page at once, on its picture</dd>
+		<dt>pictures</dt><dd>push during every page turn</dd>
+		<dt>scripts</dt><dd>when the page arrives</dd>
+		<dt>DOM</dt><dd>2 spacer nodes per page edge</dd>
+	</dl>
+	<div class="go"><a href="vn-a-film.html">open</a><a href="vn-a-film.html?driver=stage">no window scroll</a><a href="vn-a-film.html?mode=book">as a book</a></div>
+</div>
+
+<div class="card">
+	<div class="pic"><i style="top:24%;width:60%"></i><i style="top:36%;width:70%"></i><i style="top:48%;width:52%"></i><i style="top:60%;width:64%"></i><i class="ghost" style="top:80%;width:58%"></i><div class="fold"></div></div>
+	<h3>B · feed</h3>
+	<p class="how">The book's own layout. A step scrolls the next portion's end onto a fold; later text has no ink.</p>
+	<dl>
+		<dt>text</dt><dd>feeds upward a portion at a time</dd>
+		<dt>pictures</dt><dd>ride with their text, exactly as in the book</dd>
+		<dt>scripts</dt><dd>when their line crosses the fold</dd>
+		<dt>DOM</dt><dd>1 spacer; unread text hidden by highlight ranges</dd>
+	</dl>
+	<div class="go"><a href="vn-b-feed.html">open</a><a href="vn-b-feed.html?driver=stage">no window scroll</a><a href="vn-b-feed.html?mode=book">as a book</a></div>
+</div>
+
+<div class="card">
+	<div class="pic"><i style="top:18%;width:60%"></i><i style="top:30%;width:70%"></i><i style="top:42%;width:52%"></i><i class="ghost" style="top:54%;width:64%"></i><i class="ghost" style="top:66%;width:40%"></i></div>
+	<h3>C · ink</h3>
+	<p class="how">A's whole screens, but the lines appear in place one portion a step; a full page turns.</p>
+	<dl>
+		<dt>text</dt><dd>appears where it lies; optional typewriter</dd>
+		<dt>pictures</dt><dd>push when the page turns</dd>
+		<dt>scripts</dt><dd>when their line gets its ink</dd>
+		<dt>DOM</dt><dd>A's spacers + highlight ranges</dd>
+	</dl>
+	<div class="go"><a href="vn-c-ink.html">open</a><a href="vn-c-ink.html?driver=stage">no window scroll</a><a href="vn-c-ink.html?mode=book">as a book</a></div>
+</div>
+
+<div class="card">
+	<div class="pic"><div class="box"></div><i style="top:64%;width:56%;left:14%"></i><i style="top:76%;width:44%;left:14%"></i></div>
+	<h3>D · box</h3>
+	<p class="how">The page is a picture stage; a box shows a copy of the portion being read.</p>
+	<dl>
+		<dt>text</dt><dd>in a box, off the picture</dd>
+		<dt>pictures</dt><dd>push when the reading enters a new picture's page</dd>
+		<dt>scripts</dt><dd>per portion; they also write the name plate</dd>
+		<dt>DOM</dt><dd>A's spacers + a clone of the current portion</dd>
+	</dl>
+	<div class="go"><a href="vn-d-box.html">open</a><a href="vn-d-box.html?driver=stage">no window scroll</a><a href="vn-d-box.html?mode=book">as a book</a></div>
+</div>
+
+<div class="card">
+	<div class="pic"><i style="top:18%;width:60%"></i><i style="top:30%;width:70%"></i><i style="top:42%;width:52%"></i><div class="cut" style="top:56%"></div></div>
+	<h3>E · clamp <small style="font:400 .8rem system-ui;color:var(--dim)">baseline</small></h3>
+	<p class="how">Today's <code>snowfall-paged.js</code>: the story's height is clamped at the page's end.</p>
+	<dl>
+		<dt>text</dt><dd>a page as long as its portions</dd>
+		<dt>pictures</dt><dd>push during the turn; cut by a short page</dd>
+		<dt>scripts</dt><dd>by scroll, as in the book</dd>
+		<dt>DOM</dt><dd>untouched; one style clamp</dd>
+	</dl>
+	<div class="go"><a href="vn-e-clamp.html">open</a><a href="vn-e-clamp.html?mode=book">as a book</a></div>
+</div>
+
+</div>
+
+<h2>Side by side</h2>
+<div class="scroll">
+<table>
+<tr><th></th><th>A · film</th><th>B · feed</th><th>C · ink</th><th>D · box</th><th>E · clamp</th></tr>
+<tr><td>one step is</td><td>a page</td><td>a portion</td><td>a portion</td><td>a portion</td><td>a page</td></tr>
+<tr><td>the step scrolls</td><td>always, one screen</td><td>always, one portion</td><td>only at a page turn</td><td>only into a new picture</td><td>always, one page</td></tr>
+<tr><td>picture is whole at rest</td><td>yes</td><td>no — as in the book (yes with “one step each”)</td><td>yes</td><td>yes</td><td>no — cut by a short page</td></tr>
+<tr><td>scripts fire</td><td>per page</td><td>per line</td><td>per line</td><td>per line</td><td>per page</td></tr>
+<tr><td><code>parked</code> event</td><td>real</td><td>real</td><td>fires as <code>view</code></td><td>fires as <code>view</code></td><td>real</td></tr>
+<tr><td>layout differs from the book</td><td>blank space after short pages</td><td>none</td><td>blank space after short pages</td><td>text leaves the page</td><td>none</td></tr>
+<tr><td>a portion taller than a screen</td><td>stepped inside its page</td><td>stepped</td><td>stepped inside its page</td><td>scrolls inside the box</td><td>reader scrolls it</td></tr>
+<tr><td>needs from a browser</td><td>—</td><td>Custom Highlight API</td><td>Custom Highlight API</td><td>—</td><td>—</td></tr>
+</table>
+</div>
+
+<h2>Two ways to take the scroll away</h2>
+<p>Orthogonal to the variant, switchable in each toolbar (A–D):</p>
+<ul>
+	<li><b>window, locked</b> — the window is still the scrollport, the reader is locked out
+	(<code>overflow: hidden</code>), the controller scrolls it. The engine runs unchanged.</li>
+	<li><b>stage, no window scroll</b> — the window never scrolls at all; a fixed stage is the
+	scrollport. Needed if the story must live inside a page that has other content. Costs the
+	engine a “which element scrolls” option.</li>
+</ul>
+
+<h2>What to look at</h2>
+<ul>
+	<li><b>Red → green</b>: green's top edge meets red's bottom edge and pushes it out — never an overlap, in both directions.</li>
+	<li><b>Green → blue → gold</b>: the same push with a left, a right and a bottom exit.</li>
+	<li><b>Blue → gold</b>: the page turns from night to day gradually; the toolbar and log take the theme too.</li>
+	<li><b>The log</b>: scripts count 1…12; a red line means one fired out of order or was skipped.</li>
+	<li><b>Gold</b>: the story asks a question and waits for the answer.</li>
+	<li><b>Blue's long portion</b> and <b>violet's small picture</b> are the awkward cases.</li>
+	<li><b>Back</b> (Backspace) at any point, and <b>book ⇄ VN</b> (key <code>v</code>) at any point: the place is kept.</li>
+	<li>Speed “slow ×4” makes every push easy to inspect.</li>
+</ul>
+<p class="lead">Notes on what each variant would cost the engine: <a href="README.md">README.md</a>.</p>
+</body>
+</html>

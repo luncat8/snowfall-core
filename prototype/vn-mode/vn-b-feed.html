@@ -1,0 +1,152 @@
+<!doctype html>
+<html lang="en" data-story="vn-proto-b-feed">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>VN B · feed</title>
+<link rel="stylesheet" href="vn-proto.css">
+<style>
+/* the fold: the line being read ends here */
+#fold{position:fixed;left:0;right:0;z-index:4;height:0;border-top:1px dashed color-mix(in srgb,var(--snow-fg,#fff) 30%,transparent);pointer-events:none}
+</style>
+</head>
+<body>
+<div id="stage"><main id="app"></main></div>
+<div id="fold" hidden></div>
+
+<template id="about-src">
+	<h3>B · feed — one portion a step, the text feeds up from a fold</h3>
+	<p>The document is the book's own, plus one blank screen before it. A step scrolls
+	just far enough to put the end of the next portion on the fold (the dashed line);
+	everything after it is in the page but has no ink.</p>
+	<ul>
+		<li><b>Pictures</b> ride with their text exactly as in the book: a new picture
+		climbs a line at a time and pushes the old one out. Set <i>pictures: one step
+		each</i> to give every cover picture a screen of its own, so it arrives whole.</li>
+		<li><b>Scripts</b> fire when their line crosses the fold, one at a time: the
+		engine is fed the fold as the bottom of its window.</li>
+		<li><b>Theme</b> turns as the new chapter's first lines cross the fold.</li>
+		<li><b>Cost:</b> no DOM change beyond one spacer; unread text is hidden with the
+		CSS Custom Highlight API (two ranges, no wrapping).</li>
+	</ul>
+</template>
+
+<script src="story.js"></script>
+<script src="../../snowfall.js"></script>
+<script src="../../snowfall-paged.js"></script>
+<script src="vn-proto.js"></script>
+<script>
+(function() {
+'use strict';
+const VN = window.VN, S = window.Snowfall, D = VN.feed, I = VN.ink, drv = VN.drv;
+const $ = id => document.getElementById(id);
+const STEP_MS = 520, MAX_MS = 1100;
+const opt = { top: 0, bottom: 0, beat: false, walk: true };
+const rests = D.rests;
+let on = false, at = 0;
+
+function enter(portion) {
+	const vh = VN.viewH();
+	opt.top = VN.barH() + 14;
+	opt.bottom = Math.max(96, Math.round(vh * 0.2));
+	$('fold').style.top = (vh - opt.bottom) + 'px';
+	VN.quietly(function() {
+		D.layout(opt);
+		I.on();
+		at = D.restOf(portion);
+		I.cut(rests[at].i);
+		drv.set(rests[at].s);
+	});
+}
+function leave() {
+	const portion = rests[at].i;
+	VN.quietly(function() {
+		I.off();
+		D.clear();
+		S.refresh();
+		VN.readCuts();
+		drv.set(Math.max(0, VN.cuts.y[portion] - VN.viewH() + opt.bottom));
+	});
+	VN.left(portion);
+}
+function go(to) {
+	if (to < 0 || to >= rests.length) return false;
+	const far = Math.abs(rests[to].s - rests[at].s);
+	at = to;
+	I.cut(rests[at].i);
+	/* a long way (a picture taking its own screen) gets more time, not more speed */
+	VN.glide(rests[at].s, Math.min(MAX_MS, STEP_MS + far * 0.6));
+	return true;
+}
+const ctl = {
+	isVN: () => on,
+	next: () => go(at + 1),
+	prev: () => go(at - 1),
+	setVN: function(want) {
+		if (want === on) return;
+		VN.settle();
+		on = want;
+		$('fold').hidden = !on;
+		/* scripts and theme read the fold, not the window's bottom edge or its middle */
+		VN.read = on ? s => s - opt.bottom : null;
+		S.default.stylePosition = on ? (s, vh) => s + vh - opt.bottom : null;
+		/* the top of the book is the start of the story, not its first screenful */
+		if (on) enter(VN.resume(drv.get() < 1 ? 0 : VN.portionAt(drv.get() + VN.viewH() - opt.bottom - 2))); else leave();
+		VN.lock(on);
+	},
+	restart: function() {
+		VN.settle();
+		S.reset();
+		VN.clearLog();
+		window.VN_STORY.reset();
+		at = 0;
+		VN.quietly(function() {
+			if (on) I.cut(rests[0].i);
+			drv.set(on ? rests[0].s : 0);
+			VN.rearm();
+		});
+	},
+	status: function() {
+		if (!on) return 'book · scroll ' + Math.round(drv.get());
+		return 'portion ' + (rests[at].i + 1) + '/' + VN.cuts.n + ' · rest ' + (at + 1) + '/' + rests.length;
+	},
+	/* ground truth: at a portion's last rest its end is on the fold, the next
+		portion's first glyph is not above it, and the ink ends at its cut */
+	probe: function() {
+		const r = rests[at], C = VN.cuts, s = drv.get(), fold = VN.viewH() - opt.bottom;
+		const last = at + 1 >= rests.length || rests[at + 1].i !== r.i;
+		const end = C.y[r.i] - s - fold;
+		if (last && (end < -0.01 || end >= 1.01)) return 'portion ' + (r.i + 1) + ' ends ' + end.toFixed(1) + 'px off the fold';
+		const want = new Range();
+		VN.bound(want, r.i, true);
+		if (I.unread.compareBoundaryPoints(Range.START_TO_START, want)) return 'ink edge is not at cut ' + r.i;
+		if (r.i + 1 >= C.n) return '';
+		const next = VN.glyphY(r.i + 1) - s;
+		return last && next < fold - 2 ? 'portion ' + (r.i + 2) + ' starts above the fold at ' + Math.round(next) : '';
+	}
+};
+function setPictures(v) {
+	opt.beat = v === 'beat';
+	if (on) enter(rests[at].i);
+	VN.stat();
+}
+VN.rig();
+document.addEventListener('DOMContentLoaded', function() {
+	VN.shell({ title: 'B · feed', ctl: ctl, controls: [
+		{ label: 'pictures', options: [['ride', 'ride with the text'], ['beat', 'one step each']], value: 'ride', set: setPictures }
+	] });
+	VN.input();
+	VN.readCuts();
+	VN.onResize(function() {
+		if (on) { enter(rests[at].i); return; }
+		S.refresh();
+		VN.readCuts();
+	});
+	ctl.setVN(!VN.startsAsBook());
+	VN.open();
+	VN.stat();
+});
+})();
+</script>
+</body>
+</html>

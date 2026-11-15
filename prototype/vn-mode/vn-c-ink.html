@@ -1,0 +1,160 @@
+<!doctype html>
+<html lang="en" data-story="vn-proto-c-ink">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>VN C · ink</title>
+<link rel="stylesheet" href="vn-proto.css">
+</head>
+<body>
+<div id="stage"><main id="app"></main></div>
+
+<template id="about-src">
+	<h3>C · ink — whole screens, the lines appear in place</h3>
+	<p>The pages are A's (spacers pad the story into whole screens, every picture opens
+	one). Inside a page nothing moves: each step gives ink to the next portion where it
+	already lies. When the page is full, the next step turns it — and that turn is a
+	scroll, so the pictures push.</p>
+	<ul>
+		<li><b>Scripts</b> fire when their line gets its ink, not when the page arrives:
+		the engine's event pass is fed the reading position instead of the scroll.
+		That pass cannot see the wagons, so <code>parked</code> fires as
+		<code>view</code>.</li>
+		<li><b>Theme and pictures</b> still read the scroll.</li>
+		<li><b>Typewriter</b> (reveal: typed) is the same two ranges with the edge moved
+		inside a text node — no per-letter spans.</li>
+		<li><b>Cost:</b> A's spacers, plus the CSS Custom Highlight API.</li>
+	</ul>
+</template>
+
+<script src="story.js"></script>
+<script src="../../snowfall.js"></script>
+<script src="../../snowfall-paged.js"></script>
+<script src="vn-proto.js"></script>
+<script>
+(function() {
+'use strict';
+const VN = window.VN, S = window.Snowfall, F = VN.film, I = VN.ink, drv = VN.drv;
+const TURN_MS = 950, INNER_MS = 520, TYPE_MS_PER_CHAR = 16, TYPE_MAX_MS = 1500;
+const opt = { top: 0, bottom: 24, pictures: true };
+const steps = [];
+let on = false, at = 0, typed = false;
+
+function enter(portion) {
+	opt.top = VN.barH() + 14;
+	VN.quietly(function() {
+		F.layout(opt);
+		F.steps(steps, true, Math.floor((VN.viewH() - opt.top - opt.bottom) * 0.85));
+		I.on();
+		at = F.stepOf(steps, portion);
+		I.cut(steps[at].i);
+		drv.set(steps[at].s);
+	});
+}
+function leave() {
+	const portion = steps[at].i;
+	VN.quietly(function() {
+		I.off();
+		F.clear();
+		S.refresh();
+		VN.readCuts();
+		drv.set(Math.max(0, VN.start(portion) - (VN.lead(portion) >= 0 ? 0 : opt.top)));
+	});
+	VN.left(portion);
+}
+/* the ink edge runs through portion i's text nodes; the last frame is the cut itself */
+function type(i) {
+	const nodes = I.textNodes(i);
+	let total = 0;
+	for (let n = 0; n < nodes.length; n++) total += nodes[n].length;
+	I.cut(i - 1);
+	VN.tween(Math.min(TYPE_MAX_MS, total * TYPE_MS_PER_CHAR), function(t) {
+		if (t >= 1) { I.cut(i); return; }
+		let left = Math.round(total * t), n = 0;
+		while (n < nodes.length - 1 && left > nodes[n].length) left -= nodes[n++].length;
+		I.edge(nodes[n], Math.min(left, nodes[n].length));
+	}, null, true);
+}
+function go(to) {
+	if (to < 0 || to >= steps.length) return false;
+	const from = steps[at], next = steps[to], writes = typed && to > at && next.i !== from.i;
+	at = to;
+	if (!writes) I.cut(next.i);
+	if (next.s === from.s) {
+		/* nothing scrolls: the step is only a new reading position */
+		VN.step();
+		if (writes) type(next.i);
+		return true;
+	}
+	if (writes) I.cut(next.i - 1);
+	VN.glide(next.s, next.k !== from.k ? TURN_MS : INNER_MS, writes ? function() { type(next.i); } : null);
+	return true;
+}
+const ctl = {
+	isVN: () => on,
+	next: () => go(at + 1),
+	prev: () => go(at - 1),
+	setVN: function(want) {
+		if (want === on) return;
+		VN.settle();
+		on = want;
+		/* scripts read the line that has ink: an anchor is "in view" once the
+			cursor's cut is below it */
+		VN.read = on ? () => VN.cuts.y[steps[at].i] - VN.viewH() : null;
+		VN.alias = on;
+		S.default.options.parkedAsView = on ? 1 : 0;
+		S.default.stylePosition = on ? (s, vh) => s + vh * 0.4 : null;
+		if (on) enter(VN.resume(VN.portionAt(drv.get() + opt.top))); else leave();
+		VN.lock(on);
+	},
+	restart: function() {
+		VN.settle();
+		S.reset();
+		VN.clearLog();
+		window.VN_STORY.reset();
+		at = 0;
+		VN.quietly(function() {
+			if (on) I.cut(steps[0].i);
+			drv.set(0);
+			VN.rearm();
+		});
+	},
+	status: function() {
+		if (!on) return 'book · scroll ' + Math.round(drv.get());
+		const st = steps[at];
+		return 'page ' + (st.k + 1) + '/' + F.pages.length + ' · portion ' + (st.i + 1) + '/' + VN.cuts.n;
+	},
+	/* ground truth: the portion with the cursor lies on screen, the ink ends at
+		its cut, and the next page's first glyph is on no rest of this page */
+	probe: function() {
+		const st = steps[at], pg = F.pages[st.k], s = drv.get(), vh = VN.viewH();
+		const want = new Range();
+		VN.bound(want, st.i, true);
+		if (I.unread.compareBoundaryPoints(Range.START_TO_START, want)) return 'ink edge is not at cut ' + st.i;
+		const first = VN.glyphY(st.i) - s;
+		if (s === pg.s && (first < VN.barH() - 1 || first > vh - opt.bottom)) return 'portion ' + (st.i + 1) + ' gets its ink at ' + Math.round(first);
+		if (st.k + 1 >= F.pages.length) return '';
+		const next = VN.glyphY(F.pages[st.k + 1].first) - s;
+		return next < vh - 1 ? 'page ' + (st.k + 2) + ' shows on page ' + (st.k + 1) + ' at ' + Math.round(next) : '';
+	}
+};
+VN.rig();
+document.addEventListener('DOMContentLoaded', function() {
+	VN.shell({ title: 'C · ink', ctl: ctl, controls: [
+		{ label: 'reveal', options: [['line', 'at once'], ['type', 'typed']], value: 'line', set: function(v) { typed = v === 'type'; } }
+	] });
+	VN.input();
+	VN.readCuts();
+	VN.onResize(function() {
+		if (on) { enter(steps[at].i); return; }
+		S.refresh();
+		VN.readCuts();
+	});
+	ctl.setVN(!VN.startsAsBook());
+	VN.open();
+	VN.stat();
+});
+})();
+</script>
+</body>
+</html>

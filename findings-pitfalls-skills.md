@@ -817,3 +817,88 @@ implementation, on the reference's own images and rects.
   quarter screen pack four to a page; a walk that expects one page per tap
   then stalls on page 0 and every per-page assertion fails misleadingly.
   Multi-page fixtures need portions over half a band.
+
+## VN mode prototypes (`prototype/vn-mode/`) — what driving the engine without the reader's scroll taught
+
+Five variants on one story; `prototype/vn-mode/README.md` has the trade-offs
+and the engine changes each implies. Notes for whoever builds the chosen one:
+
+- **Never re-implement the wagon push for VN mode.** Keep a real scroll
+  position and move it; the chain, sticky parking, exits, morph and event
+  edges then run as in the book, both ways. Every variant differs only in
+  layout, where a step lands, and which position the event pass is told.
+- **`overflow:hidden` on `html` locks the reader out and keeps
+  `window.scrollTo` working**, and sticky still parks: the viewport remains
+  the scrollport. That is enough for "hidden global scroll".
+- **A programmatic scroll's `scroll` event arrives a frame late.** Step the
+  engine in the same task as the write (`inst.step(y)`), or the wagons paint
+  one frame behind the text.
+- **Cut a long move into steps of half a window.** An anchor that crosses
+  the whole window inside one engine frame never gets `view` and is reported
+  as `skip`. An instant page turn must still pass through the middle.
+- **Rests must be integer scroll positions.** `scrollTo(0, 500.5)` lands on
+  501 or 500; a wagon is parked only at `free <= 0`, so a rest computed as a
+  fraction above the wagon's Y leaves it one sub-pixel short of parked and
+  `parked` never fires. Size the spacer so the page starts on an integer.
+- **`refresh()` forgets which anchors fired.** A relayout (spacers, resize,
+  mode switch) re-fires every script in view. Carry `inst.events.flags`
+  across by anchor element (`inst.events.els`), and keep `options.events = 0`
+  for the whole change so transient positions fire nothing. The first
+  evented frame after a refresh latches anchors already above the window.
+- **A refresh drops a pending `ask` without resolving it.** If flags are
+  carried across, the question is lost; carry nothing while one is pending
+  and the script asks again.
+- **The boot refresh fires whatever the book layout shows at scroll 0**,
+  before a controller has laid out its first screen. Hold events from script
+  load until the first layout is in.
+- **Size spacers by measuring, not by adding heights.** A spacer changes
+  which margins collapse around it, so "page start + lengths" drifts by a
+  margin per page. Insert it empty, read where the next page starts, then
+  set its height.
+- **Put a page's spacer above everything glued to the page's start**: the
+  wagon's `.snow-a` marker, a section's own style marker, a script just
+  above the first line. Otherwise the anchor stays on the previous page and
+  its script or theme fires a page early.
+- **A scroll container counts a translated wagon as scrollable overflow.**
+  With a fixed stage as the scrollport, a bottom-exit wagon (pushed down by
+  its transform) grew `scrollHeight` by a screen. `overflow-y:clip` on the
+  story root stops it and does not break sticky.
+- **The engine measures against `window.scrollY`.** For a stage scrollport,
+  put the stage at `scrollTop = 0` for the duration of `refresh()` (content
+  == viewport coordinates there), restore it, and drive frames with
+  `inst.step(stage.scrollTop)`. The paged walk has the same assumption.
+- **Hiding unread text without touching the DOM: CSS Custom Highlight API.**
+  Two `Range`s, `::highlight(unread){color:transparent}`. A `text-shadow` on
+  the element is still painted under transparent glyphs — move the shadow
+  to a second highlight over the read text. A typewriter is the same two
+  ranges with the boundary inside a text node. Boxes that paint on their own
+  (a caption, a border) need `visibility:hidden` while they start below the
+  cursor.
+- **`cover` is the default mode in JS but not in CSS.** `background-size:
+  cover` is written only for `[data-mode=cover]`; a `.snow-bg` without the
+  attribute is sized as cover and painted at the image's natural size. Write
+  the attribute.
+- **The stop walk cuts at a `<p>`'s start, never at its end.** Loose text
+  after `</p>` joins the paragraph's portion. A line that follows a
+  paragraph must be a paragraph (or start with `<br>`).
+- **Two pictures closer than one picture's height push each other before
+  either parks**, and each runs ahead of its text. Test stories need
+  chapters longer than a screen, by different amounts; one short chapter is
+  enough to show the effect.
+- **Anything whose height feeds the story's layout must not change from a
+  read.** A toolbar whose height set the story's top padding was re-synced
+  inside a status read; the status text wrapped, the story shifted by a row
+  under measured anchors, and every wagon was a row off. Write such values
+  only where a relayout follows.
+- **Headless Chromium in this sandbox** (no system browser, npm registry
+  only): `npm i puppeteer-core @sparticuz/chromium` in a scratch folder,
+  inflate `bin/{al2023,fonts,swiftshader}.tar.br` with the package's
+  `inflate()`, run with `LD_LIBRARY_PATH=/tmp/al2023/lib:/tmp
+  FONTCONFIG_PATH=/tmp/fonts`, launch `executablePath()` with
+  `headless:'shell'`. The module is an ESM-interop object: use
+  `require(...).default`. Its fonts lack arrows and dingbats — a blank
+  button label in a screenshot is the sandbox, not the page.
+- **Paint truth for "nothing unread is visible" is a screenshot diff**:
+  the same frame with all story text forced transparent must be
+  pixel-identical below the cursor, and a control frame with the ink off
+  must differ there.
